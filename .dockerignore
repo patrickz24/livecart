@@ -1,0 +1,38 @@
+# Build context of infra/docker/*.Dockerfile (the repository root). The
+# Dockerfiles copy explicit paths only; this list also keeps secrets, installed
+# dependencies, build output and caches out of the context sent to the daemon.
+
+# Secrets and local configuration
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+
+# Version control and CI
+.git
+.github
+
+# Installed dependencies and build output (rebuilt inside the images)
+**/node_modules
+**/.venv
+**/dist
+**/*.tsbuildinfo
+**/.vite
+
+# Python caches
+**/__pycache__
+**/*.py[cod]
+**/.mypy_cache
+**/.ruff_cache
+**/.pytest_cache
+
+# Coverage, logs and load-test output
+**/.coverage
+**/.coverage.*
+**/coverage
+**/htmlcov
+**/*.log
+loadtest
+
+# Documentation
+docs

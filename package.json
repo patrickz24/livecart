@@ -15,7 +15,9 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "gen-api": "uv run --locked python services/api/scripts/export_openapi.py && pnpm --filter @livecart/api-client run generate",
-    "check:openapi": "pnpm run gen-api && node scripts/check-openapi-drift.mjs"
+    "check:openapi": "pnpm run gen-api && node scripts/check-openapi-drift.mjs",
+    "test:scripts": "node --test \"scripts/*.test.mjs\"",
+    "smoke:compose": "node scripts/smoke-compose.mjs"
   },
   "devDependencies": {
     "@commitlint/cli": "21.2.3",

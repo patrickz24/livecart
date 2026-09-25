@@ -1,0 +1,217 @@
+# LiveCart local stack, limited to what exists so far: PostgreSQL and Redis,
+# the one-shot migrate job, then the API, the worker and the web container.
+#
+#   cp .env.example .env      # once: secrets have no default here
+#   docker compose up --build
+#
+# Published ports: web on 8080 on every interface (a phone on the LAN reaches
+# the dashboard and the API through nginx), the API on 127.0.0.1:8000 only, and
+# PostgreSQL and Redis on 127.0.0.1 with non-standard ports for the host-run
+# tests (PG_HOST_PORT and REDIS_HOST_PORT in .env).
+
+name: livecart
+
+# Shared by api, worker and migrate: one image, several commands.
+x-python-service: &python-service
+  image: livecart-python:local
+  build:
+    context: .
+    dockerfile: infra/docker/python.Dockerfile
+  # Non-root user (image), read-only root filesystem with a small /tmp for the
+  # heartbeat file and tempfile, no capabilities, no privilege escalation.
+  read_only: true
+  tmpfs:
+    - /tmp:size=16m,noexec,nosuid,nodev
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  deploy:
+    resources:
+      limits:
+        cpus: "1"
+        memory: 512M
+  restart: unless-stopped
+
+# Runtime settings of the API and the worker. They connect as livecart_app, the
+# least-privileged role; only migrate receives the migrator credentials.
+x-runtime-environment: &runtime-environment
+  APP_ENV: ${APP_ENV:-development}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  DATABASE_URL: postgresql+asyncpg://livecart_app:${LIVECART_APP_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/livecart
+  REDIS_URL: redis://:${REDIS_PASSWORD:?set it in .env (cp .env.example .env)}@redis:6379/0
+
+services:
+  postgres:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (cp .env.example .env)}
+      # Read by infra/postgres/init-roles.sh on the first start only.
+      LIVECART_MIGRATOR_PASSWORD: ${LIVECART_MIGRATOR_PASSWORD:?set it in .env (cp .env.example .env)}
+      LIVECART_APP_PASSWORD: ${LIVECART_APP_PASSWORD:?set it in .env (cp .env.example .env)}
+      LIVECART_SQL_DIR: /opt/livecart/postgres
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # The SQL files stay outside /docker-entrypoint-initdb.d, which would run
+      # them on their own: only the script goes there, and it reads them.
+      - ./infra/postgres:/opt/livecart/postgres:ro
+      - ./infra/postgres/init-roles.sh:/docker-entrypoint-initdb.d/10-init-roles.sh:ro
+    ports:
+      - "127.0.0.1:${PG_HOST_PORT:-55432}:5432"
+    healthcheck:
+      # Over TCP on purpose: while the init scripts run, the entrypoint's
+      # temporary server listens on the Unix socket only.
+      test: ["CMD", "pg_isready", "--host=127.0.0.1", "--username=postgres", "--dbname=livecart"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+      start_interval: 1s
+    # The official entrypoint drops to the postgres user; read_only and
+    # cap_drop would break its initial chown, so only resources are limited.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    restart: unless-stopped
+
+  redis:
+    image: ${REDIS_IMAGE:-redis:8.10.2-alpine}
+    # The entrypoint drops to the redis user when the command is redis-server.
+    # Append-only file flushed every second; bounded memory that refuses writes
+    # rather than evicting queue entries.
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?set it in .env (cp .env.example .env)}
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 256mb
+      - --maxmemory-policy
+      - noeviction
+    environment:
+      # Lets the healthcheck's redis-cli authenticate without -a on its command line.
+      REDISCLI_AUTH: ${REDIS_PASSWORD:?set it in .env (cp .env.example .env)}
+    volumes:
+      - redis-data:/data
+    ports:
+      - "127.0.0.1:${REDIS_HOST_PORT:-56379}:6379"
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+      start_interval: 1s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    restart: unless-stopped
+
+  # Applies the Alembic migrations (upgrade head) as livecart_migrator, then exits.
+  migrate:
+    <<: *python-service
+    command: ["livecart-migrate", "upgrade", "head"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MIGRATOR_URL: postgresql+asyncpg://livecart_migrator:${LIVECART_MIGRATOR_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/livecart
+    healthcheck:
+      disable: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    <<: *python-service
+    # uvicorn trusts X-Forwarded-For and X-Forwarded-Proto from nginx only.
+    command:
+      - uvicorn
+      - livecart_api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - ${NGINX_IP:-172.30.0.10}
+    environment: *runtime-environment
+    ports:
+      - "127.0.0.1:8000:8000" # loopback only: other clients go through nginx
+    healthcheck:
+      # Readiness (PostgreSQL and Redis reachable), so that `up --wait` and the
+      # web container wait for a usable API. The image default is /health.
+      test: ["CMD", "livecart-healthcheck", "http", "http://127.0.0.1:8000/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # Stateless: `docker compose up --scale worker=3` runs three consumers.
+  worker:
+    <<: *python-service
+    command: ["livecart-worker"]
+    environment: *runtime-environment
+    healthcheck:
+      # The heartbeat file in /tmp, touched every 10 s while Redis answers PING.
+      test: ["CMD", "livecart-healthcheck", "heartbeat"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+      start_interval: 1s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  web:
+    image: livecart-web:local
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    # nginx-unprivileged runs as uid 101; its pid file and temp paths are in /tmp.
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=16m,noexec,nosuid,nodev
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks:
+      default:
+        # The address uvicorn trusts (--forwarded-allow-ips above).
+        ipv4_address: ${NGINX_IP:-172.30.0.10}
+    ports:
+      - "8080:8080" # every interface: reachable from a phone on the LAN (Expo Go)
+    # Healthcheck: the image's (GET /healthz).
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  default:
+    # A fixed subnet, so that nginx keeps a fixed address (NGINX_IP).
+    ipam:
+      config:
+        - subnet: ${COMPOSE_SUBNET:-172.30.0.0/24}
+
+volumes:
+  postgres-data:
+  redis-data:
