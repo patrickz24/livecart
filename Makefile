@@ -11,7 +11,8 @@ help: ## List the targets
 dev: ## Build and start the whole stack in the foreground (Ctrl+C stops it)
 	docker compose up --build
 
-lint: ## Lint, check formatting and types, then check the version pins
+lint: ## Check the Node version, lint, check formatting and types, then the version pins
+	pnpm run check:node
 	uv run --locked ruff check .
 	uv run --locked ruff format --check .
 	uv run --locked mypy
@@ -20,7 +21,8 @@ lint: ## Lint, check formatting and types, then check the version pins
 	pnpm -r typecheck
 	pnpm run check:pins
 
-test: ## Start PostgreSQL and Redis, then run every test suite
+test: ## Check the Node version, start PostgreSQL and Redis, then run every test suite
+	pnpm run check:node
 	docker compose up --detach --wait postgres redis
 	uv run --locked pytest
 	pnpm -r test

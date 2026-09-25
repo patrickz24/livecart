@@ -28,6 +28,31 @@ winget install -e --id Gitleaks.Gitleaks
 
 In Git Bash, add `eval "$(fnm env --use-on-cd --shell bash)"` to `~/.bashrc`. On Linux or macOS, install fnm, uv, make and gitleaks with the system package manager, then run the same `fnm`, `npm` and `uv` commands. fnm's Node is only on the `PATH` of shells where `fnm env` runs, and `--use-on-cd` switches to the `.nvmrc` version when a shell enters the repository, so a system-wide Node used by other projects is left untouched.
 
+### Node version seen by pnpm
+
+Check once, from the repository root, that the programs pnpm starts get the same Node as your shell:
+
+```bash
+node -v             # v24.21.0
+pnpm exec node -v   # must print v24.21.0 too
+```
+
+pnpm scripts, `pnpm exec`, `make` and the git hooks run the first `node` on the `PATH` of the processes they start. On Windows, fnm puts its Node first through a per-shell link (`fnm_multishells`); where a Windows program does not follow that link, it falls back to any other Node on the `PATH`, such as a system-wide Node 20. Vitest and `node --test` then fail with errors that do not mention the version, so `make lint` and `make test` start with `pnpm run check:node`, which fails with a clear message instead; `make` may even fail to start `pnpm` (`CreateProcess(NULL, pnpm ...) failed`), because `npm install -g` put pnpm in the same fnm folder. The fix is to put the fnm installation of Node 24.21.0 first on the `PATH`, after the `fnm env` line:
+
+```bash
+# Git Bash (~/.bashrc)
+export PATH="$(cygpath "$FNM_DIR")/node-versions/v24.21.0/installation:$PATH"
+```
+
+```powershell
+# PowerShell ($PROFILE)
+$env:PATH = "$env:FNM_DIR\node-versions\v24.21.0\installation;$env:PATH"
+```
+
+Update the version in that line when `.nvmrc` changes.
+
+### Version pins
+
 `pnpm run check:pins` fails when a copy of these versions (Dockerfiles, CI, `package.json` engines) drifts from its source of truth. To upgrade a tool, change the source of truth and every copy the check lists, in one commit.
 
 ## First setup
@@ -49,15 +74,15 @@ Every command runs from the repository root: the Python processes read `.env` fr
 
 `make` targets are thin wrappers, run from Git Bash. In PowerShell, run the raw commands one by one, in the same order (Windows PowerShell 5.1 has no `&&`; use one line per command, or `;`).
 
-| Target           | What it does                                          | Raw commands                                                                                                                                                                                             |
-| ---------------- | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `make dev`       | builds and starts the whole stack in the foreground   | `docker compose up --build`                                                                                                                                                                              |
-| `make lint`      | lint, format check, type checks, version pins         | `uv run --locked ruff check .`<br>`uv run --locked ruff format --check .`<br>`uv run --locked mypy`<br>`pnpm run lint`<br>`pnpm exec prettier --check .`<br>`pnpm -r typecheck`<br>`pnpm run check:pins` |
-| `make test`      | every test suite, on the compose PostgreSQL and Redis | `docker compose up --detach --wait postgres redis`<br>`uv run --locked pytest`<br>`pnpm -r test`<br>`pnpm run test:scripts`                                                                              |
-| `make seed`      | demo data (arrives in milestone 3)                    | none yet                                                                                                                                                                                                 |
-| `make load-test` | k6 comment spike (arrives in milestone 9)             | none yet                                                                                                                                                                                                 |
-| `make gen-api`   | regenerates `openapi.json` and the TypeScript client  | `pnpm run gen-api`                                                                                                                                                                                       |
-| `make reset`     | stops the stack and deletes its data volumes          | `docker compose down --volumes`                                                                                                                                                                          |
+| Target           | What it does                                          | Raw commands                                                                                                                                                                                                                      |
+| ---------------- | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `make dev`       | builds and starts the whole stack in the foreground   | `docker compose up --build`                                                                                                                                                                                                       |
+| `make lint`      | Node version, lint, format and type checks, pins      | `pnpm run check:node`<br>`uv run --locked ruff check .`<br>`uv run --locked ruff format --check .`<br>`uv run --locked mypy`<br>`pnpm run lint`<br>`pnpm exec prettier --check .`<br>`pnpm -r typecheck`<br>`pnpm run check:pins` |
+| `make test`      | every test suite, on the compose PostgreSQL and Redis | `pnpm run check:node`<br>`docker compose up --detach --wait postgres redis`<br>`uv run --locked pytest`<br>`pnpm -r test`<br>`pnpm run test:scripts`                                                                              |
+| `make seed`      | demo data (arrives in milestone 3)                    | none yet                                                                                                                                                                                                                          |
+| `make load-test` | k6 comment spike (arrives in milestone 9)             | none yet                                                                                                                                                                                                                          |
+| `make gen-api`   | regenerates `openapi.json` and the TypeScript client  | `pnpm run gen-api`                                                                                                                                                                                                                |
+| `make reset`     | stops the stack and deletes its data volumes          | `docker compose down --volumes`                                                                                                                                                                                                   |
 
 Other useful commands:
 
