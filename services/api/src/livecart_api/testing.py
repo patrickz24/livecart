@@ -1,10 +1,16 @@
-"""Unit-test helpers: the app is built around fakes, never around PostgreSQL or Redis."""
+"""Test doubles of the API's unit tests: the app is built around fakes, never PostgreSQL or Redis.
 
-from collections.abc import AsyncIterator, Callable, Sequence
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+Only test code imports this module, which needs the dev dependency group
+(httpx2); the runtime never does. It sits in the package, like
+``livecart_core.testing``, because under pytest's importlib mode the modules of
+a tests folder cannot import each other: the tests import these helpers, with
+their types, from an installed module instead of receiving untyped fixtures.
+"""
+
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 
 import httpx2
-import pytest
 from fastapi import FastAPI
 from pydantic import SecretStr
 
@@ -45,32 +51,14 @@ def make_app(
     app_env: AppEnv = AppEnv.DEVELOPMENT,
     timeout_s: float = 1.0,
 ) -> FastAPI:
+    """The app around ``checks``, with resources that hold nothing to close."""
     resources = Resources(readiness_checks=checks, aclose=_noop)
     return create_app(make_settings(app_env), resources, readiness_timeout_s=timeout_s)
 
 
-AppFactory = Callable[..., FastAPI]
-Serve = Callable[[FastAPI], AbstractAsyncContextManager[httpx2.AsyncClient]]
-
-
-@pytest.fixture
-def app_factory() -> AppFactory:
-    return make_app
-
-
-@pytest.fixture
-def serve() -> Serve:
-    """Open an in-process HTTP client on an app (the lifespan is tested separately)."""
-
-    @asynccontextmanager
-    async def open_client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
-        transport = httpx2.ASGITransport(app=app)
-        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
-            yield client
-
-    return open_client
-
-
-@pytest.fixture
-def fake_probe() -> Callable[[], FakeProbe]:
-    return FakeProbe
+@asynccontextmanager
+async def open_client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
+    """An in-process HTTP client of ``app`` (the lifespan is tested separately)."""
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
+        yield client

@@ -1,5 +1,4 @@
 import uuid
-from typing import Any
 
 import pytest
 import structlog
@@ -7,40 +6,41 @@ from pydantic import SecretStr
 
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources, build_resources
+from livecart_api.testing import make_app, open_client
 from livecart_core.settings import AppEnv, Settings
 
 
-async def test_a_request_id_is_generated_and_returned(app_factory: Any, serve: Any) -> None:
-    async with serve(app_factory()) as client:
+async def test_a_request_id_is_generated_and_returned() -> None:
+    async with open_client(make_app()) as client:
         response = await client.get("/health")
 
     assert uuid.UUID(response.headers["X-Request-ID"])
 
 
-async def test_a_valid_incoming_request_id_is_kept(app_factory: Any, serve: Any) -> None:
+async def test_a_valid_incoming_request_id_is_kept() -> None:
     incoming = uuid.uuid4().hex
 
-    async with serve(app_factory()) as client:
+    async with open_client(make_app()) as client:
         response = await client.get("/health", headers={"X-Request-ID": incoming})
 
     assert response.headers["X-Request-ID"] == incoming
 
 
-async def test_an_invalid_incoming_request_id_is_replaced(app_factory: Any, serve: Any) -> None:
-    async with serve(app_factory()) as client:
+async def test_an_invalid_incoming_request_id_is_replaced() -> None:
+    async with open_client(make_app()) as client:
         response = await client.get("/health", headers={"X-Request-ID": "forged id"})
 
     assert response.headers["X-Request-ID"] != "forged id"
     assert uuid.UUID(response.headers["X-Request-ID"])
 
 
-async def test_the_request_id_is_bound_to_the_log_context(app_factory: Any, serve: Any) -> None:
+async def test_the_request_id_is_bound_to_the_log_context() -> None:
     seen: list[object] = []
 
     async def probe() -> None:
         seen.append(structlog.contextvars.get_contextvars().get("request_id"))
 
-    async with serve(app_factory([ReadinessCheck("postgres", probe)])) as client:
+    async with open_client(make_app([ReadinessCheck("postgres", probe)])) as client:
         response = await client.get("/ready")
 
     assert seen == [response.headers["X-Request-ID"]]
@@ -48,23 +48,23 @@ async def test_the_request_id_is_bound_to_the_log_context(app_factory: Any, serv
 
 
 @pytest.mark.parametrize("path", ["/docs", "/openapi.json"])
-async def test_docs_are_served_in_development(app_factory: Any, serve: Any, path: str) -> None:
-    async with serve(app_factory(app_env=AppEnv.DEVELOPMENT)) as client:
+async def test_docs_are_served_in_development(path: str) -> None:
+    async with open_client(make_app(app_env=AppEnv.DEVELOPMENT)) as client:
         response = await client.get(path)
 
     assert response.status_code == 200
 
 
 @pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
-async def test_docs_are_disabled_in_production(app_factory: Any, serve: Any, path: str) -> None:
-    async with serve(app_factory(app_env=AppEnv.PRODUCTION)) as client:
+async def test_docs_are_disabled_in_production(path: str) -> None:
+    async with open_client(make_app(app_env=AppEnv.PRODUCTION)) as client:
         response = await client.get(path)
 
     assert response.status_code == 404
 
 
-def test_openapi_documents_both_probes(app_factory: Any) -> None:
-    schema = app_factory(app_env=AppEnv.PRODUCTION).openapi()
+def test_openapi_documents_both_probes() -> None:
+    schema = make_app(app_env=AppEnv.PRODUCTION).openapi()
 
     health, ready = schema["paths"]["/health"]["get"], schema["paths"]["/ready"]["get"]
     assert health["operationId"] == "get_health"
@@ -73,7 +73,7 @@ def test_openapi_documents_both_probes(app_factory: Any) -> None:
     assert {"HealthStatus", "ReadinessStatus"} <= set(schema["components"]["schemas"])
 
 
-async def test_shutdown_closes_the_injected_resources(app_factory: Any) -> None:
+async def test_shutdown_closes_the_injected_resources() -> None:
     closed: list[bool] = []
 
     async def aclose() -> None:
@@ -104,7 +104,7 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     await resources.aclose()  # nothing was connected: closing must not fail
 
 
-async def test_unreachable_dependencies_answer_503(serve: Any) -> None:
+async def test_unreachable_dependencies_answer_503() -> None:
     # Real engine and Redis client aimed at a closed port: no Docker needed.
     settings = Settings(
         database_url=SecretStr("postgresql+asyncpg://u:p@127.0.0.1:1/livecart"),
@@ -115,7 +115,7 @@ async def test_unreachable_dependencies_answer_503(serve: Any) -> None:
     app = create_app(settings, resources, readiness_timeout_s=0.5)
 
     try:
-        async with serve(app) as client:
+        async with open_client(app) as client:
             response = await client.get("/ready")
     finally:
         await resources.aclose()

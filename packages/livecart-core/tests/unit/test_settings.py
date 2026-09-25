@@ -165,7 +165,8 @@ def test_settings_are_immutable() -> None:
     settings = load(**dev_env())
 
     with pytest.raises(ValidationError):
-        settings.log_level = LogLevel.DEBUG
+        # mypy already rejects the assignment (frozen model); pydantic must too.
+        settings.log_level = LogLevel.DEBUG  # type: ignore[misc]
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

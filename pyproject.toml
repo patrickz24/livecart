@@ -60,11 +60,21 @@ strict = true
 warn_unreachable = true
 enable_error_code = ["ignore-without-code"]
 plugins = ["pydantic.mypy"]
+# Tests are checked as strictly as the code. The src roots are on mypy_path so
+# that their modules keep their import names, and explicit package bases name
+# every other file after its path, so that two members can both hold a
+# tests/unit/test_main.py or a conftest.py.
+mypy_path = ["packages/livecart-core/src", "services/api/src", "services/worker/src"]
+explicit_package_bases = true
 files = [
+    "conftest.py",
     "packages/livecart-core/src",
+    "packages/livecart-core/tests",
     "services/api/src",
     "services/api/scripts",
+    "services/api/tests",
     "services/worker/src",
+    "services/worker/tests",
 ]
 
 [tool.pydantic-mypy]

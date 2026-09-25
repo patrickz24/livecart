@@ -1,18 +1,16 @@
 import asyncio
 import time
-from typing import Any
 
 from livecart_api.resources import ReadinessCheck
+from livecart_api.testing import FakeProbe, make_app, open_client
 
 
-async def test_health_answers_without_probing_any_dependency(
-    app_factory: Any, serve: Any, fake_probe: Any
-) -> None:
-    probe = fake_probe()
+async def test_health_answers_without_probing_any_dependency() -> None:
+    probe = FakeProbe()
     probe.available = False
-    app = app_factory([ReadinessCheck("postgres", probe)])
+    app = make_app([ReadinessCheck("postgres", probe)])
 
-    async with serve(app) as client:
+    async with open_client(app) as client:
         response = await client.get("/health")
 
     assert response.status_code == 200
@@ -20,13 +18,11 @@ async def test_health_answers_without_probing_any_dependency(
     assert probe.calls == 0
 
 
-async def test_ready_returns_200_then_503_when_a_dependency_goes_down(
-    app_factory: Any, serve: Any, fake_probe: Any
-) -> None:
-    postgres, redis = fake_probe(), fake_probe()
-    app = app_factory([ReadinessCheck("postgres", postgres), ReadinessCheck("redis", redis)])
+async def test_ready_returns_200_then_503_when_a_dependency_goes_down() -> None:
+    postgres, redis = FakeProbe(), FakeProbe()
+    app = make_app([ReadinessCheck("postgres", postgres), ReadinessCheck("redis", redis)])
 
-    async with serve(app) as client:
+    async with open_client(app) as client:
         first = await client.get("/ready")
         redis.available = False
         second = await client.get("/ready")
@@ -41,14 +37,12 @@ async def test_ready_returns_200_then_503_when_a_dependency_goes_down(
     assert (postgres.calls, redis.calls) == (2, 2)
 
 
-async def test_ready_recovers_when_the_dependency_comes_back(
-    app_factory: Any, serve: Any, fake_probe: Any
-) -> None:
-    postgres = fake_probe()
+async def test_ready_recovers_when_the_dependency_comes_back() -> None:
+    postgres = FakeProbe()
     postgres.available = False
-    app = app_factory([ReadinessCheck("postgres", postgres)])
+    app = make_app([ReadinessCheck("postgres", postgres)])
 
-    async with serve(app) as client:
+    async with open_client(app) as client:
         down = await client.get("/ready")
         postgres.available = True
         up = await client.get("/ready")
@@ -56,13 +50,13 @@ async def test_ready_recovers_when_the_dependency_comes_back(
     assert (down.status_code, up.status_code) == (503, 200)
 
 
-async def test_a_hanging_dependency_times_out_with_503(app_factory: Any, serve: Any) -> None:
+async def test_a_hanging_dependency_times_out_with_503() -> None:
     async def hang() -> None:
         await asyncio.Event().wait()
 
-    app = app_factory([ReadinessCheck("redis", hang)], timeout_s=0.1)
+    app = make_app([ReadinessCheck("redis", hang)], timeout_s=0.1)
 
-    async with serve(app) as client:
+    async with open_client(app) as client:
         started = time.perf_counter()
         response = await client.get("/ready")
         elapsed = time.perf_counter() - started
@@ -72,7 +66,7 @@ async def test_a_hanging_dependency_times_out_with_503(app_factory: Any, serve: 
     assert elapsed < 1.0
 
 
-async def test_checks_run_in_parallel(app_factory: Any, serve: Any) -> None:
+async def test_checks_run_in_parallel() -> None:
     # Each probe waits for the other one to start: run one after the other,
     # the first would wait forever and time out.
     postgres_started, redis_started = asyncio.Event(), asyncio.Event()
@@ -85,23 +79,23 @@ async def test_checks_run_in_parallel(app_factory: Any, serve: Any) -> None:
         redis_started.set()
         await postgres_started.wait()
 
-    app = app_factory(
+    app = make_app(
         [ReadinessCheck("postgres", postgres), ReadinessCheck("redis", redis)], timeout_s=0.5
     )
 
-    async with serve(app) as client:
+    async with open_client(app) as client:
         response = await client.get("/ready")
 
     assert response.status_code == 200
 
 
-async def test_failure_details_stay_out_of_the_response(app_factory: Any, serve: Any) -> None:
+async def test_failure_details_stay_out_of_the_response() -> None:
     async def leaky() -> None:
         raise RuntimeError("connection to db.internal:5432 failed for user livecart_app")
 
-    app = app_factory([ReadinessCheck("postgres", leaky)])
+    app = make_app([ReadinessCheck("postgres", leaky)])
 
-    async with serve(app) as client:
+    async with open_client(app) as client:
         response = await client.get("/ready")
 
     assert response.status_code == 503
