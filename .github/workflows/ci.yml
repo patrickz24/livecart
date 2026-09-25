@@ -163,7 +163,11 @@ jobs:
           "${RUNNER_TEMP}/gitleaks" git --redact --no-banner --verbose .
 
       # Before any install, so that only the repository's own files are scanned.
-      - name: Trivy filesystem scan (lockfiles, secrets, Dockerfiles)
+      # Trivy 0.74.0 cannot read the uv.lock of a virtual workspace root (it
+      # expects one root package), so it only warns and skips it: Python
+      # dependencies are covered by pip-audit below and by the image scan of
+      # livecart-python:local, which reads the installed virtualenv.
+      - name: Trivy filesystem scan (pnpm-lock.yaml, secrets, Dockerfiles)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           version: ${{ env.TRIVY_VERSION }}
