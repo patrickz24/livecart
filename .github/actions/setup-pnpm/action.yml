@@ -1,0 +1,42 @@
+name: Set up Node.js and pnpm
+description: >-
+  Node.js from .nvmrc, pnpm installed with npm (no Corepack, as on developer
+  machines), a pnpm store cached by lockfile, then a frozen-lockfile install.
+
+inputs:
+  pnpm-version:
+    description: pnpm version to install; equal to packageManager in package.json.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version-file: .nvmrc
+        # The pnpm store is cached below; setup-node would need pnpm first.
+        package-manager-cache: false
+
+    - name: Install pnpm
+      shell: bash
+      env:
+        PNPM_VERSION: ${{ inputs.pnpm-version }}
+      run: npm install --global "pnpm@${PNPM_VERSION}"
+
+    - name: Locate the pnpm store
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path)" >> "$GITHUB_OUTPUT"
+
+    - name: Cache the pnpm store
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: pnpm-store-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: pnpm-store-${{ runner.os }}-
+
+    - name: Install dependencies
+      shell: bash
+      # CI is set by GitHub: lefthook's postinstall installs no git hook.
+      run: pnpm install --frozen-lockfile

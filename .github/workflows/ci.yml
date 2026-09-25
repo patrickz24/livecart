@@ -1,0 +1,261 @@
+# Lint, type checks and tests of both ecosystems, OpenAPI drift, dependency and
+# secret scans, image builds with their scan and the compose smoke test. Images
+# are built and scanned, never pushed.
+#
+# Every third-party action is pinned by full commit SHA, with the release in a
+# comment (tags can be moved: GHSA-69fq-xp46-6x23). `pnpm run check:pins`
+# checks the pins and the tool versions below.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Weekly, so that advisories published since the last change still fail CI.
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Must match pyproject.toml ([tool.uv] required-version) and package.json
+  # (packageManager); scripts/check-pins.mjs fails otherwise.
+  UV_VERSION: "0.12.19"
+  PNPM_VERSION: "12.6.0"
+  PIP_AUDIT_VERSION: "2.10.1"
+  GITLEAKS_VERSION: "8.30.1"
+  # SHA-256 of gitleaks_8.30.1_linux_x64.tar.gz, from the release's checksums file.
+  GITLEAKS_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+  TRIVY_VERSION: "v0.74.0"
+
+jobs:
+  python:
+    name: Python (ruff, mypy, pytest)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install the locked environment (CPython from .python-version)
+        run: uv sync --locked
+
+      - name: Ruff lint
+        run: uv run --locked ruff check --output-format=github .
+
+      - name: Ruff format
+        run: uv run --locked ruff format --check .
+
+      - name: mypy (strict)
+        run: uv run --locked mypy
+
+      # The same PostgreSQL and Redis services as on a developer machine, from
+      # compose.yaml: init-roles.sh creates livecart_test with the least-privilege
+      # roles, and Redis requires its password. The TEST_* URLs of .env.example
+      # point at them.
+      - name: Start the compose postgres and redis services
+        run: |
+          cp .env.example .env
+          docker compose up --detach --wait --wait-timeout 120 postgres redis
+
+      - name: pytest (unit and integration)
+        run: uv run --locked pytest
+
+      - name: Show the service logs
+        if: failure()
+        run: docker compose logs --no-color postgres redis
+
+  node:
+    name: Node (eslint, prettier, tsc, vitest, pins)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: ESLint
+        run: pnpm run lint
+
+      - name: Prettier
+        run: pnpm exec prettier --check .
+
+      - name: TypeScript
+        run: pnpm -r typecheck
+
+      - name: Vitest
+        run: pnpm -r test
+
+      - name: Script tests (node:test)
+        run: pnpm run test:scripts
+
+      - name: Version pins
+        run: pnpm run check:pins
+
+  openapi-drift:
+    name: OpenAPI schema and generated client drift
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      # Regenerates openapi.json and the TypeScript client, then fails on any
+      # difference with the committed files.
+      - name: Regenerate and compare
+        run: pnpm run check:openapi
+
+  security:
+    name: Security (gitleaks, Trivy, pip-audit, pnpm audit)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out (full history, for gitleaks)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install gitleaks (checksum verified)
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --silent --show-error --location --output "${RUNNER_TEMP}/${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${RUNNER_TEMP}/${archive}" | sha256sum --check --strict
+          tar --extract --gzip --file "${RUNNER_TEMP}/${archive}" --directory "${RUNNER_TEMP}" gitleaks
+
+      - name: gitleaks (every commit)
+        run: |
+          "${RUNNER_TEMP}/gitleaks" git --redact --no-banner --verbose .
+
+      # Before any install, so that only the repository's own files are scanned.
+      - name: Trivy filesystem scan (lockfiles, secrets, Dockerfiles)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          cache-dir: ${{ runner.temp }}/trivy-cache
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: pip-audit (every locked Python package, hashes required)
+        run: |
+          uv export --locked --all-packages --no-emit-workspace --format requirements-txt \
+            --output-file "${RUNNER_TEMP}/requirements.txt"
+          uvx "pip-audit@${PIP_AUDIT_VERSION}" --strict --require-hashes --disable-pip \
+            --progress-spinner off --requirement "${RUNNER_TEMP}/requirements.txt"
+
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      - name: pnpm audit (production dependencies, high and critical)
+        run: pnpm audit --prod --audit-level=high
+
+  docker:
+    name: Docker (build, compose smoke test, Trivy image scan)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The smoke test is a Node script; the runner's own Node may be older.
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+
+      # The quickstart, as a new contributor runs it.
+      - name: Create .env from the template
+        run: cp .env.example .env
+
+      - name: Build livecart-python:local and livecart-web:local
+        run: docker compose build
+
+      - name: Compose smoke test
+        run: node scripts/smoke-compose.mjs
+
+      - name: Show the compose state and logs
+        if: failure()
+        run: |
+          docker compose ps --all
+          docker compose logs --no-color
+
+      - name: Trivy scan of livecart-python:local
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: livecart-python:local
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          cache-dir: ${{ runner.temp }}/trivy-cache
+
+      - name: Trivy scan of livecart-web:local
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          # Installed by the previous step.
+          skip-setup-trivy: true
+          scan-type: image
+          image-ref: livecart-web:local
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          cache-dir: ${{ runner.temp }}/trivy-cache
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down --volumes
