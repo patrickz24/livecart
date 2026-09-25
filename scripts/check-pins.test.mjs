@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
@@ -213,5 +214,13 @@ describe("this repository", () => {
   it("has every pin in agreement", () => {
     const root = fileURLToPath(new URL("..", import.meta.url));
     assert.deepEqual(checkPins(loadRepositoryFiles(root)).problems, []);
+  });
+
+  it("is checked when node starts the script", () => {
+    const script = fileURLToPath(new URL("./check-pins.mjs", import.meta.url));
+    const output = execFileSync(process.execPath, [script], { encoding: "utf8" });
+
+    assert.match(output, /^ok {4}Node /m);
+    assert.match(output, /Every pin agrees\./);
   });
 });

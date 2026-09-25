@@ -10,6 +10,8 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
+import { isMainModule } from "./cli.mjs";
+
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const WAIT_TIMEOUT_S = 180;
 const HTTP_TIMEOUT_MS = 5_000;
@@ -143,6 +145,6 @@ async function main() {
 }
 
 // Run only as a command, not when the tests import the helpers above.
-if (import.meta.main) {
+if (isMainModule(import.meta.url)) {
   await main();
 }

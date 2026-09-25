@@ -17,6 +17,8 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { isMainModule } from "./cli.mjs";
+
 export const PATHS = {
   nvmrc: ".nvmrc",
   pythonVersion: ".python-version",
@@ -338,7 +340,8 @@ export function loadRepositoryFiles(root) {
   return files;
 }
 
-if (import.meta.main) {
+// Run only as a command, not when the tests import the helpers above.
+if (isMainModule(import.meta.url)) {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const { passed, problems } = checkPins(loadRepositoryFiles(root));
   for (const line of passed) console.log(`ok    ${line}`);
