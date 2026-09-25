@@ -1,0 +1,8 @@
+# Architecture Decision Records
+
+An Architecture Decision Record (ADR) is a short document that captures one significant technical decision: the context that made it necessary, the decision itself, its consequences and the alternatives that were considered and rejected. ADRs are written once a decision is implemented and are never edited to say something else; a decision that changes gets a new ADR that supersedes the old one. Every record here follows the same outline (Status, Context, Decision, Consequences, Alternatives considered), is written in English and only describes what the code in this repository actually does. Numbers follow the index of the project plan, and each ADR is added with the milestone that implements its decision, which is why the sequence has gaps for now: the records between 0001 and 0015 arrive with the domain, the API, the queue, the payment and the mobile milestones.
+
+| ADR                                                      | Title                                                                                                                         | Status   | Added in    |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------- | ----------- |
+| [0001](0001-monorepo-workspaces-and-runtime-versions.md) | Monorepo: pnpm and uv workspaces, Node, Python and React versions                                                             | Accepted | Milestone 1 |
+| [0015](0015-quality-tooling-and-supply-chain.md)         | Quality tooling and supply chain: ruff, mypy, Vitest, Jest, lefthook, commitlint, pip-audit, Trivy, gitleaks, k6, SHA pinning | Accepted | Milestone 1 |
