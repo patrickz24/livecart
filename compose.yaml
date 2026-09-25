@@ -207,10 +207,13 @@ services:
 
 networks:
   default:
-    # A fixed subnet, so that nginx keeps a fixed address (NGINX_IP).
+    # A fixed subnet, so that nginx keeps a fixed address (NGINX_IP). The other
+    # containers get dynamic addresses from the upper half only (ip_range), so
+    # scaled workers can never take NGINX_IP before web starts.
     ipam:
       config:
         - subnet: ${COMPOSE_SUBNET:-172.30.0.0/24}
+          ip_range: ${COMPOSE_IP_RANGE:-172.30.0.128/25}
 
 volumes:
   postgres-data:
