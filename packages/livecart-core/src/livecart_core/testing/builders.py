@@ -1,14 +1,17 @@
-"""Builders of domain objects for tests, starting with the demo catalog of the parser.
+"""Builders of test data: the demo catalog of the parser, and comments as a webhook sends them.
 
 The demo catalog is fixed: the comment corpus (``testing/corpus``) states its
 expected results against it, so changing a product here means reviewing the
 corpus too.
 """
 
+from datetime import datetime
 from typing import Final
 
+from livecart_core.application.dto import IncomingComment, Platform, QueuedComment
 from livecart_core.domain.catalog import Catalog, CatalogProduct
 from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.testing.fakes import FAKE_CLOCK_START
 
 # The default MAX_QUANTITY_PER_COMMENT, which the corpus expectations assume.
 DEMO_MAX_QUANTITY: Final = 10
@@ -39,4 +42,49 @@ def demo_catalog() -> Catalog:
         catalog_product("D4", "Jean droit", "36", "38", "40", "42"),
         catalog_product("E15", "Casquette brodée", "Unique"),
         catalog_product("Z99", "Carte cadeau"),
+    )
+
+
+def incoming_comment(
+    text: str = "je prends A12 M",
+    *,
+    external_comment_id: str = "comment-1",
+    author: str = "buyer-1",
+    external_live_id: str = "live-1",
+    platform: Platform = Platform.SIMULATOR,
+    posted_at: datetime = FAKE_CLOCK_START,
+) -> IncomingComment:
+    """A comment in the common webhook format; the defaults match ``add_live_session()``."""
+    return IncomingComment(
+        platform=platform,
+        external_comment_id=external_comment_id,
+        external_live_id=external_live_id,
+        author_platform_user_id=author,
+        text=text,
+        posted_at=posted_at,
+    )
+
+
+def queued_comment(
+    text: str = "je prends A12 M",
+    *,
+    external_comment_id: str = "comment-1",
+    author: str = "buyer-1",
+    external_live_id: str = "live-1",
+    platform: Platform = Platform.SIMULATOR,
+    enqueued_at: datetime = FAKE_CLOCK_START,
+) -> QueuedComment:
+    """``incoming_comment`` in its queue envelope, with ids derived from the comment id."""
+    return QueuedComment(
+        comment=incoming_comment(
+            text,
+            external_comment_id=external_comment_id,
+            author=author,
+            external_live_id=external_live_id,
+            platform=platform,
+            posted_at=enqueued_at,
+        ),
+        correlation_id=f"correlation-{external_comment_id}",
+        request_id=f"request-{external_comment_id}",
+        enqueued_at=enqueued_at,
     )

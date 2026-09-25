@@ -99,6 +99,8 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.domain.parser" in domain
     assert "livecart_core.domain.parser.grammar" in domain
     assert "livecart_core.application" in application
+    assert "livecart_core.application.ports" in application
+    assert "livecart_core.application.dto" in application
 
 
 # A module that mixes allowed and forbidden imports, at the top level, relative,
