@@ -88,6 +88,19 @@ def test_standard_library_records_are_rendered_with_context(read_logs: ReadLines
     assert line["correlation_id"] is None
 
 
+def test_stdlib_extra_fields_are_kept_but_not_uvicorn_colors(read_logs: ReadLines) -> None:
+    logging.getLogger("uvicorn.error").info(
+        "Started server process [%d]",
+        42,
+        extra={"color_message": "Started server process [[36m%d[0m]", "pid": 42},
+    )
+
+    [line] = read_logs()
+    assert line["event"] == "Started server process [42]"
+    assert line["pid"] == 42
+    assert "color_message" not in line
+
+
 def test_line_breaks_cannot_forge_log_lines(read_logs: ReadLines) -> None:
     structlog.get_logger().info("comment_received", text='hi\n{"event": "forged"}\r\n')
     logging.getLogger("other").warning("multi\nline")

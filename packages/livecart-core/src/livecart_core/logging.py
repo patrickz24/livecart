@@ -42,6 +42,12 @@ def redact_sensitive(_logger: WrappedLogger, _method: str, event_dict: EventDict
     return event_dict
 
 
+def drop_color_message(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
+    """Drop the ANSI-colored duplicate of the message that uvicorn passes as ``extra``."""
+    event_dict.pop("color_message", None)
+    return event_dict
+
+
 def _service_adder(service: str) -> Processor:
     def add_service(_logger: WrappedLogger, _method: str, event_dict: EventDict) -> EventDict:
         event_dict.setdefault("service", service)
@@ -79,7 +85,7 @@ def configure_logging(*, service: str, level: str = "INFO", stream: TextIO | Non
     )
 
     formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=[structlog.stdlib.ExtraAdder(), *shared_processors],
+        foreign_pre_chain=[structlog.stdlib.ExtraAdder(), drop_color_message, *shared_processors],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             # Plain traceback text: never the frame locals, which may hold secrets.

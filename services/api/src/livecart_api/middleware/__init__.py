@@ -1,0 +1,1 @@
+"""Pure ASGI middleware."""

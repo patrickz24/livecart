@@ -3,6 +3,7 @@
 
 [dependency-groups]
 dev = [
+    "httpx2==2.13.1",
     "mypy==2.3.1",
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
@@ -73,7 +74,7 @@ warn_required_dynamic_aliases = true
 # Native TOML configuration (pytest 9).
 [tool.pytest]
 minversion = "9.0"
-testpaths = ["packages/livecart-core/tests"]
+testpaths = ["packages/livecart-core/tests", "services/api/tests"]
 # importlib mode lets every member keep plain tests/ folders without
 # __init__.py files and without module name clashes.
 addopts = ["--import-mode=importlib", "-ra"]
