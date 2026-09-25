@@ -27,11 +27,9 @@ export function App({ client }: { client: Client }) {
   }, [client]);
 
   return (
-    <main className="mx-auto max-w-xl p-8 font-sans">
-      <h1 className="text-2xl font-semibold">LiveCart</h1>
-      <p role="status" className="mt-4 text-gray-700">
-        {STATUS_TEXT[status]}
-      </p>
+    <main>
+      <h1>LiveCart</h1>
+      <p role="status">{STATUS_TEXT[status]}</p>
     </main>
   );
 }
