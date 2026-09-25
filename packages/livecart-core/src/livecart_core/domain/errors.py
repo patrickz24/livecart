@@ -6,6 +6,8 @@ catch the whole family at once. The errors about bad input also derive from
 the failure as an ordinary validation error, without a wrapper of its own.
 """
 
+from enum import StrEnum
+
 
 class DomainError(Exception):
     """Base of every error raised by ``livecart_core.domain``."""
@@ -29,3 +31,12 @@ class QuantityOutOfBounds(InvalidValue):
 
 class CurrencyMismatch(DomainError):
     """Arithmetic or ordering between two currencies: a programming error, not bad input."""
+
+
+class InvalidTransition(DomainError):
+    """A status change that the transition table of its aggregate does not allow."""
+
+    def __init__(self, current: StrEnum, target: StrEnum) -> None:
+        super().__init__(f"{type(current).__name__}: {current} -> {target} is not allowed")
+        self.current = current
+        self.target = target
