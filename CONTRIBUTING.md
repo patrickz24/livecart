@@ -37,9 +37,11 @@ From the repository root:
 ```bash
 cp .env.example .env                        # PowerShell: Copy-Item .env.example .env
 uv sync --locked                            # Python workspace in .venv
-pnpm install                                # JS workspace; also installs the git hooks (lefthook)
+pnpm install                                # JS workspace; its prepare script installs the git hooks
 docker compose up -d --wait postgres redis  # servers of the integration tests
 ```
+
+`pnpm install` ends with `lefthook install`, run by the root `prepare` script (`scripts/install-git-hooks.mjs`), unless `CI` is set. `.git/hooks` then holds `pre-commit` and `commit-msg`; if it does not, run `pnpm exec lefthook install`.
 
 Every command runs from the repository root: the Python processes read `.env` from the working directory.
 
@@ -81,6 +83,6 @@ Host-run URLs use `127.0.0.1` rather than `localhost`: on Windows, `localhost` r
 
 - [Conventional Commits](https://www.conventionalcommits.org/) in English, checked by commitlint: `type(scope): subject`, for example `feat(api): add health and readiness endpoints`. Types: `feat`, `fix`, `test`, `docs`, `refactor`, `perf`, `build`, `ci`, `chore`, `style`, `revert`. Scopes: `core`, `api`, `worker`, `simulator`, `web`, `mobile`, `api-client`, `design-tokens`, `infra`, `loadtest`, `deps`; no scope for repository-wide changes.
 - Small, atomic commits: one logical step each, with its tests, and the tests pass at every commit.
-- Git hooks (lefthook, installed by `pnpm install`): pre-commit fixes and re-stages Python files with ruff and the other files with Prettier, then scans the staged changes with gitleaks; commit-msg runs commitlint. Never bypass them with `--no-verify`: fix what they report.
+- Git hooks (lefthook, installed by `pnpm install` or `pnpm exec lefthook install`): pre-commit fixes and re-stages Python files with ruff and the other files with Prettier, then scans the staged changes with gitleaks; commit-msg runs commitlint. Never bypass them with `--no-verify`: fix what they report.
 - No secret in the repository: `.env` is ignored, and `.env.example` holds `change-me-*` placeholders only.
 - Pull requests have an English description and are merged with "Rebase and merge", once CI is green.

@@ -8,8 +8,10 @@ packages:
 # pnpm blocks dependency build scripts unless they are reviewed here, and
 # fails the install on an unreviewed one (strictDepBuilds).
 allowBuilds:
-  # postinstall runs `lefthook install` for this clone; skipped when CI is set.
-  lefthook: true
+  # Denied: its postinstall (`lefthook install`) does not run again once the
+  # pnpm store has cached its result, so a second clone got no git hook. The
+  # root "prepare" script (scripts/install-git-hooks.mjs) installs them instead.
+  lefthook: false
 
 overrides:
   # @hey-api/json-schema-ref-parser pins js-yaml 4.2.0, which has three HIGH

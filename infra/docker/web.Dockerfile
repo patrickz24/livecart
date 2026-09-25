@@ -16,18 +16,21 @@ FROM node:24.21.0-alpine AS build
 # pnpm from npm, as on developer machines and in CI (no Corepack).
 RUN npm install -g pnpm@12.6.0
 
-# CI mode: frozen lockfile, no prompts, and lefthook's postinstall does nothing.
+# CI mode: frozen lockfile and no prompts.
 ENV CI=true
 
 WORKDIR /repo
 
 # Manifests first: the dependency layer is rebuilt only when one changes. Only
-# the web app and the workspace packages it depends on are installed.
+# the web app and the workspace packages it depends on are installed, and no
+# lifecycle script runs: the build needs none, and the root prepare script
+# (git hooks) is not copied into this stage.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 COPY packages/api-client/package.json packages/api-client/
 RUN --mount=type=cache,target=/pnpm/store \
-    pnpm install --frozen-lockfile --store-dir /pnpm/store --filter "@livecart/web..."
+    pnpm install --frozen-lockfile --ignore-scripts --store-dir /pnpm/store \
+    --filter "@livecart/web..."
 
 COPY tsconfig.base.json ./
 COPY packages/api-client packages/api-client

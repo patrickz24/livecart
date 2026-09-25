@@ -1,7 +1,7 @@
-# Git hooks. `pnpm install` installs them for this clone through lefthook's
-# postinstall script (allowed in pnpm-workspace.yaml); it is skipped when CI
-# is set. Jobs run sequentially: the fixers re-stage files, then gitleaks
-# scans the final staged content.
+# Git hooks. `pnpm install` installs them for this clone through the root
+# "prepare" script (scripts/install-git-hooks.mjs), skipped when CI is set;
+# `pnpm exec lefthook install` does the same by hand. Jobs run sequentially:
+# the fixers re-stage files, then gitleaks scans the final staged content.
 glob_matcher: doublestar
 
 pre-commit:

@@ -38,5 +38,5 @@ runs:
 
     - name: Install dependencies
       shell: bash
-      # CI is set by GitHub: lefthook's postinstall installs no git hook.
+      # CI is set by GitHub: the root prepare script installs no git hook.
       run: pnpm install --frozen-lockfile
