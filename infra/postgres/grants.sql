@@ -21,3 +21,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE livecart_migrator IN SCHEMA public
 
 -- Tables that already exist when the script is re-run by hand.
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO livecart_app;
+
+-- Except the migration history, which only the migrator reads and writes
+-- (the baseline revision revokes the default privileges above on it). The
+-- grant above gave them back if the table already exists.
+DO $$
+BEGIN
+    IF to_regclass('public.alembic_version') IS NOT NULL THEN
+        REVOKE ALL ON TABLE public.alembic_version FROM livecart_app;
+    END IF;
+END
+$$;

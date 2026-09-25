@@ -1,9 +1,15 @@
 """Roles and grants created by infra/postgres, checked on the compose livecart_test database."""
 
+import asyncio
+
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
+
+from livecart_core.infrastructure.db.engine import create_db_engine
+from livecart_core.migrate import execute, parse_args
+from livecart_core.testing.database import IntegrationSettings
 
 pytestmark = pytest.mark.integration
 
@@ -90,3 +96,34 @@ async def test_the_runtime_role_cannot_create_objects(app_engine: AsyncEngine) -
         "CREATE TEMPORARY TABLE app_scratch (id int)",
     ):
         assert await _sqlstate_of(app_engine, forbidden) == INSUFFICIENT_PRIVILEGE, forbidden
+
+
+def test_the_runtime_role_cannot_touch_the_migration_history(
+    integration_settings: IntegrationSettings,
+) -> None:
+    # From base, so that the baseline revision really runs. Synchronous:
+    # livecart-migrate runs its own event loop (see the roundtrip test).
+    for argv in (["downgrade", "base"], ["upgrade", "head"]):
+        cli, options = parse_args(argv)
+        execute(cli, options, integration_settings.migrator_url)
+
+    async def sqlstates() -> list[str | None]:
+        engine = create_db_engine(
+            integration_settings.database_url,
+            application_name="livecart-tests",
+            pool_size=1,
+            max_overflow=0,
+        )
+        try:
+            return [
+                await _sqlstate_of(engine, statement)
+                for statement in (
+                    "SELECT version_num FROM alembic_version",
+                    "UPDATE alembic_version SET version_num = 'forged'",
+                    "INSERT INTO alembic_version VALUES ('forged')",
+                )
+            ]
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(sqlstates()) == [INSUFFICIENT_PRIVILEGE] * 3

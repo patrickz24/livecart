@@ -9,7 +9,7 @@ from livecart_core.migrate import build_config, execute, main, parse_args
 MIGRATOR_URL = SecretStr("postgresql+asyncpg://livecart_migrator:p%40ss@db.invalid/livecart_test")
 
 
-def test_the_packaged_migrations_have_a_single_empty_baseline() -> None:
+def test_the_packaged_migrations_have_a_single_baseline() -> None:
     scripts = ScriptDirectory.from_config(build_config(MIGRATOR_URL))
 
     assert Path(scripts.dir).name == "migrations"
@@ -34,6 +34,7 @@ def test_offline_upgrade_renders_the_baseline_sql(capsys: pytest.CaptureFixture[
     sql = capsys.readouterr().out
     assert "CREATE TABLE alembic_version" in sql
     assert "INSERT INTO alembic_version (version_num) VALUES ('0001')" in sql
+    assert "REVOKE ALL ON TABLE alembic_version FROM livecart_app" in sql
 
 
 def test_offline_downgrade_renders_the_reverse_sql(capsys: pytest.CaptureFixture[str]) -> None:
