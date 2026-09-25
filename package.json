@@ -16,9 +16,12 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
     "@eslint/js": "10.0.1",
     "eslint": "10.11.0",
     "globals": "17.12.0",
+    "lefthook": "2.1.14",
     "prettier": "3.9.9",
     "typescript": "6.0.3",
     "typescript-eslint": "8.70.1"

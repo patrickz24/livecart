@@ -3,3 +3,9 @@
 # packages/api-client arrive later in milestone 1, apps/mobile and
 # packages/design-tokens in milestone 8.
 packages: []
+
+# pnpm blocks dependency build scripts unless they are reviewed here, and
+# fails the install on an unreviewed one (strictDepBuilds).
+allowBuilds:
+  # postinstall runs `lefthook install` for this clone; skipped when CI is set.
+  lefthook: true

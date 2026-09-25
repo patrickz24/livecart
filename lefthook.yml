@@ -1,0 +1,31 @@
+# Git hooks. `pnpm install` installs them for this clone through lefthook's
+# postinstall script (allowed in pnpm-workspace.yaml); it is skipped when CI
+# is set. Jobs run sequentially: the fixers re-stage files, then gitleaks
+# scans the final staged content.
+glob_matcher: doublestar
+
+pre-commit:
+  jobs:
+    - name: ruff check
+      glob: "**/*.py"
+      run: uv run --locked ruff check --fix {staged_files}
+      stage_fixed: true
+
+    - name: ruff format
+      glob: "**/*.py"
+      run: uv run --locked ruff format {staged_files}
+      stage_fixed: true
+
+    - name: prettier
+      glob: "**/*.{js,mjs,cjs,ts,tsx,mts,cts,json,md,yml,yaml,css,html}"
+      run: pnpm exec prettier --write --ignore-unknown {staged_files}
+      stage_fixed: true
+
+    - name: gitleaks
+      run: gitleaks git --pre-commit --staged --redact --no-banner --verbose
+      fail_text: "Secret detected in staged changes, or gitleaks is not installed (winget install -e --id Gitleaks.Gitleaks)."
+
+commit-msg:
+  jobs:
+    - name: commitlint
+      run: pnpm exec commitlint --edit {1}
