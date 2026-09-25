@@ -37,6 +37,11 @@ RUN pnpm --filter @livecart/web run build
 # --- Runtime stage --------------------------------------------------------------
 FROM nginxinc/nginx-unprivileged:1.30.5-alpine AS runtime
 
+# Security fixes published in the Alpine branch after the base image was built
+# (for example libexpat 2.8.5, CVE-2026-93990, missing from the 1.30.5 image).
+USER root
+RUN apk upgrade --no-cache
+
 # Owned by root and read-only for nginx.
 COPY infra/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /repo/apps/web/dist /usr/share/nginx/html
