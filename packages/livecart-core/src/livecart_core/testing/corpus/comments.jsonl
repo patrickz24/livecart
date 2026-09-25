@@ -1,0 +1,194 @@
+{"text": "je prends B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "je veux Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "je voudrais la Z99 merci", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "j'achète B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "j’achète B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "apostrophe"}
+{"text": "je réserve Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "je commande A12 en S", "kind": "match", "code": "A12", "variant": "S", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "je vais prendre le D4 en 40", "kind": "match", "code": "D4", "variant": "40", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "je prends A12 taille M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "Je prends la A12 en L s'il vous plaît", "kind": "match", "code": "A12", "variant": "L", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "je prends l'E15", "kind": "match", "code": "E15", "variant": "Unique", "quantity": 1, "confidence": "1.00", "tag": "elision"}
+{"text": "je prends 2 B07", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
+{"text": "j'en prends 3 Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 3, "confidence": "1.00", "tag": "elision"}
+{"text": "je prends C3 rouge", "kind": "match", "code": "C3", "variant": "Rouge", "quantity": 1, "confidence": "1.00", "tag": "colour"}
+{"text": "je prends C3 en bleu nuit", "kind": "match", "code": "C3", "variant": "Bleu nuit", "quantity": 1, "confidence": "1.00", "tag": "colour"}
+{"text": "je prends le C3 bleu", "kind": "match", "code": "C3", "variant": "Bleu", "quantity": 1, "confidence": "1.00", "tag": "colour"}
+{"text": "SOLD A12 M x2", "kind": "match", "code": "A12", "variant": "M", "quantity": 2, "confidence": "1.00", "tag": "en-verb"}
+{"text": "sold B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
+{"text": "i'll take B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
+{"text": "I’ll take Z99 please", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "apostrophe"}
+{"text": "i take A12 S", "kind": "match", "code": "A12", "variant": "S", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
+{"text": "take C3 black", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 1, "confidence": "1.00", "tag": "synonym"}
+{"text": "buy D4 36", "kind": "match", "code": "D4", "variant": "36", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
+{"text": "I want B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
+{"text": "i'd like A12 small", "kind": "match", "code": "A12", "variant": "S", "quantity": 1, "confidence": "1.00", "tag": "synonym"}
+{"text": "I would like C3 red x2", "kind": "match", "code": "C3", "variant": "Rouge", "quantity": 2, "confidence": "1.00", "tag": "synonym"}
+{"text": "i take A12 large", "kind": "match", "code": "A12", "variant": "L", "quantity": 1, "confidence": "1.00", "tag": "synonym"}
+{"text": "i want C3 navy", "kind": "rejected", "reason": "variant_not_found", "tag": "synonym"}
+{"text": "slod C3", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["C3"], "tag": "typo"}
+{"text": "slod B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "sodl Z99 x2", "kind": "match", "code": "Z99", "variant": "", "quantity": 2, "confidence": "0.80", "tag": "typo"}
+{"text": "je prend B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "je prnds A12 M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "je veu Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "tkae B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "i wnat Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "j'achte B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "SLOD A12 L", "kind": "match", "code": "A12", "variant": "L", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "je prendss B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "typo"}
+{"text": "gold B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "typo-guard"}
+{"text": "vieux B07", "kind": "rejected", "reason": "no_intent", "tag": "typo-guard"}
+{"text": "sole Z99", "kind": "rejected", "reason": "no_intent", "tag": "typo-guard"}
+{"text": "by B07", "kind": "rejected", "reason": "no_intent", "tag": "typo-guard"}
+{"text": "C3 x 2\ufe0f\u20e3", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["C3"], "tag": "emoji"}
+{"text": "B07 x 2\ufe0f\u20e3", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "0.90", "tag": "emoji"}
+{"text": "🛒 B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "emoji"}
+{"text": "🛒 A12 M x2", "kind": "match", "code": "A12", "variant": "M", "quantity": 2, "confidence": "1.00", "tag": "emoji"}
+{"text": "B07 🛒", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "emoji"}
+{"text": "je prends B07 3\ufe0f\u20e3", "kind": "match", "code": "B07", "variant": "", "quantity": 3, "confidence": "1.00", "tag": "emoji"}
+{"text": "je prends Z99 🔟", "kind": "match", "code": "Z99", "variant": "", "quantity": 10, "confidence": "1.00", "tag": "emoji"}
+{"text": "je prends B07 1\ufe0f\u20e31\ufe0f\u20e3", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "emoji"}
+{"text": "B07 ✖\ufe0f2", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "0.90", "tag": "emoji"}
+{"text": "B07 ×3", "kind": "match", "code": "B07", "variant": "", "quantity": 3, "confidence": "0.90", "tag": "emoji"}
+{"text": "❤\ufe0f❤\ufe0f C3 noir ❤\ufe0f❤\ufe0f", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 1, "confidence": "0.90", "tag": "emoji"}
+{"text": "je prends C3 rouge 😍", "kind": "match", "code": "C3", "variant": "Rouge", "quantity": 1, "confidence": "1.00", "tag": "emoji"}
+{"text": "🔥🔥🔥", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "🛒", "kind": "rejected", "reason": "no_intent", "tag": "emoji"}
+{"text": "C3 dispo ❓", "kind": "rejected", "reason": "no_intent", "tag": "question"}
+{"text": "👍 Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "emoji"}
+{"text": "je prends B07 x 2\ufe0f\u20e3 🙏", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "1.00", "tag": "emoji"}
+{"text": "Ｃ３ je prends", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["C3"], "tag": "fullwidth"}
+{"text": "Ｂ０７ je prends", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fullwidth"}
+{"text": "ＳＯＬＤ Ｚ９９", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fullwidth"}
+{"text": "JE PRENDS A12 M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "1.00", "tag": "case"}
+{"text": "Je Réserve La Casquette E15", "kind": "match", "code": "E15", "variant": "Unique", "quantity": 1, "confidence": "1.00", "tag": "accent"}
+{"text": "je prends C3 NOIRE", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 1, "confidence": "1.00", "tag": "colour"}
+{"text": "je prends C3 bleue", "kind": "match", "code": "C3", "variant": "Bleu", "quantity": 1, "confidence": "1.00", "tag": "colour"}
+{"text": "je prends A12", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["A12"], "tag": "variant"}
+{"text": "A12", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["A12"], "tag": "code-alone"}
+{"text": "je prends A12 XL", "kind": "rejected", "reason": "variant_not_found", "tag": "variant"}
+{"text": "A12 taille XS", "kind": "rejected", "reason": "variant_not_found", "tag": "variant"}
+{"text": "je prends A12 rouge", "kind": "rejected", "reason": "variant_not_found", "tag": "variant"}
+{"text": "je prends A12 M et L", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["A12"], "tag": "variant"}
+{"text": "A12 S ou M ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
+{"text": "je prends A12 S ou M", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["A12"], "tag": "variant"}
+{"text": "je prends C3", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["C3"], "tag": "variant"}
+{"text": "je prends C3 vert", "kind": "rejected", "reason": "variant_not_found", "tag": "colour"}
+{"text": "je prends C3 rouge ou noir", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["C3"], "tag": "colour"}
+{"text": "je prends C3 en M", "kind": "rejected", "reason": "variant_not_found", "tag": "variant"}
+{"text": "C3 blue", "kind": "match", "code": "C3", "variant": "Bleu", "quantity": 1, "confidence": "0.90", "tag": "synonym"}
+{"text": "je prends C3 bleu-nuit", "kind": "match", "code": "C3", "variant": "Bleu nuit", "quantity": 1, "confidence": "1.00", "tag": "colour"}
+{"text": "je prends D4", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["D4"], "tag": "size"}
+{"text": "je prends D4 38", "kind": "match", "code": "D4", "variant": "38", "quantity": 1, "confidence": "1.00", "tag": "size"}
+{"text": "je prends D4 T40", "kind": "match", "code": "D4", "variant": "40", "quantity": 1, "confidence": "1.00", "tag": "size"}
+{"text": "D4 taille 44", "kind": "rejected", "reason": "variant_not_found", "tag": "size"}
+{"text": "je prends D4 en 44", "kind": "rejected", "reason": "variant_not_found", "tag": "size"}
+{"text": "je prends D4 38 40", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["D4"], "tag": "size"}
+{"text": "je prends 2 D4 42", "kind": "match", "code": "D4", "variant": "42", "quantity": 2, "confidence": "1.00", "tag": "size"}
+{"text": "je prends D4 44", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "limitation"}
+{"text": "je prends D4 2", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["D4"], "tag": "size"}
+{"text": "E15", "kind": "match", "code": "E15", "variant": "Unique", "quantity": 1, "confidence": "0.90", "tag": "single-variant"}
+{"text": "je prends E15 rouge", "kind": "rejected", "reason": "variant_not_found", "tag": "single-variant"}
+{"text": "je prends B07 rouge", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "no-variant"}
+{"text": "je prends A12 M rouge", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "1.00", "tag": "variant"}
+{"text": "C3rouge", "kind": "match", "code": "C3", "variant": "Rouge", "quantity": 1, "confidence": "0.90", "tag": "glued"}
+{"text": "A12Lx2", "kind": "match", "code": "A12", "variant": "L", "quantity": 2, "confidence": "0.90", "tag": "glued"}
+{"text": "je prends A12M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "1.00", "tag": "glued"}
+{"text": "je prends B07 x2", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
+{"text": "je prends B07 2x", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
+{"text": "B07 2 pcs", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "0.90", "tag": "quantity"}
+{"text": "je prends B07 quantité 4", "kind": "match", "code": "B07", "variant": "", "quantity": 4, "confidence": "1.00", "tag": "quantity"}
+{"text": "je prends B07 qté 5", "kind": "match", "code": "B07", "variant": "", "quantity": 5, "confidence": "1.00", "tag": "quantity"}
+{"text": "je prends B07 2 fois", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
+{"text": "je prends 3 exemplaires du B07", "kind": "match", "code": "B07", "variant": "", "quantity": 3, "confidence": "1.00", "tag": "quantity"}
+{"text": "2xB07", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "0.90", "tag": "glued"}
+{"text": "je prends B07 x10", "kind": "match", "code": "B07", "variant": "", "quantity": 10, "confidence": "1.00", "tag": "bounds"}
+{"text": "je prends B07 x11", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
+{"text": "je prends B07 x0", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
+{"text": "je prends 0 B07", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
+{"text": "je prends 100 Z99", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
+{"text": "je prends B07 x2 x3", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "quantity"}
+{"text": "je prends deux B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "number-word"}
+{"text": "I take two B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "number-word"}
+{"text": "je prends B07 x1 x50", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "quantity"}
+{"text": "je prends le C3 noir en 2 exemplaires", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
+{"text": "je prends B07 à 15€", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}
+{"text": "B07 15 euros", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "price"}
+{"text": "je prends le B07 à -50%", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}
+{"text": "B07 c'est combien ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
+{"text": "C3 dispo ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
+{"text": "je prends B07 ?", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "question"}
+{"text": "je veux pas B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "negation"}
+{"text": "je ne prends pas B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "negation"}
+{"text": "je n'en veux pas du B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "negation"}
+{"text": "don't take Z99", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["Z99"], "tag": "negation"}
+{"text": "i don't want B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "negation"}
+{"text": "je prends Z99 si dispo", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["Z99"], "tag": "question"}
+{"text": "je prends A12 M c'est combien ?", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["A12"], "tag": "question"}
+{"text": "je prends A12 M ?", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["A12"], "tag": "question"}
+{"text": "je veux Z99 mais pas tout de suite", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["Z99"], "tag": "negation"}
+{"text": "annule B07", "kind": "rejected", "reason": "no_intent", "tag": "negation"}
+{"text": "pas B07", "kind": "rejected", "reason": "no_intent", "tag": "negation"}
+{"text": "B07 sold out ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
+{"text": "B07 sold out", "kind": "rejected", "reason": "no_intent", "tag": "negation"}
+{"text": "il reste des D4 en 38 ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
+{"text": "sold out", "kind": "rejected", "reason": "no_intent", "tag": "negation"}
+{"text": "bonjour", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "trop beau", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "prix ?", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "trop beau le C3", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "j'adore la robe", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "la robe A12 est magnifique", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "je prends", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "SOLD", "kind": "rejected", "reason": "no_intent", "tag": "noise"}
+{"text": "@marie regarde le C3", "kind": "rejected", "reason": "no_intent", "tag": "mention"}
+{"text": "je prends la bleue", "kind": "rejected", "reason": "no_intent", "tag": "limitation"}
+{"text": "je prends A12 M et C3", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "je prends B07 et Z99", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "B07 Z99", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "je prends B07 et Q7", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "je prends Q7 et Q8", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "je prends B07 ou Z99 ?", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "A12 M, C3 rouge", "kind": "rejected", "reason": "multiple_products", "tag": "multiple"}
+{"text": "je prends B07 B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "multiple"}
+{"text": "B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "code-alone"}
+{"text": "B07 pour moi", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "code-alone"}
+{"text": "A12 M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "0.90", "tag": "code-alone"}
+{"text": "C3 rouge x2", "kind": "match", "code": "C3", "variant": "Rouge", "quantity": 2, "confidence": "0.90", "tag": "code-alone"}
+{"text": "@marie B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "mention"}
+{"text": "le sac B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "code-alone"}
+{"text": "B07 pour ma fille", "kind": "rejected", "reason": "no_intent", "tag": "code-alone"}
+{"text": "BO7", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "o0-confusion"}
+{"text": "je prends BO7", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "o0-confusion"}
+{"text": "Al2 M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "0.80", "tag": "o0-confusion"}
+{"text": "je prends AI2 S", "kind": "match", "code": "A12", "variant": "S", "quantity": 1, "confidence": "0.80", "tag": "o0-confusion"}
+{"text": "El5", "kind": "match", "code": "E15", "variant": "Unique", "quantity": 1, "confidence": "0.80", "tag": "o0-confusion"}
+{"text": "slod BO7", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.80", "tag": "o0-confusion"}
+{"text": "A1O", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "o0-confusion"}
+{"text": "je prends A1O M", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "o0-confusion"}
+{"text": "Z9O", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "o0-confusion"}
+{"text": "je prends A13", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "Q7", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "B7", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "je prends B7 x2", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "sold C4 M", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "je prends A21", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "je prends Z999", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "je prends Q7 ?", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "je prends Q7 en 38", "kind": "ambiguous", "reason": "unknown_code", "candidates": [], "tag": "unknown-code"}
+{"text": "je prends la robe", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["A12"], "tag": "name"}
+{"text": "je prends le sac en cuir", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["B07"], "tag": "name"}
+{"text": "je veux le T-shirt rouge", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["C3"], "tag": "name"}
+{"text": "je prends la casquette", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["E15"], "tag": "name"}
+{"text": "je prends le jean en 38", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["D4"], "tag": "name"}
+{"text": "je prends la robe en M", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["A12"], "tag": "name"}
+{"text": "je prends la robe fleurie x2", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["A12"], "tag": "name"}
+{"text": "je prends des robes", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["A12"], "tag": "name"}
+{"text": "je veux la carte cadeau", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["Z99"], "tag": "name"}
+{"text": "je prends le coton", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["C3"], "tag": "name"}
+{"text": "je prends la robe ?", "kind": "ambiguous", "reason": "product_by_name", "candidates": ["A12"], "tag": "name"}
+{"text": "la robe est trop belle", "kind": "rejected", "reason": "no_intent", "tag": "name"}
+{"text": "i'll take the gift card", "kind": "rejected", "reason": "no_intent", "tag": "limitation"}
+{"text": "je prends la robe x50", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "name"}
