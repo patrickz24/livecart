@@ -1,11 +1,21 @@
+import os
 import socket
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
-from livecart_core.healthcheck import HEALTHY, UNHEALTHY, check_http, main
+from livecart_core.healthcheck import (
+    HEALTHY,
+    HEARTBEAT_FILE_ENV,
+    UNHEALTHY,
+    check_heartbeat,
+    check_http,
+    main,
+)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -65,3 +75,43 @@ def test_command_rejects_other_schemes() -> None:
         main(["http", "ftp://example.invalid/"])
 
     assert excinfo.value.code == 2
+
+
+def test_a_fresh_heartbeat_is_healthy(tmp_path: Path) -> None:
+    beat = tmp_path / "worker.heartbeat"
+    beat.touch()
+
+    assert check_heartbeat(beat, max_age_s=30)
+
+
+def test_an_old_or_missing_heartbeat_is_unhealthy(tmp_path: Path) -> None:
+    beat = tmp_path / "worker.heartbeat"
+    assert not check_heartbeat(beat, max_age_s=30)
+
+    beat.touch()
+    touched_at = beat.stat().st_mtime
+    assert check_heartbeat(beat, max_age_s=30, now=touched_at + 30)
+    assert not check_heartbeat(beat, max_age_s=30, now=touched_at + 31)
+
+
+def test_heartbeat_command_exit_status(tmp_path: Path) -> None:
+    beat = tmp_path / "worker.heartbeat"
+    assert main(["heartbeat", "--file", str(beat)]) == UNHEALTHY
+
+    beat.touch()
+    assert main(["heartbeat", "--file", str(beat)]) == HEALTHY
+
+    old = time.time() - 60
+    os.utime(beat, (old, old))
+    assert main(["heartbeat", "--file", str(beat), "--max-age", "30"]) == UNHEALTHY
+    assert main(["heartbeat", "--file", str(beat), "--max-age", "90"]) == HEALTHY
+
+
+def test_heartbeat_command_reads_the_worker_setting(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    beat = tmp_path / "custom.heartbeat"
+    beat.touch()
+    monkeypatch.setenv(HEARTBEAT_FILE_ENV, str(beat))
+
+    assert main(["heartbeat"]) == HEALTHY

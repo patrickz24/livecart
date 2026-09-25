@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.settings import AppEnv, LogLevel, Settings
 
 APP_URL = "postgresql+asyncpg://livecart_app:{password}@localhost:55432/livecart"
@@ -12,7 +13,7 @@ REDIS_URL = "redis://:{password}@localhost:56379/0"
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts from an environment without any LiveCart variable."""
-    for name in ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL"):
+    for name in ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "WORKER_HEARTBEAT_FILE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -148,6 +149,15 @@ def test_environment_overrides_dotenv(tmp_path: Path, monkeypatch: pytest.Monkey
     settings = Settings(_env_file=env_file)
 
     assert settings.redis_url.get_secret_value() == "redis://environment:6379/0"
+
+
+def test_worker_heartbeat_file_defaults_to_the_healthcheck_path(tmp_path: Path) -> None:
+    assert load(**dev_env()).worker_heartbeat_file == DEFAULT_HEARTBEAT_FILE
+
+    custom = tmp_path / "beat"
+    settings = load(WORKER_HEARTBEAT_FILE=str(custom), **dev_env())
+
+    assert settings.worker_heartbeat_file == custom
 
 
 def test_settings_are_immutable() -> None:

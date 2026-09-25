@@ -8,10 +8,13 @@ repr, a log line or a validation error.
 """
 
 from enum import StrEnum
+from pathlib import Path
 from typing import Self
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 
 # Marker of the development placeholders shipped in .env.example.
 PLACEHOLDER_MARKER = "change-me"
@@ -99,6 +102,8 @@ class Settings(BaseAppSettings):
 
     database_url: SecretStr
     redis_url: SecretStr
+    # Touched by the worker heartbeat, read by `livecart-healthcheck heartbeat`.
+    worker_heartbeat_file: Path = DEFAULT_HEARTBEAT_FILE
 
     @field_validator("database_url")
     @classmethod

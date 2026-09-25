@@ -6,6 +6,9 @@ license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = ["livecart-core"]
 
+[project.scripts]
+livecart-worker = "livecart_worker.main:main"
+
 [tool.uv.sources]
 livecart-core = { workspace = true }
 
