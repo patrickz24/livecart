@@ -63,6 +63,7 @@ plugins = ["pydantic.mypy"]
 files = [
     "packages/livecart-core/src",
     "services/api/src",
+    "services/api/scripts",
     "services/worker/src",
 ]
 

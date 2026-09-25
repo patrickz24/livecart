@@ -1,11 +1,19 @@
 # JS workspace members, listed explicitly because packages/ also holds a uv
-# member. Only existing directories are listed: apps/web and
-# packages/api-client arrive later in milestone 1, apps/mobile and
-# packages/design-tokens in milestone 8.
-packages: []
+# member. Only existing directories are listed: apps/mobile and
+# packages/design-tokens arrive in milestone 8.
+packages:
+  - apps/web
+  - packages/api-client
 
 # pnpm blocks dependency build scripts unless they are reviewed here, and
 # fails the install on an unreviewed one (strictDepBuilds).
 allowBuilds:
   # postinstall runs `lefthook install` for this clone; skipped when CI is set.
   lefthook: true
+
+overrides:
+  # @hey-api/json-schema-ref-parser pins js-yaml 4.2.0, which has three HIGH
+  # CPU-exhaustion advisories on crafted YAML (fixed in 4.3.2, same major).
+  # The generator only reads our own openapi.json, but a fixable HIGH must not
+  # stay in the lockfile. Drop this once Hey API ships js-yaml >= 4.3.2.
+  "@hey-api/json-schema-ref-parser>js-yaml": 4.3.2
