@@ -1,0 +1,21 @@
+# Normalize every text file to LF, in the index and in the working tree,
+# whatever the platform or the local core.autocrlf setting.
+* text=auto eol=lf
+
+# Binary assets: never normalized or diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+
+# The only generated files kept under version control (checked in CI).
+# Collapsed in GitHub diffs and excluded from language statistics.
+packages/api-client/openapi.json linguist-generated=true
+packages/api-client/src/generated/** linguist-generated=true
+loadtest/results/*.json linguist-generated=true
