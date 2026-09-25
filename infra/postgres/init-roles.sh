@@ -31,6 +31,14 @@ run_psql() {
 # appear on a command line, where the process list would show them.
 run_psql --dbname postgres --file "$sql_dir/roles.sql"
 
+# By default PUBLIC may connect to the maintenance databases, and create
+# temporary tables in postgres. Only the superuser needs them, so neither
+# LiveCart role can connect anywhere but livecart and livecart_test.
+# (A database created later does not copy these privileges from template1.)
+for maintenance_db in postgres template1; do
+  run_psql --dbname postgres --command "REVOKE ALL ON DATABASE $maintenance_db FROM PUBLIC"
+done
+
 for db in "${databases[@]}"; do
   # CREATE DATABASE cannot run in a transaction or a DO block: \gexec runs it
   # only when the database does not exist yet.

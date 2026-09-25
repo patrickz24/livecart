@@ -127,3 +127,27 @@ def test_the_runtime_role_cannot_touch_the_migration_history(
             await engine.dispose()
 
     assert asyncio.run(sqlstates()) == [INSUFFICIENT_PRIVILEGE] * 3
+
+
+async def test_no_role_can_use_the_maintenance_databases(app_engine: AsyncEngine) -> None:
+    async with app_engine.connect() as connection:
+        rows = (
+            await connection.execute(
+                text(
+                    "SELECT r.rolname, d.datname,"
+                    " has_database_privilege(r.rolname, d.datname, 'CONNECT'),"
+                    " has_database_privilege(r.rolname, d.datname, 'TEMPORARY')"
+                    " FROM pg_roles r CROSS JOIN pg_database d"
+                    " WHERE r.rolname IN ('livecart_app', 'livecart_migrator')"
+                    " AND d.datname IN ('postgres', 'template1')"
+                    " ORDER BY r.rolname, d.datname"
+                )
+            )
+        ).all()
+
+    assert [tuple(row) for row in rows] == [
+        ("livecart_app", "postgres", False, False),
+        ("livecart_app", "template1", False, False),
+        ("livecart_migrator", "postgres", False, False),
+        ("livecart_migrator", "template1", False, False),
+    ]

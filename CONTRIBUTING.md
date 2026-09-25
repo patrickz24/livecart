@@ -90,6 +90,7 @@ Other useful commands:
 - Formatting fixes: `uv run --locked ruff format .` and `pnpm run format`.
 - The compose smoke test that CI runs (starts the stack, checks every service and endpoint): `pnpm run smoke:compose`.
 - The OpenAPI drift check of CI: `pnpm run check:openapi`. `packages/api-client/openapi.json` and `packages/api-client/src/generated/` are generated: never edit them by hand, run `make gen-api` and commit the result with the API change.
+- The PostgreSQL roles and grants of `infra/postgres` are applied once, when the postgres volume is created. After a change to them, re-apply them to the existing volume with `docker compose exec postgres bash /docker-entrypoint-initdb.d/10-init-roles.sh` (idempotent; in Git Bash, prefix it with `MSYS_NO_PATHCONV=1`), or start over with `make reset`, which deletes the data.
 
 ## Ports
 

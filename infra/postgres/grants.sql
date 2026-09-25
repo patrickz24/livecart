@@ -5,7 +5,8 @@
 \set ON_ERROR_STOP on
 
 -- Only livecart_app may connect besides the owner (livecart_migrator); no
--- other role gets CONNECT, and nobody gets TEMPORARY.
+-- other role gets CONNECT, and nobody gets TEMPORARY. init-roles.sh closes the
+-- maintenance databases (postgres, template1) the same way.
 REVOKE ALL ON DATABASE :"db" FROM PUBLIC;
 GRANT CONNECT ON DATABASE :"db" TO livecart_app;
 
