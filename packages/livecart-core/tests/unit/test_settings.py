@@ -14,7 +14,7 @@ REDIS_URL = "redis://:{password}@localhost:56379/0"
 def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts from an environment without any LiveCart variable."""
     names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
-    for name in (*names, "WORKER_HEARTBEAT_FILE"):
+    for name in (*names, "WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -167,6 +167,30 @@ def test_settings_are_immutable() -> None:
     with pytest.raises(ValidationError):
         # mypy already rejects the assignment (frozen model); pydantic must too.
         settings.log_level = LogLevel.DEBUG  # type: ignore[misc]
+
+
+def test_max_quantity_per_comment_defaults_to_ten() -> None:
+    assert load(**dev_env()).max_quantity_per_comment == 10
+
+
+@pytest.mark.parametrize("value", ["1", "10", "99"])
+def test_max_quantity_per_comment_accepts_the_database_check_range(value: str) -> None:
+    settings = load(MAX_QUANTITY_PER_COMMENT=value, **dev_env())
+
+    assert settings.max_quantity_per_comment == int(value)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "100", "1000"])
+def test_max_quantity_per_comment_must_stay_within_the_database_check(value: str) -> None:
+    with pytest.raises(ValidationError, match="from 1 to 99") as excinfo:
+        load(MAX_QUANTITY_PER_COMMENT=value, **dev_env())
+
+    assert "max_quantity_per_comment" in str(excinfo.value)
+
+
+def test_max_quantity_per_comment_must_be_an_integer() -> None:
+    with pytest.raises(ValidationError, match="max_quantity_per_comment"):
+        load(MAX_QUANTITY_PER_COMMENT="ten", **dev_env())
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

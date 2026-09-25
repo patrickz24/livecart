@@ -14,6 +14,7 @@ from typing import Self
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 
 # Marker of the development placeholders shipped in .env.example.
@@ -104,6 +105,9 @@ class Settings(BaseAppSettings):
     redis_url: SecretStr
     # Touched by the worker heartbeat, read by `livecart-healthcheck heartbeat`.
     worker_heartbeat_file: Path = DEFAULT_HEARTBEAT_FILE
+    # Business bound on the quantity of one purchase intent. The domain never
+    # reads settings: the use cases hand it to the parser as an argument.
+    max_quantity_per_comment: int = 10
 
     @field_validator("database_url")
     @classmethod
@@ -114,6 +118,22 @@ class Settings(BaseAppSettings):
     @classmethod
     def _check_redis_url(cls, value: SecretStr) -> SecretStr:
         return _require_scheme(value, "redis", "rediss")
+
+    @field_validator("max_quantity_per_comment")
+    @classmethod
+    def _check_max_quantity_per_comment(cls, value: int) -> int:
+        """Keep the business bound inside the safety bound of the database CHECK.
+
+        A larger value would let the parser accept a quantity that the
+        ``purchase_intents`` insert then rejects, long after the comment was
+        acknowledged.
+        """
+        if not 1 <= value <= QUANTITY_CEILING:
+            raise ValueError(
+                f"must be from 1 to {QUANTITY_CEILING}, the bound of the "
+                "purchase_intents quantity CHECK"
+            )
+        return value
 
 
 class MigrationSettings(BaseAppSettings):
