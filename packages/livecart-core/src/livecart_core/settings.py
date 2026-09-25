@@ -114,3 +114,18 @@ class Settings(BaseAppSettings):
     @classmethod
     def _check_redis_url(cls, value: SecretStr) -> SecretStr:
         return _require_scheme(value, "redis", "rediss")
+
+
+class MigrationSettings(BaseAppSettings):
+    """Settings of ``livecart-migrate``, the only process that alters the schema.
+
+    ``MIGRATOR_URL`` connects as ``livecart_migrator``, owner of the schema. The
+    API and worker containers never receive it.
+    """
+
+    migrator_url: SecretStr
+
+    @field_validator("migrator_url")
+    @classmethod
+    def _check_migrator_url(cls, value: SecretStr) -> SecretStr:
+        return _require_scheme(value, "postgresql+asyncpg")

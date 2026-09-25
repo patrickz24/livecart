@@ -5,6 +5,7 @@ description = "LiveCart domain model, application use cases and infrastructure a
 license = "MIT"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "alembic==1.20.0",
     "asyncpg==0.31.0",
     "pydantic==2.13.5",
     "pydantic-settings==2.15.0",
@@ -15,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 livecart-healthcheck = "livecart_core.healthcheck:main"
+livecart-migrate = "livecart_core.migrate:main"
 
 [build-system]
 requires = ["uv_build>=0.12.19,<0.13.0"]

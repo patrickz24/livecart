@@ -4,7 +4,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
-from livecart_core.settings import AppEnv, LogLevel, Settings
+from livecart_core.settings import AppEnv, LogLevel, MigrationSettings, Settings
 
 APP_URL = "postgresql+asyncpg://livecart_app:{password}@localhost:55432/livecart"
 REDIS_URL = "redis://:{password}@localhost:56379/0"
@@ -13,7 +13,8 @@ REDIS_URL = "redis://:{password}@localhost:56379/0"
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts from an environment without any LiveCart variable."""
-    for name in ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "WORKER_HEARTBEAT_FILE"):
+    names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
+    for name in (*names, "WORKER_HEARTBEAT_FILE"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -165,3 +166,32 @@ def test_settings_are_immutable() -> None:
 
     with pytest.raises(ValidationError):
         settings.log_level = LogLevel.DEBUG
+
+
+MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"
+
+
+def load_migration(**env: str) -> MigrationSettings:
+    with pytest.MonkeyPatch.context() as patch:
+        for name, value in env.items():
+            patch.setenv(name, value)
+        return MigrationSettings(_env_file=None)
+
+
+def test_migration_settings_need_only_the_migrator_url() -> None:
+    settings = load_migration(MIGRATOR_URL=MIGRATOR_URL.format(password="change-me-migrator"))
+
+    assert "livecart_migrator" in settings.migrator_url.get_secret_value()
+    assert not hasattr(settings, "database_url")
+
+
+def test_migrator_placeholder_is_rejected_in_production() -> None:
+    with pytest.raises(ValidationError, match="MIGRATOR_URL"):
+        load_migration(
+            APP_ENV="production", MIGRATOR_URL=MIGRATOR_URL.format(password="change-me-migrator")
+        )
+
+
+def test_migrator_url_must_use_asyncpg() -> None:
+    with pytest.raises(ValidationError, match=r"postgresql\+asyncpg"):
+        load_migration(MIGRATOR_URL="postgresql://livecart_migrator:x@localhost/livecart")
