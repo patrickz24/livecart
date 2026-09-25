@@ -1,0 +1,9 @@
+# Files listed in .gitignore are ignored as well (Prettier 3 default).
+
+# Lockfiles are written by their package manager.
+pnpm-lock.yaml
+
+# Generated files, versioned and checked for drift in CI.
+packages/api-client/openapi.json
+packages/api-client/src/generated/
+loadtest/results/

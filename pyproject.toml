@@ -1,6 +1,15 @@
 # Virtual uv workspace root: not a package itself. It groups the Python
 # members under a single uv.lock and holds the shared tool configuration.
 
+[dependency-groups]
+dev = [
+    "mypy==2.3.1",
+    # Imported by the pydantic mypy plugin; the runtime dependency is
+    # declared by livecart-core once it uses Pydantic.
+    "pydantic==2.13.5",
+    "ruff==0.16.9",
+]
+
 [tool.uv]
 required-version = ">=0.12.19,<0.13"
 
@@ -11,3 +20,52 @@ members = [
     "services/api",
     "services/worker",
 ]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "B",     # flake8-bugbear
+    "UP",    # pyupgrade
+    "S",     # flake8-bandit: security (includes S608, SQL built from strings)
+    "ASYNC", # flake8-async: blocking calls inside coroutines
+    "DTZ",   # flake8-datetimez: naive datetimes (timestamps are UTC-aware)
+    "SIM",   # flake8-simplify
+    "C4",    # flake8-comprehensions
+    "PT",    # flake8-pytest-style
+    "RUF",   # ruff-specific rules
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert and use obviously fake credentials.
+"**/tests/**" = ["S101", "S105", "S106"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["livecart_core", "livecart_api", "livecart_worker"]
+
+[tool.ruff.format]
+line-ending = "lf"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+enable_error_code = ["ignore-without-code"]
+plugins = ["pydantic.mypy"]
+files = [
+    "packages/livecart-core/src",
+    "services/api/src",
+    "services/worker/src",
+]
+
+[tool.pydantic-mypy]
+init_forbid_extra = true
+init_typed = true
+warn_required_dynamic_aliases = true
