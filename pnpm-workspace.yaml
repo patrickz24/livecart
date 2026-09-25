@@ -1,0 +1,5 @@
+# JS workspace members, listed explicitly because packages/ also holds a uv
+# member. Only existing directories are listed: apps/web and
+# packages/api-client arrive later in milestone 1, apps/mobile and
+# packages/design-tokens in milestone 8.
+packages: []

@@ -1,0 +1,13 @@
+# Virtual uv workspace root: not a package itself. It groups the Python
+# members under a single uv.lock and holds the shared tool configuration.
+
+[tool.uv]
+required-version = ">=0.12.19,<0.13"
+
+[tool.uv.workspace]
+# The simulator (services/simulator) joins in milestone 4a.
+members = [
+    "packages/livecart-core",
+    "services/api",
+    "services/worker",
+]

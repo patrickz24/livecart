@@ -1,0 +1,37 @@
+version = 1
+revision = 3
+requires-python = "==3.12.*"
+
+[manifest]
+members = [
+    "livecart-api",
+    "livecart-core",
+    "livecart-worker",
+]
+
+[[package]]
+name = "livecart-api"
+version = "0.1.0"
+source = { editable = "services/api" }
+dependencies = [
+    { name = "livecart-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "livecart-core", editable = "packages/livecart-core" }]
+
+[[package]]
+name = "livecart-core"
+version = "0.1.0"
+source = { editable = "packages/livecart-core" }
+
+[[package]]
+name = "livecart-worker"
+version = "0.1.0"
+source = { editable = "services/worker" }
+dependencies = [
+    { name = "livecart-core" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "livecart-core", editable = "packages/livecart-core" }]

@@ -1,0 +1,14 @@
+[project]
+name = "livecart-worker"
+version = "0.1.0"
+description = "LiveCart asyncio worker: comment queue consumer and background loops."
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = ["livecart-core"]
+
+[tool.uv.sources]
+livecart-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"
