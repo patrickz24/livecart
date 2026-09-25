@@ -14,7 +14,7 @@ A public portfolio repository is judged on the discipline of its tooling as much
 
 - ruff 0.16.9 lints and formats (`target-version = "py312"`, line length 100, LF line endings, formatted code in docstrings). Selected rule families: pycodestyle (`E`, `W`), pyflakes (`F`), isort (`I`), bugbear (`B`), pyupgrade (`UP`), bandit (`S`, including `S608` for SQL built from strings), flake8-async (`ASYNC`, blocking calls in coroutines), datetimez (`DTZ`, naive datetimes), simplify (`SIM`), comprehensions (`C4`), pytest-style (`PT`) and ruff's own rules (`RUF`). Tests may use `assert` and obviously fake credentials: `S101` and `S105` to `S107` are ignored under `tests/`.
 - mypy 2.3.1 runs in `strict` mode with `warn_unreachable`, the `ignore-without-code` error code and the `pydantic.mypy` plugin (`init_forbid_extra`, `init_typed`, `warn_required_dynamic_aliases`). It checks the `src` trees, `services/api/scripts`, the root `conftest.py` and every `tests` folder, with the src roots on `mypy_path` and explicit package bases so that two members can hold a file with the same name.
-- pytest 9 with its native TOML configuration, `--import-mode=importlib`, `strict`, warnings turned into errors, `asyncio_mode = "auto"` and branch coverage; an `integration` marker names the tests that need the compose PostgreSQL and Redis.
+- pytest 9 with its native TOML configuration, `--import-mode=importlib`, `strict`, warnings turned into errors and `asyncio_mode = "auto"`; an `integration` marker names the tests that need the compose PostgreSQL and Redis. pytest-cov 7.1.0 is installed and `[tool.coverage.run]` sets `branch = true`, but no command runs coverage yet: the plan's branch-coverage threshold (80 %) is an end criterion of milestone 2.
 
 ### TypeScript: ESLint, Prettier and Vitest
 
@@ -43,7 +43,7 @@ A public portfolio repository is judged on the discipline of its tooling as much
 
 ## Consequences
 
-- The checks a developer runs (`make lint`, `make test`) are the checks CI runs, with the same pinned versions; `uv run --locked` and `pnpm exec` never pick another tool.
+- `make lint` and `make test` run the checks of the `python` and `node` CI jobs with the same pinned versions; `uv run --locked` and `pnpm exec` never pick another tool. The OpenAPI drift check, the security scans and the docker job (image builds, compose smoke test, image scans) are CI-only; the drift check and the smoke test can be run by hand with `pnpm run check:openapi` and `pnpm run smoke:compose`.
 - Commits are formatted and secret-scanned before they exist, so CI failures are about logic, not style. The hooks are never bypassed with `--no-verify`.
 - Strict typing on both sides, tests included, costs some annotations up front; the pydantic plugin makes model constructors type-checked.
 - A newly published advisory can turn `main` red on a Monday without any change in the repository. That is intended: the fix is an upgrade or an override, not an ignore list. Dependabot is planned but not configured yet.
@@ -54,7 +54,7 @@ A public portfolio repository is judged on the discipline of its tooling as much
 ## Alternatives considered
 
 - **Black, isort, flake8 and bandit** as separate tools: ruff replaces the four with one configuration and one binary.
-- **The pre-commit framework**: lefthook was chosen for its native Windows binary and because it runs the project's own commands (`uv run`, `pnpm exec`) instead of managing environments of its own.
+- **The pre-commit framework with `repo: local` hooks**, which would run the same project commands (`uv run`, `pnpm exec`): lefthook was chosen for its native Windows binary, which comes with `pnpm install` as a dev dependency and installs the hooks from that same command, so the hooks need one `lefthook.yml` and no Python-side install step.
 - **Jest for the web app**: Vitest reuses the Vite configuration; Jest stays for the mobile app, where jest-expo requires it.
 - **ESLint 9**: end of life, and ESLint 10 only reads the flat config.
 - **Tag-pinned actions** (`@v7`): a moved tag can run code the review never saw.
