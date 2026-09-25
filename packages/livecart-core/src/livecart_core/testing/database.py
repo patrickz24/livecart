@@ -2,22 +2,26 @@
 
 Integration tests truncate and rewrite tables. They therefore refuse to run
 against any database whose name does not end in ``_test``, so a typo in
-TEST_DATABASE_URL can never wipe the development database.
+TEST_DATABASE_URL can never wipe the development database. Likewise, they only
+use Redis database 15, which the API and the worker (database 0) never touch,
+and each test writes under a key prefix of its own (``redis_keys.py``).
 """
 
 import socket
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from pydantic import SecretStr, ValidationError
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
 
 TEST_DATABASE_SUFFIX = "_test"
+TEST_REDIS_DATABASE = 15
 
 
 class UnsafeTestDatabaseError(RuntimeError):
-    """Raised when a test fixture is pointed at a database not named ``*_test``."""
+    """Raised when a test fixture is pointed at real data: a PostgreSQL database
+    not named ``*_test``, or a Redis database other than 15."""
 
 
 class IntegrationSettingsError(RuntimeError):
@@ -34,6 +38,39 @@ def ensure_test_database(url: SecretStr, *, variable: str) -> str:
         raise UnsafeTestDatabaseError(
             f"{variable} targets database {database!r}; test fixtures only run against a "
             f"database whose name ends in {TEST_DATABASE_SUFFIX!r}, such as 'livecart_test'"
+        )
+    return database
+
+
+def redis_database(url: SecretStr) -> int | None:
+    """The Redis database that ``url`` selects, or None when it is not a number.
+
+    Same precedence as redis-py's ``Redis.from_url``: a ``db`` query parameter
+    wins over the path (``/15``), and a URL with neither selects database 0.
+    """
+    parts = urlsplit(url.get_secret_value())
+    query = parse_qs(parts.query).get("db")
+    if query:
+        raw = unquote(query[0])
+    elif parts.scheme == "unix":
+        raw = ""  # the path of a unix:// URL is the socket, not a database
+    else:
+        raw = unquote(parts.path).replace("/", "")
+    if raw == "":
+        return 0
+    return int(raw) if raw.isascii() and raw.isdecimal() else None
+
+
+def ensure_test_redis_database(url: SecretStr, *, variable: str) -> int:
+    """Return the Redis database of ``url`` if it is 15, else raise.
+
+    The error names the variable and the database, never the URL (it holds a password).
+    """
+    database = redis_database(url)
+    if database != TEST_REDIS_DATABASE:
+        raise UnsafeTestDatabaseError(
+            f"{variable} selects Redis database {database!r}; test fixtures only run against "
+            f"database {TEST_REDIS_DATABASE}, as in redis://:<password>@127.0.0.1:56379/15"
         )
     return database
 
@@ -67,6 +104,7 @@ def load_integration_settings(env_file: Path | None = Path(".env")) -> Integrati
         ) from None
     ensure_test_database(settings.database_url, variable="TEST_DATABASE_URL")
     ensure_test_database(settings.migrator_url, variable="TEST_MIGRATOR_URL")
+    ensure_test_redis_database(settings.redis_url, variable="TEST_REDIS_URL")
     return settings
 
 

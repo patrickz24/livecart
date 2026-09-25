@@ -2,8 +2,10 @@
 
 They target the compose PostgreSQL and Redis published on 127.0.0.1, through
 the TEST_* variables. Only tests marked ``integration`` request them, so the
-unit suite never needs Docker. Every database fixture goes through
-``load_integration_settings``, which refuses a database not named ``*_test``.
+unit suite never needs Docker. Every fixture goes through
+``load_integration_settings``, which refuses a PostgreSQL database not named
+``*_test`` and a Redis database other than 15; ``redis_key_prefix`` gives each
+test its own Redis keys.
 """
 
 from collections.abc import AsyncIterator
@@ -21,6 +23,7 @@ from livecart_core.testing.database import (
     load_integration_settings,
     unreachable_servers,
 )
+from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
 
 
 @pytest.fixture(scope="session")
@@ -71,8 +74,19 @@ async def migrator_engine(integration_settings: IntegrationSettings) -> AsyncIte
 
 @pytest.fixture
 async def redis_client(integration_settings: IntegrationSettings) -> AsyncIterator[Redis]:
+    """Client of Redis database 15 (TEST_REDIS_URL, checked by the settings guard)."""
     client = create_redis_client(integration_settings.redis_url)
     try:
         yield client
     finally:
         await client.aclose()
+
+
+@pytest.fixture
+async def redis_key_prefix(redis_client: Redis) -> AsyncIterator[str]:
+    """A key prefix of this test alone; every key under it is deleted when the test ends."""
+    prefix = new_test_key_prefix()
+    try:
+        yield prefix
+    finally:
+        await delete_keys_with_prefix(redis_client, prefix)
