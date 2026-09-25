@@ -4,9 +4,9 @@
 [dependency-groups]
 dev = [
     "mypy==2.3.1",
-    # Imported by the pydantic mypy plugin; the runtime dependency is
-    # declared by livecart-core once it uses Pydantic.
-    "pydantic==2.13.5",
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
     "ruff==0.16.9",
 ]
 
@@ -44,7 +44,7 @@ select = [
 
 [tool.ruff.lint.per-file-ignores]
 # Tests assert and use obviously fake credentials.
-"**/tests/**" = ["S101", "S105", "S106"]
+"**/tests/**" = ["S101", "S105", "S106", "S107"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["livecart_core", "livecart_api", "livecart_worker"]
@@ -69,3 +69,23 @@ files = [
 init_forbid_extra = true
 init_typed = true
 warn_required_dynamic_aliases = true
+
+# Native TOML configuration (pytest 9).
+[tool.pytest]
+minversion = "9.0"
+testpaths = ["packages/livecart-core/tests"]
+# importlib mode lets every member keep plain tests/ folders without
+# __init__.py files and without module name clashes.
+addopts = ["--import-mode=importlib", "-ra"]
+strict = true
+filterwarnings = ["error"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.coverage.run]
+branch = true
+source = ["livecart_core", "livecart_api", "livecart_worker"]
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
