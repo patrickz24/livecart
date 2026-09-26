@@ -14,6 +14,7 @@ fake raise ``ServiceUnavailable``, with no side effect.
 """
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import math
@@ -77,13 +78,16 @@ from livecart_core.application.dto import (
     ShipmentRequest,
     ShippingAddress,
     StockLevel,
+    StreamedEvent,
     TrackingUpdate,
     WebhookOutcome,
     WindowCount,
+    event_id_key,
     page_of,
 )
 from livecart_core.application.ports import (
     REFERENCE_DRAWS,
+    START_CURSOR,
     Clock,
     InvalidSignature,
     LiveSessionConflict,
@@ -122,6 +126,7 @@ from livecart_core.domain.state_machines import (
     TransitionOutcome,
     transition,
 )
+from livecart_core.infrastructure.events import stream_gap
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.testing.keys import TEST_ORDER_TOKEN_KEY
 
@@ -420,6 +425,110 @@ class FakeEventPublisher(_ScriptedFailures):
 
     def of_type(self, event_type: SessionEventType) -> list[SessionEvent]:
         return [event for event in self.published if event.type is event_type]
+
+
+@dataclass(frozen=True, slots=True)
+class _StreamEntry:
+    key: tuple[int, int]
+    event: SessionEvent
+    appended_at: datetime
+
+    @property
+    def streamed(self) -> StreamedEvent:
+        return StreamedEvent(f"{self.key[0]}-{self.key[1]}", self.event)
+
+
+@dataclass
+class _EventStream:
+    entries: list[_StreamEntry] = field(default_factory=list)
+    last: tuple[int, int] = (0, 0)
+    added: int = 0
+
+
+class InMemorySessionEvents(_ScriptedFailures):
+    """The session streams in memory, with the rules of their Redis adapter.
+
+    Both ports of the stream: ``EventPublisher`` and ``SessionEventStream``.
+    Ids are ``<n>-0``, ``n`` counting every event this fake appended, so that
+    they increase across streams as Redis's do. Each publication drops the
+    events of its stream older than ``retention`` on the fake's clock, as
+    ``XADD ... MINID`` does; ``expire`` drops a whole stream, as its time to
+    live would. ``read`` waits, in real time, up to its block time for an
+    event to come. ``published`` lists every event appended, in order.
+    """
+
+    def __init__(self, clock: Clock, *, retention: timedelta = timedelta(minutes=15)) -> None:
+        self._clock = clock
+        self._retention = retention
+        self._streams: dict[UUID, _EventStream] = {}
+        self._sequence = 0
+        # Set, then replaced, on every publication: what a blocked read waits on.
+        self._appended = asyncio.Event()
+        self.published: list[SessionEvent] = []
+
+    async def publish(self, event: SessionEvent) -> None:
+        self._maybe_fail("publish")
+        now = self._clock.now()
+        stream = self._streams.setdefault(event.session_id, _EventStream())
+        kept = [entry for entry in stream.entries if entry.appended_at >= now - self._retention]
+        self._sequence += 1
+        stream.last = (self._sequence, 0)
+        stream.added += 1
+        stream.entries = [*kept, _StreamEntry(stream.last, event, now)]
+        self.published.append(event)
+        self._appended.set()
+        self._appended = asyncio.Event()
+
+    async def cursor(self, session_id: UUID) -> str:
+        self._maybe_fail("cursor")
+        stream = self._streams.get(session_id)
+        if stream is None or not stream.entries:
+            return START_CURSOR
+        return stream.entries[-1].streamed.event_id
+
+    async def read(
+        self, session_id: UUID, *, after: str, max_events: int, block_seconds: float
+    ) -> list[StreamedEvent]:
+        cursor = event_id_key(after)
+        if max_events < 1 or block_seconds < 0:
+            raise ValueError("a read takes one event at least, and waits zero seconds or more")
+        self._maybe_fail("read")
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + block_seconds
+        while not (found := self._after(session_id, cursor, max_events)):
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                break
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(remaining):
+                    await self._appended.wait()
+        return found
+
+    async def has_gap(self, session_id: UUID, *, after: str) -> bool:
+        cursor = event_id_key(after)
+        self._maybe_fail("has_gap")
+        stream = self._streams.get(session_id)
+        if stream is None:
+            return True
+        return stream_gap(
+            cursor,
+            last=stream.last,
+            first=stream.entries[0].key if stream.entries else (0, 0),
+            length=len(stream.entries),
+            added=stream.added,
+        )
+
+    def expire(self, session_id: UUID) -> None:
+        """Drop the session's stream, as Redis does once its time to live runs out."""
+        self._streams.pop(session_id, None)
+
+    def of_type(self, event_type: SessionEventType) -> list[SessionEvent]:
+        return [event for event in self.published if event.type is event_type]
+
+    def _after(self, session_id: UUID, cursor: tuple[int, int], limit: int) -> list[StreamedEvent]:
+        stream = self._streams.get(session_id)
+        entries = [] if stream is None else stream.entries
+        return [entry.streamed for entry in entries if entry.key > cursor][:limit]
 
 
 class FakeBuyerNotifier(_ScriptedFailures):

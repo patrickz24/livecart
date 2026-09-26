@@ -12,6 +12,11 @@ then runs the worker's loops in one TaskGroup:
   time expired, and their stock released;
 - the heartbeat, which also checks that the consumer keeps going round.
 
+The consumer and the sweep publish the session events of what they commit
+to each session's Redis stream (``RedisSessionEvents``), after the commit
+and best effort: a failure is logged, counted in the metrics, and never
+undoes the commit.
+
 ``run`` serves the loops' metrics (``WorkerMetrics``) on ``METRICS_PORT``,
 the container's internal port 9100, for as long as they run.
 
@@ -39,7 +44,7 @@ from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
-from livecart_core.infrastructure.events import NullEventPublisher
+from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.logging import configure_logging
@@ -125,7 +130,8 @@ async def serve(
         orders = SqlOrderRepository(
             engine, currency=settings.default_currency, access_token_hash=tokens.stored_hash
         )
-        events = NullEventPublisher()
+        # After each commit, the events of what it changed go to their session's stream.
+        events = RedisSessionEvents(redis, prefix=settings.redis_key_prefix)
         process = ProcessComment(
             inbox=inbox,
             sessions=SqlLiveSessionRepository(engine),

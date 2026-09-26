@@ -9,8 +9,11 @@ test its own Redis keys, and ``clean_database`` empty tables at the head
 revision.
 """
 
+import asyncio
 import secrets
 from collections.abc import AsyncIterator
+from datetime import timedelta
+from uuid import UUID
 
 import pytest
 from redis.asyncio import Redis
@@ -20,6 +23,7 @@ from livecart_core.application.ports import CommentQueue, IdempotencyStore, Rate
 from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.engine import WORKER_POOL, create_db_engine
+from livecart_core.infrastructure.events import EVENT_RETENTION, RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
@@ -27,6 +31,7 @@ from livecart_core.testing.backends import (
     AuthBackend,
     Backend,
     BackendFactory,
+    EventsBackend,
     InMemoryBackend,
     PostgresBackend,
     ReservationBackend,
@@ -43,6 +48,7 @@ from livecart_core.testing.fakes import (
     FakeCommentQueue,
     InMemoryIdempotencyStore,
     InMemoryRateLimiter,
+    InMemorySessionEvents,
 )
 from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
@@ -227,3 +233,40 @@ def comment_queue(request: pytest.FixtureRequest) -> CommentQueue:
     client: Redis = request.getfixturevalue("redis_client")
     prefix: str = request.getfixturevalue("redis_key_prefix")
     return RedisCommentQueue(client, prefix=prefix)
+
+
+# The retention of the Redis streams under test: short, so that it passes within a test.
+TEST_EVENT_RETENTION = timedelta(milliseconds=200)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def session_events(request: pytest.FixtureRequest) -> EventsBackend:
+    """The session streams of this run of a contract scenario: the fake, then Redis Streams.
+
+    The fake's clock jumps past its 15 minutes of retention; Redis's retention
+    is shortened to 200 ms, trimmed exactly, and waited out.
+    """
+    if request.param == "memory":
+        clock = FakeClock()
+        memory = InMemorySessionEvents(clock, retention=EVENT_RETENTION)
+
+        async def jump_past_retention() -> None:
+            clock.advance(EVENT_RETENTION + timedelta(seconds=1))
+
+        async def forget(session_id: UUID) -> None:
+            memory.expire(session_id)
+
+        return EventsBackend(memory, jump_past_retention, forget)
+    client: Redis = request.getfixturevalue("redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    redis = RedisSessionEvents(
+        client, prefix=prefix, retention=TEST_EVENT_RETENTION, approximate_trim=False
+    )
+
+    async def wait_past_retention() -> None:
+        await asyncio.sleep(2 * TEST_EVENT_RETENTION.total_seconds())
+
+    async def delete(session_id: UUID) -> None:
+        await client.delete(redis.stream_key(session_id))
+
+    return EventsBackend(redis, wait_past_retention, delete)

@@ -247,6 +247,31 @@ class SessionEvent(BaseModel):
     data: dict[str, JsonValue] = Field(default_factory=dict)
 
 
+# The id a session's stream gives each event, as Redis Streams writes it:
+# milliseconds, a dash, a sequence number. It is the SSE id a client sends back
+# in Last-Event-ID, so it is bounded before anything reads it.
+EVENT_ID_PATTERN: Final = re.compile(r"(\d{1,20})-(\d{1,20})")
+
+
+def event_id_key(event_id: str) -> tuple[int, int]:
+    """``1790414357891-0`` as (1790414357891, 0), which sorts as the stream orders its ids."""
+    match = EVENT_ID_PATTERN.fullmatch(event_id)
+    if match is None:
+        raise ValueError(f"{event_id!r} is not an event id (<milliseconds>-<sequence>)")
+    return int(match[1]), int(match[2])
+
+
+@dataclass(frozen=True, slots=True)
+class StreamedEvent:
+    """An event as its session's stream holds it, under the id the stream gave it."""
+
+    event_id: str
+    event: SessionEvent
+
+    def __post_init__(self) -> None:
+        event_id_key(self.event_id)
+
+
 # --- Pages of a list -------------------------------------------------------------------
 
 # The longest page a list answers. Every list is paginated by keyset on the

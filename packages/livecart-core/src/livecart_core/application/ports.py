@@ -77,6 +77,7 @@ from livecart_core.application.dto import (
     ShipmentRef,
     ShipmentRequest,
     ShippingAddress,
+    StreamedEvent,
     TrackingUpdate,
     WebhookOutcome,
     WindowCount,
@@ -301,13 +302,62 @@ class EventPublisher(Protocol):
 
     Called after the commit that caused the event, never inside a unit. Best
     effort: a published event reaches every open stream of its session, in
-    order, but a failure raises ``ServiceUnavailable`` and is not retried. The
-    caller logs it, and the dashboard catches up from its next snapshot; its
-    reducer upserts, so an event seen twice is harmless too.
+    order, but a failure raises ``ServiceUnavailable`` and is not retried: the
+    commit stands, the failure is logged and counted, and the dashboard
+    catches up from its next snapshot. Its reducer upserts, so an event seen
+    twice is harmless too.
     """
 
     async def publish(self, event: SessionEvent) -> None:
         """Append one event to its session's stream."""
+
+
+# The cursor of a session whose stream holds no event: every event comes after it.
+START_CURSOR: Final = "0-0"
+
+
+class SessionEventStream(Protocol):
+    """Reads the stream of a live session's events, as the SSE endpoint relays them.
+
+    Each event gets an id when it is appended (``StreamedEvent.event_id``,
+    ``<milliseconds>-<sequence>``), increasing within its session: the SSE
+    id, which a client sends back as ``Last-Event-ID`` to resume. A stream
+    keeps about the last 15 minutes of events, and goes altogether a day
+    after its last event (an hour once its session has ended), so a reader
+    that resumes checks ``has_gap`` first: past a gap, it takes a new
+    snapshot rather than miss events silently. A malformed cursor raises
+    ``ValueError``, a failure of the stream ``ServiceUnavailable``.
+    """
+
+    async def cursor(self, session_id: UUID) -> str:
+        """The id of the session's last event, or ``START_CURSOR`` when it has none.
+
+        Read before the snapshot it goes with: every event after it is then
+        either in the snapshot or read after it, some maybe both.
+        """
+
+    async def read(
+        self, session_id: UUID, *, after: str, max_events: int, block_seconds: float
+    ) -> list[StreamedEvent]:
+        """At most ``max_events`` events after ``after``, oldest first.
+
+        When none is there yet, waits up to ``block_seconds`` for the first
+        one, and returns an empty list once the wait is over.
+        """
+
+    async def has_gap(self, session_id: UUID, *, after: str) -> bool:
+        """Whether events after ``after`` may be gone: trimmed, or the whole stream expired.
+
+        On the safe side: a cursor older than every event the stream still
+        holds is a gap once the stream has trimmed any, even if the cursor
+        was the last of them; so is a cursor past the stream's last event,
+        or from a stream since expired and started again. A false gap costs
+        one snapshot, a missed one would lose events.
+        """
+
+
+class SessionEventLog(EventPublisher, SessionEventStream, Protocol):
+    """Both sides of the session streams, as one adapter provides them to the API."""
 
 
 class BuyerNotifier(Protocol):

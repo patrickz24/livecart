@@ -12,7 +12,8 @@ fixtures do, while the repositories run as livecart_app.
 """
 
 import secrets
-from dataclasses import replace
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Literal, Protocol
 from uuid import UUID
@@ -36,6 +37,7 @@ from livecart_core.application.ports import (
     RefreshTokenRepository,
     ReservationExpiry,
     SellerRepository,
+    SessionEventLog,
 )
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
@@ -523,6 +525,20 @@ class PostgresBackend:
                 select(func.count()).select_from(tables.metadata.tables[table])
             )
         return int(counted or 0)
+
+
+@dataclass(frozen=True, slots=True)
+class EventsBackend:
+    """The session streams under test, and how time and expiry reach them.
+
+    ``let_retention_pass`` waits until the events published so far are past
+    the retention; ``expire`` drops a session's stream, as its time to live
+    would.
+    """
+
+    events: SessionEventLog
+    let_retention_pass: Callable[[], Awaitable[None]]
+    expire: Callable[[UUID], Awaitable[None]]
 
 
 class BackendFactory(Protocol):
