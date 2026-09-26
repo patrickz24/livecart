@@ -96,6 +96,7 @@ from livecart_core.application.ports import (
     Clock,
     InvalidSignature,
     LiveSessionConflict,
+    OrderClosed,
     ProductConflict,
     RecordNotFound,
     SellerConflict,
@@ -1554,7 +1555,10 @@ class InMemoryOrderRepository(_Repository):
         return order
 
     async def set_shipping_address(self, order_id: UUID, address: ShippingAddress) -> OrderRecord:
-        order = replace(_row(self._tables.orders, order_id, "order"), shipping_address=address)
+        order = _row(self._tables.orders, order_id, "order")
+        if order.status is not OrderStatus.PENDING_PAYMENT:
+            raise OrderClosed(f"order {order_id} is {order.status}")
+        order = replace(order, shipping_address=address)
         self._tables.orders[order_id] = order
         return order
 
@@ -1722,6 +1726,10 @@ class InMemoryPaymentRepository(_Repository):
             ),
             None,
         )
+
+    async def latest(self, order_id: UUID) -> PaymentRecord | None:
+        attempts = [row for row in self._tables.payments.values() if row.order_id == order_id]
+        return max(attempts, key=lambda row: row.attempt_no, default=None)
 
     async def find_by_provider_ref(self, provider_ref: str) -> PaymentRecord | None:
         return next(

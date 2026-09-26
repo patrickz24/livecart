@@ -48,6 +48,9 @@ cannot deadlock. Every deadline comes from the request's ``now`` (the
 3. ``UPDATE orders SET status = 'expired', expired_at = :now`` with the
    guard ``status = 'pending_payment' AND reserved_until < :now``.
 
+``set_shipping_address`` is a compare-and-set on ``status =
+'pending_payment'``: a paid or expired order keeps the address it had.
+
 The orders are only row-locked until the products are released, and set to
 expired last: a reservation of the same buyer and product that runs
 meanwhile finds the order still pending in ``uq_orders_pending_buyer_product``
@@ -79,7 +82,12 @@ from livecart_core.application.dto import (
     ShippingAddress,
     StockLevel,
 )
-from livecart_core.application.ports import REFERENCE_DRAWS, RecordNotFound, ServiceUnavailable
+from livecart_core.application.ports import (
+    REFERENCE_DRAWS,
+    OrderClosed,
+    RecordNotFound,
+    ServiceUnavailable,
+)
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome
@@ -236,6 +244,28 @@ class SqlOrderRepository:
                 ).one_or_none()
         if row is None:
             raise RecordNotFound(f"no order {order_id}")
+        return order_record(row)
+
+    async def set_shipping_address(self, order_id: UUID, address: ShippingAddress) -> OrderRecord:
+        async with transaction(self._engine) as connection:
+            row = (
+                await connection.execute(
+                    update(orders)
+                    .where(
+                        orders.c.id == order_id,
+                        orders.c.status == OrderStatus.PENDING_PAYMENT.value,
+                    )
+                    .values(shipping_address=address.model_dump(mode="json"))
+                    .returning(*orders.c)
+                )
+            ).one_or_none()
+            if row is None:
+                status = await connection.scalar(
+                    select(orders.c.status).where(orders.c.id == order_id)
+                )
+                if status is None:
+                    raise RecordNotFound(f"no order {order_id}")
+                raise OrderClosed(f"order {order_id} is {status}")
         return order_record(row)
 
     async def find_by_reference(self, reference: OrderReference) -> BuyerOrderRecord | None:

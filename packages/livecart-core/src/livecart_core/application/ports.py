@@ -142,6 +142,10 @@ class LiveSessionConflict(PortError):
     """
 
 
+class OrderClosed(PortError):
+    """A change an order takes only while it waits for its payment, asked of one paid or expired."""
+
+
 class ProductConflict(PortError):
     """A product the session's catalog cannot hold; ``conflict`` says why."""
 
@@ -866,11 +870,20 @@ class ReservationExpiry(Protocol):
         """
 
 
-class OrderRepository(OrderReservations, OrderLookup, ReservationExpiry, Protocol):
-    """Purchase intents and orders, with the stock effects of their transitions."""
+class BuyerOrders(OrderLookup, Protocol):
+    """What the buyer's routes read and change of an order: the lookup, and the address."""
 
     async def set_shipping_address(self, order_id: UUID, address: ShippingAddress) -> OrderRecord:
-        """Record where the buyer wants the order delivered."""
+        """Record where the buyer wants the order delivered, replacing any earlier address.
+
+        Only while the order waits for its payment: once it is paid (the
+        shipment is created from the address then) or expired, raises
+        ``OrderClosed``. Raises ``RecordNotFound`` when no order has ``order_id``.
+        """
+
+
+class OrderRepository(OrderReservations, BuyerOrders, ReservationExpiry, Protocol):
+    """Purchase intents and orders, with the stock effects of their transitions."""
 
     async def record_payment(self, order_id: UUID, *, now: datetime) -> OrderTransition:
         """A confirmed payment, stamped ``paid_at``.
@@ -881,8 +894,13 @@ class OrderRepository(OrderReservations, OrderLookup, ReservationExpiry, Protoco
         """
 
 
-class PaymentRepository(Protocol):
-    """Payment attempts: one row per attempt, at most one pending per order."""
+class PaymentAttempts(Protocol):
+    """Payment attempts as a checkout opens them: what ``StartCheckout`` and the bridge page need.
+
+    One row per attempt, numbered from 1, at most one pending per order
+    (``uq_payments_order_id_pending``). The attempts of one order open one at
+    a time: each opening holds the order's row until it commits.
+    """
 
     async def open_attempt(
         self,
@@ -894,22 +912,35 @@ class PaymentRepository(Protocol):
         grace: timedelta,
         max_attempts: int,
     ) -> AttemptOpening:
-        """StartCheckout, step 1.
+        """StartCheckout, step 1: one unit, before any call to the provider.
 
-        An attempt already pending is returned as it is: a second click reuses
-        its redirect URL. Otherwise, if the order waits for a payment and its
-        reservation has not ended at ``now``, the reservation is extended to
-        at least ``now + grace`` and attempt n + 1 opens, for the order's
-        total, unless ``max_attempts`` attempts were made already.
+        An attempt already pending is returned as it is, the reservation
+        untouched: a second click reuses its redirect URL. Otherwise, if the
+        order waits for a payment and its reservation has not ended at
+        ``now``, the reservation is extended to at least ``now + grace``
+        (``GREATEST``, never shortened) and attempt n + 1 opens, pending, for
+        the order's total, unless ``max_attempts`` attempts were made already.
+        Raises ``RecordNotFound`` when no order has ``order_id``.
         """
 
     async def record_checkout(
         self, payment_id: UUID, *, provider_ref: str, redirect_url: str
     ) -> PaymentRecord:
-        """Store the provider's session of an attempt once; a repeat keeps the first."""
+        """Store the provider's session of an attempt once; a repeat keeps the first.
+
+        StartCheckout, step 2, once the provider created the session. Raises
+        ``RecordNotFound`` when no attempt has ``payment_id``.
+        """
 
     async def get_pending(self, order_id: UUID) -> PaymentRecord | None:
         """The order's pending attempt, or ``None``."""
+
+    async def latest(self, order_id: UUID) -> PaymentRecord | None:
+        """The order's last attempt, whatever its status, or ``None`` before the first."""
+
+
+class PaymentRepository(PaymentAttempts, Protocol):
+    """Payment attempts, and how the provider's events settle them."""
 
     async def find_by_provider_ref(self, provider_ref: str) -> PaymentRecord | None:
         """The attempt of a provider's session, or ``None``."""

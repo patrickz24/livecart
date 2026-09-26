@@ -81,69 +81,8 @@ async def _open(
 
 
 # --- Payments --------------------------------------------------------------------------
-
-
-async def test_a_first_attempt_opens_for_the_order_total() -> None:
-    database = InMemoryDatabase()
-    order_id = await _order(database)
-
-    opening = await _open(database, order_id)
-
-    payment = opening.payment
-    assert opening.kind is AttemptOpeningKind.OPENED
-    assert payment is not None
-    assert (payment.attempt_no, payment.status) == (1, PaymentStatus.PENDING)
-    assert payment.amount == Money(2_500, "EUR")
-    assert (payment.provider, payment.return_url) == (PaymentProviderName.MOCK, RETURN_URL)
-    assert payment.created_at == NOW
-    assert payment.provider_ref is None
-    assert await database.payments.get_pending(order_id) == payment
-
-
-async def test_opening_extends_the_reservation_by_the_grace_period_at_least() -> None:
-    database = InMemoryDatabase()
-    early, late = await _order(database, "comment-1"), await _order(database, "comment-2")
-
-    await _open(database, early)
-    await _open(database, late, now=TTL - timedelta(seconds=60))
-
-    early_order, late_order = database.tables.orders[early], database.tables.orders[late]
-    # Early: NOW + GRACE is before NOW + TTL, which stays.
-    assert early_order.reserved_until == NOW + TTL
-    assert late_order.reserved_until == NOW + TTL - timedelta(seconds=60) + GRACE
-
-
-async def test_a_second_click_gets_the_pending_attempt_back() -> None:
-    database = InMemoryDatabase()
-    order_id = await _order(database)
-    first = await _open(database, order_id)
-    assert first.payment is not None
-    await database.payments.record_checkout(
-        first.payment.id, provider_ref="fake_cs_1", redirect_url="https://payments.invalid/1"
-    )
-
-    again = await _open(database, order_id, now=timedelta(seconds=5))
-
-    assert again.kind is AttemptOpeningKind.PENDING
-    assert again.payment is not None
-    assert again.payment.id == first.payment.id
-    assert again.payment.redirect_url == "https://payments.invalid/1"
-
-
-async def test_a_new_attempt_follows_an_expired_one_up_to_the_limit() -> None:
-    database = InMemoryDatabase()
-    order_id = await _order(database)
-
-    for attempt_no in (1, 2):
-        opening = await _open(database, order_id, max_attempts=2)
-        assert opening.payment is not None
-        assert opening.payment.attempt_no == attempt_no
-        await database.payments.set_status(opening.payment.id, PaymentStatus.EXPIRED)
-
-    exhausted = await _open(database, order_id, max_attempts=2)
-
-    assert exhausted == AttemptOpening(AttemptOpeningKind.EXHAUSTED)
-    assert await database.payments.get_pending(order_id) is None
+# What every backend does is in tests/contract/test_payment_attempts.py; the
+# settlement of an attempt and a paid order have no SQL adapter yet.
 
 
 async def test_an_order_past_its_reservation_or_paid_is_not_payable() -> None:
@@ -154,47 +93,6 @@ async def test_an_order_past_its_reservation_or_paid_is_not_payable() -> None:
     assert (await _open(database, due, now=TTL)).kind is AttemptOpeningKind.NOT_PAYABLE
     assert (await _open(database, paid)).kind is AttemptOpeningKind.NOT_PAYABLE
     assert database.tables.payments == {}
-
-
-async def test_opening_needs_a_known_order_and_sensible_bounds() -> None:
-    database = InMemoryDatabase()
-    order_id = await _order(database)
-
-    with pytest.raises(RecordNotFound):
-        await _open(database, UNKNOWN)
-    with pytest.raises(ValueError, match="max_attempts"):
-        await _open(database, order_id, max_attempts=0)
-    with pytest.raises(ValueError, match="grace"):
-        await database.payments.open_attempt(
-            order_id,
-            provider=PaymentProviderName.MOCK,
-            return_url=RETURN_URL,
-            now=NOW,
-            grace=timedelta(0),
-            max_attempts=3,
-        )
-
-
-async def test_the_provider_session_is_recorded_once() -> None:
-    database = InMemoryDatabase()
-    opening = await _open(database, await _order(database))
-    assert opening.payment is not None
-    payment_id = opening.payment.id
-
-    first = await database.payments.record_checkout(
-        payment_id, provider_ref="fake_cs_1", redirect_url="https://payments.invalid/1"
-    )
-    again = await database.payments.record_checkout(
-        payment_id, provider_ref="fake_cs_2", redirect_url="https://payments.invalid/2"
-    )
-
-    assert first.provider_ref == again.provider_ref == "fake_cs_1"
-    assert await database.payments.find_by_provider_ref("fake_cs_1") == first
-    assert await database.payments.find_by_provider_ref("fake_cs_2") is None
-    with pytest.raises(RecordNotFound):
-        await database.payments.record_checkout(
-            UNKNOWN, provider_ref="fake_cs_3", redirect_url="https://payments.invalid/3"
-        )
 
 
 async def test_a_pending_attempt_settles_once() -> None:

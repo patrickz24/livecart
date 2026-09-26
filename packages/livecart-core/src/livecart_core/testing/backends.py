@@ -2,8 +2,8 @@
 
 ADR 0002 asks every SQL adapter to pass the scenarios of its in-memory fake.
 ``tests/contract`` writes each scenario once, against ``ReservationBackend``
-(the comment inbox, stock and reservations) or ``AuthBackend`` (sellers and
-refresh tokens),
+(the comment inbox, stock, reservations and payment attempts) or
+``AuthBackend`` (sellers and refresh tokens),
 and runs it on ``InMemoryBackend`` (the fakes of ``fakes.py``) and on
 ``PostgresBackend`` (the SQL adapters on livecart_test). A backend gives the
 repositories under test, and seeds or reads the rows the scenarios need
@@ -33,11 +33,12 @@ from livecart_core.application.dto import (
 )
 from livecart_core.application.ports import (
     BuyerNotifier,
+    BuyerOrders,
     CommentInbox,
     LiveSessionActivity,
     LiveSessionRepository,
-    OrderLookup,
     OrderReservations,
+    PaymentAttempts,
     PaymentProvider,
     ProductStockRepository,
     RefreshTokenRepository,
@@ -61,6 +62,7 @@ from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
+from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
@@ -81,7 +83,7 @@ ORDER_TOKENS = TEST_ORDER_TOKENS
 type CountedTable = Literal["purchase_intents", "orders"]
 
 
-class BackendOrders(OrderReservations, OrderLookup, ReservationExpiry, Protocol):
+class BackendOrders(OrderReservations, BuyerOrders, ReservationExpiry, Protocol):
     """The order ports both backends implement so far: unit 3, its reads, the buyer's, the sweep."""
 
 
@@ -102,6 +104,9 @@ class ReservationBackend(Protocol):
 
     @property
     def activity(self) -> LiveSessionActivity: ...
+
+    @property
+    def payments(self) -> PaymentAttempts: ...
 
     async def add_seller(self) -> UUID:
         """A seller whose account no password opens."""
@@ -154,6 +159,10 @@ class ReservationBackend(Protocol):
         """A payment attempt in flight for the order, as StartCheckout opens one (milestone 5)."""
         ...
 
+    async def settle_payment(self, payment_id: UUID, status: PaymentStatus) -> None:
+        """Settle a pending attempt, as the provider's events will."""
+        ...
+
     async def set_stock(self, product_id: UUID, stock: StockLevel) -> None:
         """Set the counters directly, where a scenario needs units already reserved or sold."""
         ...
@@ -200,6 +209,10 @@ class InMemoryBackend:
     @property
     def activity(self) -> LiveSessionActivity:
         return self.database.activity
+
+    @property
+    def payments(self) -> PaymentAttempts:
+        return self.database.payments
 
     @property
     def sellers(self) -> SellerRepository:
@@ -279,6 +292,9 @@ class InMemoryBackend:
         if opening.payment is None:
             raise AssertionError(f"order {order_id} takes no payment: {opening.kind}")
 
+    async def settle_payment(self, payment_id: UUID, status: PaymentStatus) -> None:
+        await self.database.payments.set_status(payment_id, status)
+
     async def set_stock(self, product_id: UUID, stock: StockLevel) -> None:
         product = self.database.tables.products[product_id]
         self.database.tables.products[product_id] = ProductRecord(
@@ -324,6 +340,7 @@ class PostgresBackend:
             random_source=random_source,
         )
         self._activity = SqlLiveSessionActivity(app_engine, currency=CURRENCY)
+        self._payments = SqlPaymentRepository(app_engine)
         self._sellers = SqlSellerRepository(app_engine)
         self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
 
@@ -346,6 +363,10 @@ class PostgresBackend:
     @property
     def activity(self) -> LiveSessionActivity:
         return self._activity
+
+    @property
+    def payments(self) -> PaymentAttempts:
+        return self._payments
 
     @property
     def sellers(self) -> SellerRepository:
@@ -529,6 +550,19 @@ class PostgresBackend:
                     status=PaymentStatus.PENDING.value,
                 )
             )
+
+    async def settle_payment(self, payment_id: UUID, status: PaymentStatus) -> None:
+        async with self._migrator.begin() as connection:
+            settled = await connection.execute(
+                update(tables.payments)
+                .where(
+                    tables.payments.c.id == payment_id,
+                    tables.payments.c.status == PaymentStatus.PENDING.value,
+                )
+                .values(status=status.value)
+            )
+            if settled.rowcount != 1:
+                raise AssertionError(f"payment {payment_id} is not pending")
 
     async def set_stock(self, product_id: UUID, stock: StockLevel) -> None:
         async with self._migrator.begin() as connection:

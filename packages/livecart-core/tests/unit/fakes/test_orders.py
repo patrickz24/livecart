@@ -8,7 +8,6 @@ import pytest
 from livecart_core.application.dto import (
     IntentSource,
     ReservationRequest,
-    ShippingAddress,
     StockLevel,
 )
 from livecart_core.application.ports import RecordNotFound
@@ -84,25 +83,6 @@ async def _order_id(database: InMemoryDatabase, session_id: UUID, comment: str) 
     assert result is not None
     assert result.order is not None
     return result.order.id
-
-
-async def test_an_order_records_its_shipping_address() -> None:
-    database, session_id, _ = _database()
-    order_id = await _order_id(database, session_id, "comment-1")
-    address = ShippingAddress(
-        full_name="Camille Martin",
-        line1="12 rue des Lilas",
-        postal_code="69003",
-        city="Lyon",
-        country="FR",
-    )
-
-    order = await database.orders.set_shipping_address(order_id, address)
-
-    assert order.shipping_address == address
-    assert await database.orders.get(order_id) == order
-    with pytest.raises(RecordNotFound):
-        await database.orders.set_shipping_address(UNKNOWN, address)
 
 
 async def test_the_sweep_needs_an_aware_time() -> None:
