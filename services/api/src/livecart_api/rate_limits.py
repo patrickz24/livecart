@@ -21,7 +21,11 @@ settings may change:
   as a token there, so their not-found answers, a wrong token's included,
   count against the address with the lookup's 20: a client that sends a new
   value with every request is stopped all the same, while the verified tokens
-  of one address never fill that counter.
+  of one address never fill that counter;
+- ``GET /api/v1/storefronts/{seller_slug}``, open to anyone: 120 requests a
+  minute per address, a limit the plan does not name. Every viewer opens it,
+  so it is the most generous, and it still caps the three queries of each
+  request.
 
 The client address is ``request.client``, which uvicorn rewrites from
 ``X-Forwarded-For`` only when the connection comes from nginx
@@ -118,6 +122,7 @@ class RateLimitRules:
     buyer_lookup_not_found: RateLimitRule
     buyer_lookup_not_found_alert: RateLimitRule
     buyer_token: RateLimitRule
+    storefront: RateLimitRule
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Self:
@@ -147,6 +152,9 @@ class RateLimitRules:
             ),
             buyer_token=RateLimitRule(
                 "buyer_token", settings.rate_limit_buyer_token_per_minute, MINUTE
+            ),
+            storefront=RateLimitRule(
+                "storefront", settings.rate_limit_storefront_per_minute, MINUTE
             ),
         )
 

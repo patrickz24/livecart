@@ -149,7 +149,8 @@ def create_app(
     )
     app.include_router(
         build_storefront_router(
-            ViewStorefront(resources.sellers, resources.live_sessions, resources.products)
+            ViewStorefront(resources.sellers, resources.live_sessions, resources.products),
+            limits,
         )
     )
     # Checking a token needs its stored hash only, never ORDER_TOKEN_KEY.

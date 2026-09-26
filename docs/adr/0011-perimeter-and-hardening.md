@@ -40,9 +40,11 @@ LiveCart is a public portfolio project that must hold up as if it were in produc
   | `GET /api/v1/orders/{reference}`         | 30 a minute, and 20 not-found answers | client address                                            |
   | `GET /api/v1/orders/{reference}/details` | 60 a minute                           | SHA-256 of the order token, or client address without one |
   | its not-found answers                    | the 20 of the lookup, shared with it  | client address                                            |
+  | `GET /api/v1/storefronts/{seller_slug}`  | 120 a minute                          | client address                                            |
 
 - IPv6 addresses count by /64, and IPv4-mapped ones as IPv4. The account of a failed login counts by the SHA-256 of its lower-case e-mail, and a token by its SHA-256, so neither reaches Redis. Not-found lookups are also counted for all addresses together, and a warning is logged once per window past `BUYER_LOOKUP_NOT_FOUND_ALERT_PER_MINUTE` (100).
 - Any value in `Authorization: Bearer` counts as a token of its own, so a client could open a fresh window with every request by sending a new one. The details' not-found answers, those of a wrong or missing token included, therefore count against the client address, in the counter the lookup fills: past 20 a minute, the address gets 429 from both routes, whatever token it sends, and a refused request opens no counter for its token. A verified token never fills that counter, so a whole live audience behind one mobile carrier's address (CGNAT) keeps a budget per token, which a limit per address on every request would take away.
+- The plan names no limit for the storefront, open to anyone and three queries a request. It gets the most generous one, since every viewer of a live opens it and a whole audience may share one address, which still caps what a single client can make the database do.
 - When Redis cannot be read, logins answer 503, since their limits are what stops password guessing; the refresh has no limit; every other route lets requests through, and the failure is logged and counted (`livecart_rate_limiter_errors_total`, beside `livecart_buyer_lookup_not_found_total`, plain counters until the metrics port exposes them).
 
 ### Secrets

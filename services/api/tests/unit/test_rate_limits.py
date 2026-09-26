@@ -48,6 +48,7 @@ PASSWORD = "correct horse battery staple"
 LOGIN = "/api/v1/auth/login"
 REFRESH = "/api/v1/auth/refresh"
 SESSIONS = "/api/v1/live-sessions"
+STOREFRONT = "/api/v1/storefronts/demo-seller"
 ORDERS = "/api/v1/orders"
 TOO_MANY = {"detail": TOO_MANY_REQUESTS}
 UNKNOWN_REFERENCE = "LC-ZZZZZZ"
@@ -144,6 +145,7 @@ def test_the_rules_follow_the_settings_and_only_the_login_fails_closed() -> None
             rules.buyer_lookup_not_found,
             rules.buyer_lookup_not_found_alert,
             rules.buyer_token,
+            rules.storefront,
         )
     ] == [
         ("login", 10, 60, True),
@@ -153,6 +155,7 @@ def test_the_rules_follow_the_settings_and_only_the_login_fails_closed() -> None
         ("buyer_lookup_not_found", 20, 60, False),
         ("buyer_lookup_not_found_all", 100, 60, False),
         ("buyer_token", 60, 60, False),
+        ("storefront", 120, 60, False),
     ]
 
 
@@ -411,6 +414,24 @@ async def test_the_verified_tokens_of_one_address_count_per_token_only() -> None
     assert api.limits.buyer_lookup_not_found_total == 0
 
 
+# --- Storefront ------------------------------------------------------------------------
+
+
+async def test_storefronts_are_limited_per_client_address() -> None:
+    api = await _api(rate_limit_storefront_per_minute=2)
+
+    async with open_client(api.app, peer="203.0.113.7") as client:
+        allowed = [(await client.get(STOREFRONT)).status_code for _ in range(2)]
+        # Another slug, an unknown one included, counts in the same window.
+        refused = await client.get("/api/v1/storefronts/unknown-shop")
+    async with open_client(api.app, peer="198.51.100.1") as other:
+        elsewhere = await other.get(STOREFRONT)
+
+    assert allowed == [200, 200]
+    _assert_too_many(refused, 60)
+    assert elsewhere.status_code == 200
+
+
 # --- Redis outage ----------------------------------------------------------------------
 
 
@@ -445,15 +466,18 @@ async def test_without_the_counters_other_routes_pass_and_the_failure_is_counted
                 f"{ORDERS}/{order.reference.value}/details",
                 headers={"Authorization": f"Bearer {TEST_ORDER_TOKENS.token_for(order.id)}"},
             )
+            storefront = await client.get(STOREFRONT)
 
     assert (seller.status_code, lookup.status_code, details.status_code) == (200, 200, 200)
-    # One per counter read: the seller's, the lookup's two, the details' two.
-    assert api.limits.limiter_errors_total == 5
+    assert storefront.status_code == 200
+    # One per counter read: the seller's, the lookup's two, the details' two, the storefront's.
+    assert api.limits.limiter_errors_total == 6
     assert {log["rule"] for log in logs if log["event"] == "rate_limiter_unavailable"} == {
         "seller",
         "buyer_lookup",
         "buyer_lookup_not_found",
         "buyer_token",
+        "storefront",
     }
 
 
@@ -469,6 +493,7 @@ def test_the_openapi_documents_the_429_of_every_limited_route() -> None:
     assert ("POST", LOGIN) in limited
     assert ("GET", f"{ORDERS}/{{reference}}") in limited
     assert ("GET", f"{ORDERS}/{{reference}}/details") in limited
+    assert ("GET", "/api/v1/storefronts/{seller_slug}") in limited
     assert ("POST", REFRESH) not in limited
     assert {("GET", SESSIONS), ("GET", "/api/v1/auth/me")} <= limited
     assert "503" in schema["paths"][LOGIN]["post"]["responses"]

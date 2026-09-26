@@ -1297,6 +1297,10 @@ export type GetStorefrontErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type GetStorefrontError = GetStorefrontErrors[keyof GetStorefrontErrors];

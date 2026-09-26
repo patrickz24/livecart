@@ -5,15 +5,19 @@ seller's display name and the live session that started last, if one is
 live, with each product's code, variant, name, price and available stock.
 Nothing private or internal: no e-mail, no id, no reserved or sold count,
 no live id. An unknown slug is 404, which the app shows as "shop not found".
+
+Open to anyone and three queries a request, it is rate limited per client
+address (``livecart_api.rate_limits``), 429 beyond.
 """
 
 from datetime import datetime
 from typing import Annotated, Final, Self
 
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from pydantic import BaseModel
 
 from livecart_api.errors import NOT_FOUND, documented
+from livecart_api.rate_limits import TOO_MANY_REQUESTS, RateLimiting, client_address
 from livecart_core.application.dto import Platform, ProductRecord, Storefront
 from livecart_core.application.storefront import ViewStorefront
 from livecart_core.domain.sellers import MAX_SLUG_LENGTH
@@ -70,13 +74,17 @@ class StorefrontResponse(BaseModel):
         )
 
 
-def build_storefront_router(view: ViewStorefront) -> APIRouter:
+def build_storefront_router(view: ViewStorefront, limits: RateLimiting) -> APIRouter:
     router = APIRouter(prefix=PREFIX, tags=["storefronts"])
+
+    async def limit_storefronts(request: Request) -> None:
+        await limits.enforce(limits.rules.storefront, client_address(request))
 
     @router.get(
         "/{seller_slug}",
         summary="A seller's storefront: the current live session and its products",
-        responses=documented({404: "No seller has this slug"}),
+        dependencies=[Depends(limit_storefronts)],
+        responses=documented({404: "No seller has this slug", 429: TOO_MANY_REQUESTS}),
     )
     async def get_storefront(
         seller_slug: Annotated[str, Path(max_length=MAX_SLUG_LENGTH)],

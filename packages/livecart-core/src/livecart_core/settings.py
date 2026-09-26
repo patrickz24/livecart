@@ -43,6 +43,7 @@ RATE_LIMITS: Final = (
     "rate_limit_buyer_lookup_not_found_per_minute",
     "buyer_lookup_not_found_alert_per_minute",
     "rate_limit_buyer_token_per_minute",
+    "rate_limit_storefront_per_minute",
 )
 
 
@@ -166,6 +167,10 @@ class Settings(BaseAppSettings):
     # warning is logged: a guess of references spread over many addresses.
     buyer_lookup_not_found_alert_per_minute: int = 100
     rate_limit_buyer_token_per_minute: int = 60  # per order access token
+    # Per client address, where the plan names no limit: generous, since every
+    # viewer opens the storefront first and a live audience may share one
+    # carrier's address (CGNAT), yet a cap on its three queries a request.
+    rate_limit_storefront_per_minute: int = 120
     # The Host headers the API answers (TrustedHostMiddleware), comma-separated
     # in the environment: another Host is refused with 400 before any route
     # runs, so no URL is ever built from a forged one. 127.0.0.1 serves the
