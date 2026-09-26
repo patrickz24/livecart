@@ -101,10 +101,15 @@ markers = [
     "integration: needs the compose PostgreSQL and Redis (docker compose up -d --wait postgres redis); deselect with -m 'not integration'",
 ]
 
+# `pytest --cov` (make test, CI) gates the branch coverage of the domain and
+# application layers, the pure code the requirements hold to 80 %: every module
+# of both packages is measured, imported by a test or not. The adapters and the
+# entry points are proven by their integration tests instead.
 [tool.coverage.run]
 branch = true
-source = ["livecart_core", "livecart_api", "livecart_worker"]
+source = ["livecart_core.domain", "livecart_core.application"]
 
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+fail_under = 80

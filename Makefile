@@ -21,10 +21,10 @@ lint: ## Check the Node version, lint, check formatting and types, then the vers
 	pnpm -r typecheck
 	pnpm run check:pins
 
-test: ## Check the Node version, start PostgreSQL and Redis, then run every test suite
+test: ## Check the Node version, start PostgreSQL and Redis, then run every suite and the coverage gate
 	pnpm run check:node
 	docker compose up --detach --wait postgres redis
-	uv run --locked pytest
+	uv run --locked pytest --cov
 	pnpm -r test
 	pnpm run test:scripts
 

@@ -72,8 +72,10 @@ jobs:
           cp .env.example .env
           docker compose up --detach --wait --wait-timeout 120 postgres redis
 
-      - name: pytest (unit and integration)
-        run: uv run --locked pytest
+      # --cov gates the branch coverage of livecart_core.domain and
+      # livecart_core.application at 80 % ([tool.coverage] in pyproject.toml).
+      - name: pytest (unit and integration, coverage gate)
+        run: uv run --locked pytest --cov
 
       - name: Show the service logs
         if: failure()
