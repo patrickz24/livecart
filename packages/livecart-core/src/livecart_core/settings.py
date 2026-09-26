@@ -11,10 +11,10 @@ import re
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Final, Self
+from typing import Annotated, Final, Self
 
 from pydantic import SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
@@ -28,6 +28,11 @@ MAX_DELAY_SECONDS: Final = 86_400
 # Words of letters, digits, "_" and "-" joined by ":", as in "livecart" or "livecart:staging".
 REDIS_KEY_PREFIX_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*")
 MAX_REDIS_KEY_PREFIX_LENGTH: Final = 64
+# A Host header the API answers: a DNS name, possibly under "*." for its
+# subdomains, an IPv4 address or a bracketed IPv6 one; lower case, as browsers send it.
+ALLOWED_HOST_PATTERN: Final = re.compile(
+    r"(\*\.)?[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*|\[[0-9a-f:.]+\]"
+)
 # Upper bound of every rate limit: beyond it a limit no longer limits anything.
 MAX_RATE_LIMIT: Final = 1_000_000
 RATE_LIMITS: Final = (
@@ -154,6 +159,14 @@ class Settings(BaseAppSettings):
     # warning is logged: a guess of references spread over many addresses.
     buyer_lookup_not_found_alert_per_minute: int = 100
     rate_limit_buyer_token_per_minute: int = 60  # per order access token
+    # The Host headers the API answers (TrustedHostMiddleware), comma-separated
+    # in the environment: another Host is refused with 400 before any route
+    # runs, so no URL is ever built from a forged one. 127.0.0.1 serves the
+    # container healthcheck, api the other containers.
+    allowed_hosts: Annotated[tuple[str, ...], NoDecode] = ("localhost", "127.0.0.1", "api")
+    # Strict-Transport-Security on every response, once the API is only reached
+    # over HTTPS: browsers then refuse plain HTTP to it for a year.
+    hsts_enabled: bool = False
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -232,6 +245,29 @@ class Settings(BaseAppSettings):
     def _check_rate_limit(cls, value: int) -> int:
         if not 1 <= value <= MAX_RATE_LIMIT:
             raise ValueError(f"must be from 1 to {MAX_RATE_LIMIT} requests per window")
+        return value
+
+    @field_validator("allowed_hosts", mode="before")
+    @classmethod
+    def _split_allowed_hosts(cls, value: object) -> object:
+        """``localhost, 127.0.0.1,api`` from the environment: hosts between commas."""
+        if isinstance(value, str):
+            return tuple(host.strip().lower() for host in value.split(",") if host.strip())
+        return value
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _check_allowed_hosts(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("must name at least one host")
+        if "*" in value:
+            raise ValueError("must name the hosts: * would answer any Host header")
+        for host in value:
+            if not ALLOWED_HOST_PATTERN.fullmatch(host):
+                raise ValueError(
+                    f"{host!r} is no host: a lower-case DNS name, possibly under *., "
+                    "or an IP address"
+                )
         return value
 
     @field_validator("rate_limit_login_failure_window_seconds")

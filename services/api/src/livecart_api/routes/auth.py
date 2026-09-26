@@ -112,7 +112,7 @@ def build_auth_router(auth: SellerAuth, limits: RateLimiting) -> APIRouter:
     router = APIRouter(prefix=PREFIX, tags=["auth"])
 
     async def limit_logins(request: Request) -> None:
-        # A dependency, so that every attempt counts, a malformed body included.
+        # A dependency, so that every attempt counts, one whose fields fail validation included.
         await limits.enforce(limits.rules.login, client_address(request))
 
     def set_refresh_cookie(response: Response, grant: SellerGrant) -> None:

@@ -46,6 +46,17 @@ export const HTTP_CHECKS = [
       response.status === 200 && isJson(response) && JSON.parse(body).status === "ok",
   },
   {
+    name: "API security headers through nginx, the API's only",
+    url: "http://127.0.0.1:8080/health",
+    // fetch joins repeated headers with ", ": a second CSP would show here.
+    accept: (response) =>
+      response.status === 200 &&
+      response.headers.get("content-security-policy") ===
+        "default-src 'none'; frame-ancestors 'none'" &&
+      response.headers.get("x-frame-options") === "DENY" &&
+      response.headers.get("referrer-policy") === "no-referrer",
+  },
+  {
     name: "dashboard page with its security headers",
     url: "http://127.0.0.1:8080/",
     accept: (response) =>

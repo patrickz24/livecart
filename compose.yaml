@@ -44,6 +44,9 @@ x-runtime-environment: &runtime-environment
   MAX_QUANTITY_PER_COMMENT: ${MAX_QUANTITY_PER_COMMENT:-10}
   RESERVATION_TTL_SECONDS: ${RESERVATION_TTL_SECONDS:-900}
   DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}
+  # HTTP perimeter of the API (.env.example).
+  ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1,api}
+  HSTS_ENABLED: ${HSTS_ENABLED:-false}
   # Rate limits of the API (.env.example); the defaults are the code's.
   RATE_LIMIT_LOGIN_PER_MINUTE: ${RATE_LIMIT_LOGIN_PER_MINUTE:-10}
   RATE_LIMIT_LOGIN_FAILURES: ${RATE_LIMIT_LOGIN_FAILURES:-5}

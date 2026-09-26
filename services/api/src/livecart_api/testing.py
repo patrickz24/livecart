@@ -54,6 +54,8 @@ from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 # The origin of open_client's requests, as a browser would send it in Origin.
 TEST_ORIGIN = "http://test"
+# The Host of open_client's requests, which the unit tests' apps answer.
+TEST_HOST = "test"
 
 
 class FakeProbe:
@@ -77,6 +79,7 @@ def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT, **overrides: object) -> 
         redis_url=SecretStr("redis://:unit@redis.invalid:6379/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        allowed_hosts=(TEST_HOST, "localhost", "127.0.0.1"),
         _env_file=None,
     )
     return settings.model_copy(update=overrides)

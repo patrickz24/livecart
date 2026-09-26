@@ -7,7 +7,7 @@ from pydantic import SecretStr
 
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, build_resources
-from livecart_api.testing import make_app, memory_resources, open_client
+from livecart_api.testing import TEST_HOST, make_app, memory_resources, open_client
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
@@ -137,6 +137,7 @@ async def test_unreachable_dependencies_answer_503() -> None:
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        allowed_hosts=(TEST_HOST,),
         _env_file=None,
     )
     resources = build_resources(settings)

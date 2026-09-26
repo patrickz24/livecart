@@ -1,4 +1,21 @@
-"""Application factory: builds the FastAPI app around injected resources."""
+"""Application factory: builds the FastAPI app around injected resources.
+
+Around the routes, every request crosses, from the outside in:
+
+1. ``CorrelationIdMiddleware`` and ``RequestContextMiddleware``: the request
+   id, in the response and in every log line;
+2. ``SecurityHeadersMiddleware``: the security headers of every response,
+   the refusals below included;
+3. ``TrustedHostMiddleware``: 400 unless the ``Host`` header is one of
+   ``ALLOWED_HOSTS``;
+4. ``RequestBodyLimitMiddleware``: 413 beyond 1 MiB, whether the client
+   announced the length or streams the body, as nginx caps it in front.
+
+No CORS middleware: the dashboard and the mobile app reach the API through
+nginx on their own origin, so no response ever allows another origin to read
+it. The client address the rate limits count is uvicorn's, which trusts
+``X-Forwarded-For`` from nginx alone (``--forwarded-allow-ips`` in compose).
+"""
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,10 +26,13 @@ from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
+from starlette.middleware.body_limit import RequestBodyLimitMiddleware
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from livecart_api import errors
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.middleware.request_context import RequestContextMiddleware
+from livecart_api.middleware.security_headers import SecurityHeadersMiddleware
 from livecart_api.rate_limits import (
     RateLimiting,
     RateLimitRules,
@@ -46,6 +66,9 @@ logger = structlog.get_logger(__name__)
 READINESS_TIMEOUT_S = 2.0
 # What a client waits before trying again after a 503.
 RETRY_AFTER_S = 1
+# The largest request body, as nginx's client_max_body_size: comment batches
+# of 200 are far below it.
+MAX_REQUEST_BODY_BYTES = 1024 * 1024
 
 
 def _operation_id(route: APIRoute) -> str:
@@ -137,8 +160,18 @@ def create_app(
     app.add_exception_handler(TooManyRequests, too_many_requests)
     errors.install(app)
 
-    # The last middleware added runs first: CorrelationIdMiddleware sets the
-    # request id, then RequestContextMiddleware binds it to the logs.
+    # The last middleware added runs first: see the module docstring.
+    app.add_middleware(RequestBodyLimitMiddleware, max_body_size=MAX_REQUEST_BODY_BYTES)
+    # Refuse, never redirect: a www. redirect would build its URL from the request.
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=list(settings.allowed_hosts), www_redirect=False
+    )
+    docs_pages = (app.docs_url, app.swagger_ui_oauth2_redirect_url) if docs_enabled else ()
+    app.add_middleware(
+        SecurityHeadersMiddleware,
+        hsts=settings.hsts_enabled,
+        csp_exempt_paths=[path for path in docs_pages if path is not None],
+    )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
     return app

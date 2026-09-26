@@ -30,7 +30,8 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     extra = ("WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT", "RESERVATION_TTL_SECONDS")
     keys = ("JWT_SECRET", "ORDER_TOKEN_KEY")
     limits = (*(name.upper() for name in RATE_LIMITS), "RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS")
-    for name in (*names, *extra, *keys, *limits, "DEFAULT_CURRENCY", "REDIS_KEY_PREFIX"):
+    http = ("ALLOWED_HOSTS", "HSTS_ENABLED")
+    for name in (*names, *extra, *keys, *limits, *http, "DEFAULT_CURRENCY", "REDIS_KEY_PREFIX"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -275,6 +276,39 @@ def test_the_login_failure_window_stays_between_a_minute_and_a_day(value: str) -
     assert load(RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS="60", **dev_env())
     with pytest.raises(ValidationError, match="from 60 to 86400 seconds"):
         load(RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS=value, **dev_env())
+
+
+def test_the_api_answers_the_local_hosts_and_sends_no_hsts_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert settings.allowed_hosts == ("localhost", "127.0.0.1", "api")
+    assert settings.hsts_enabled is False
+    assert load(HSTS_ENABLED="true", **dev_env()).hsts_enabled is True
+
+
+def test_allowed_hosts_are_listed_between_commas() -> None:
+    settings = load(
+        ALLOWED_HOSTS=" Shop.Example.com, 192.168.1.20 ,*.example.org,[::1],", **dev_env()
+    )
+
+    assert settings.allowed_hosts == ("shop.example.com", "192.168.1.20", "*.example.org", "[::1]")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("", "at least one host"),
+        (" , ", "at least one host"),
+        ("localhost,*", "would answer any Host header"),
+        ("shop.example.com:8080", "is no host"),
+        ("evil host", "is no host"),
+        ("-shop.example.com", "is no host"),
+        ("shop.*.example.com", "is no host"),
+    ],
+)
+def test_allowed_hosts_refuse_what_would_trust_any_host(value: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(ALLOWED_HOSTS=value, **dev_env())
 
 
 def test_the_redis_keys_are_prefixed_livecart_by_default() -> None:

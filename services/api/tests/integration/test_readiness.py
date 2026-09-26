@@ -27,7 +27,10 @@ async def test_ready_is_200_when_postgres_and_redis_answer(
 
     try:
         transport = httpx2.ASGITransport(app=app)
-        async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
+        # The URL of the container healthcheck, whose host the default ALLOWED_HOSTS keep.
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://127.0.0.1:8000"
+        ) as client:
             response = await client.get("/ready")
     finally:
         await resources.aclose()
