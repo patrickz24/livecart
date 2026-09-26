@@ -11,6 +11,7 @@ from livecart_api.testing import TEST_ORIGIN, make_app, make_settings, open_clie
 from livecart_core.settings import AppEnv
 
 LOGIN = "/api/v1/auth/login"
+SAME_ORIGIN = {"Origin": TEST_ORIGIN}
 SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
     "x-frame-options": "DENY",
@@ -34,7 +35,7 @@ async def test_every_answer_carries_the_security_headers() -> None:
             "ok": await client.get("/health"),
             "not found": await client.get("/api/v1/nothing-here"),
             "unauthorized": await client.get("/api/v1/live-sessions"),
-            "invalid": await client.post(LOGIN, json={}),
+            "invalid": await client.post(LOGIN, json={}, headers=SAME_ORIGIN),
             "too many": await client.post(LOGIN, json={}),
             "bad host": await client.get("/health", headers={"Host": "evil.example"}),
             "too large": await client.post(LOGIN, content=b"x" * (MAX_REQUEST_BODY_BYTES + 1)),
@@ -146,7 +147,9 @@ async def test_a_body_over_1_mib_is_refused_whether_announced_or_streamed() -> N
     async with open_client(make_app()) as client:
         announced = await client.post(LOGIN, content=b"x" * (MAX_REQUEST_BODY_BYTES + 1))
         streamed = await client.post(LOGIN, content=_chunks(MAX_REQUEST_BODY_BYTES + 1))
-        at_the_limit = await client.post(LOGIN, content=b"x" * MAX_REQUEST_BODY_BYTES)
+        at_the_limit = await client.post(
+            LOGIN, content=b"x" * MAX_REQUEST_BODY_BYTES, headers=SAME_ORIGIN
+        )
 
     assert MAX_REQUEST_BODY_BYTES == 1024 * 1024
     assert "content-length" in announced.request.headers

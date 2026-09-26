@@ -88,7 +88,9 @@ async def _api(**limits: int) -> Api:
 async def _login(
     client: httpx2.AsyncClient, *, email: str = EMAIL, password: str = PASSWORD
 ) -> httpx2.Response:
-    return await client.post(LOGIN, json={"email": email, "password": password})
+    return await client.post(
+        LOGIN, json={"email": email, "password": password}, headers={"Origin": TEST_ORIGIN}
+    )
 
 
 def _assert_too_many(response: httpx2.Response, retry_after: int) -> None:
@@ -169,7 +171,7 @@ async def test_logins_are_limited_per_client_address() -> None:
         allowed = [(await _login(client)).status_code for _ in range(2)]
         refused = await _login(client)
         api.clock.advance(20)
-        # A malformed body counts too: the limit comes before the body is read.
+        # A malformed body without an Origin counts too: the limit comes before either check.
         malformed = await client.post(LOGIN, json={"email": EMAIL})
     async with open_client(api.app, peer="198.51.100.1") as other:
         elsewhere = await _login(other)

@@ -90,7 +90,9 @@ def _refresh_cookie(response: httpx2.Response) -> str:
 
 
 async def _login(client: httpx2.AsyncClient) -> httpx2.Response:
-    response = await client.post(LOGIN, json={"email": EMAIL, "password": PASSWORD})
+    response = await client.post(
+        LOGIN, json={"email": EMAIL, "password": PASSWORD}, headers=SAME_ORIGIN
+    )
     assert response.status_code == 200
     return response
 
@@ -150,8 +152,12 @@ async def test_the_refresh_cookie_is_secure_in_production() -> None:
 
 async def test_an_unknown_email_and_a_wrong_password_get_the_same_answer(api: Api) -> None:
     async with open_client(api.app) as client:
-        unknown = await client.post(LOGIN, json={"email": "nobody@example.test", "password": "x"})
-        wrong = await client.post(LOGIN, json={"email": EMAIL, "password": "wrong password"})
+        unknown = await client.post(
+            LOGIN, json={"email": "nobody@example.test", "password": "x"}, headers=SAME_ORIGIN
+        )
+        wrong = await client.post(
+            LOGIN, json={"email": EMAIL, "password": "wrong password"}, headers=SAME_ORIGIN
+        )
 
     assert unknown.status_code == wrong.status_code == 401
     assert unknown.json() == wrong.json() == {"detail": "Invalid e-mail or password"}
@@ -164,7 +170,9 @@ async def test_an_unknown_email_and_a_wrong_password_get_the_same_answer(api: Ap
 async def test_the_email_of_a_login_ignores_case_and_surrounding_spaces(api: Api) -> None:
     async with open_client(api.app) as client:
         response = await client.post(
-            LOGIN, json={"email": "  SELLER@example.TEST ", "password": PASSWORD}
+            LOGIN,
+            json={"email": "  SELLER@example.TEST ", "password": PASSWORD},
+            headers=SAME_ORIGIN,
         )
 
     assert response.status_code == 200
@@ -185,10 +193,28 @@ async def test_a_login_body_outside_its_schema_is_refused(
     api: Api, body: dict[str, object]
 ) -> None:
     async with open_client(api.app) as client:
-        response = await client.post(LOGIN, json=body)
+        response = await client.post(LOGIN, json=body, headers=SAME_ORIGIN)
 
     assert response.status_code == 422
     assert api.passwords.verified == []
+
+
+@pytest.mark.parametrize("origin", [None, "null", "http://evil.test", "https://test"])
+async def test_a_login_from_another_origin_is_refused_before_any_password_check(
+    api: Api, origin: str | None
+) -> None:
+    headers = {} if origin is None else {"Origin": origin}
+    async with open_client(api.app) as client:
+        response = await client.post(
+            LOGIN, json={"email": EMAIL, "password": PASSWORD}, headers=headers
+        )
+
+    # A page of another site cannot sign the browser into an account of its choosing.
+    assert response.status_code == 403
+    assert response.json() == {"detail": "Cross-origin request refused"}
+    assert "set-cookie" not in response.headers
+    assert api.passwords.verified == []
+    assert api.database.tables.refresh_tokens == {}
 
 
 # --- Refresh ---------------------------------------------------------------------------
@@ -403,7 +429,9 @@ async def test_a_database_outage_answers_503_with_retry_after() -> None:
     resources = replace(memory_resources(InMemoryDatabase()), sellers=UnavailableSellers())
 
     async with open_client(create_app(make_settings(), resources)) as client:
-        response = await client.post(LOGIN, json={"email": EMAIL, "password": PASSWORD})
+        response = await client.post(
+            LOGIN, json={"email": EMAIL, "password": PASSWORD}, headers=SAME_ORIGIN
+        )
 
     assert response.status_code == 503
     assert response.headers["Retry-After"] == "1"
@@ -424,6 +452,7 @@ def test_openapi_documents_the_auth_routes_and_the_bearer_scheme() -> None:
         "scheme": "bearer",
         "description": "The access_token of POST /api/v1/auth/login or /api/v1/auth/refresh.",
     }
+    assert set(paths[LOGIN]["post"]["responses"]) >= {"200", "401", "403", "429", "503"}
     assert set(paths[REFRESH]["post"]["responses"]) >= {"200", "401", "403"}
     assert set(paths[LOGOUT]["post"]["responses"]) >= {"204", "403"}
     # The password is write-only, and no route takes the cookie as a parameter.

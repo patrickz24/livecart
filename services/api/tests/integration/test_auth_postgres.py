@@ -51,7 +51,9 @@ class PostgresApi:
     engine: AsyncEngine
 
     async def login(self, email: str = EMAIL, password: str = PASSWORD) -> httpx2.Response:
-        return await self.client.post(LOGIN, json={"email": email, "password": password})
+        return await self.client.post(
+            LOGIN, json={"email": email, "password": password}, headers={"Origin": TEST_ORIGIN}
+        )
 
     async def refresh(self, cookie: str) -> httpx2.Response:
         return await self.client.post(

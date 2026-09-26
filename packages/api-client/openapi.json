@@ -973,6 +973,16 @@
             },
             "description": "Not authenticated, or the credentials were refused"
           },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The Origin header is missing or names another origin"
+          },
           "422": {
             "content": {
               "application/json": {

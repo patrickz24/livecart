@@ -18,7 +18,11 @@
   cookie; it answers 204 whatever the cookie held.
 - ``GET /me`` is the seller's own profile, behind ``CurrentSeller``.
 
-Refresh and logout check the ``Origin`` header (``require_same_origin``).
+Login, refresh and logout check the ``Origin`` header (``require_same_origin``),
+the login too since it sets the cookie: a page of another site must never
+sign a seller's browser into an account of its choosing (login CSRF). The
+JSON body and ``SameSite=Strict`` already make that hard; the ``Origin``
+check depends on neither. A client outside a browser sends ``Origin`` itself.
 Token answers carry ``Cache-Control: no-store`` (RFC 6749, section 5.1).
 """
 
@@ -158,9 +162,11 @@ def build_auth_router(auth: SellerAuth, limits: RateLimiting) -> APIRouter:
         "/login",
         summary="Log in with an e-mail and a password",
         response_model=AccessTokenResponse,
-        dependencies=[Depends(limit_logins)],
+        # The limit first, so that every attempt counts, a cross-origin one included.
+        dependencies=[Depends(limit_logins), Depends(require_same_origin)],
         responses=_responses(
             status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
             status.HTTP_429_TOO_MANY_REQUESTS,
             status.HTTP_503_SERVICE_UNAVAILABLE,
         ),

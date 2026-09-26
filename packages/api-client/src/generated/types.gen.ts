@@ -571,6 +571,10 @@ export type LoginErrors = {
      */
     401: ErrorResponse;
     /**
+     * The Origin header is missing or names another origin
+     */
+    403: ErrorResponse;
+    /**
      * Validation Error
      */
     422: HttpValidationError;

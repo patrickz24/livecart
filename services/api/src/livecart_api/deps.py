@@ -7,11 +7,11 @@ reads nothing from the database: a verified JWT is the proof, which is what
 keeps access tokens short-lived (15 minutes). It then counts the request
 against the seller's rate limit (``livecart_api.rate_limits``), 429 beyond.
 
-``require_same_origin`` guards the routes that act on the refresh cookie. The
-cookie is ``SameSite=Strict`` already; the ``Origin`` header is a second,
-independent check (OWASP's CSRF defence in depth). Browsers send ``Origin`` on
-every POST, so one that is missing or that differs from the origin the
-request was addressed to is refused with 403. Everything is served from one
+``require_same_origin`` guards the routes that set or act on the refresh
+cookie. The cookie is ``SameSite=Strict`` already; the ``Origin`` header is a
+second, independent check (OWASP's CSRF defence in depth). Browsers send
+``Origin`` on every POST, so one that is missing or that differs from the
+origin the request was addressed to is refused with 403. Everything is served from one
 origin (nginx, or the Vite proxy in development), so no list of origins is
 configured: the expected one is rebuilt from the request, its scheme from
 ``X-Forwarded-Proto`` as uvicorn trusts it from nginx only, its host and port
