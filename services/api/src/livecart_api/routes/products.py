@@ -12,7 +12,14 @@ session than the path's, answers 404.
 - ``GET /`` lists them in creation order, a bounded page at a time;
 - ``GET /{id}`` and ``PATCH /{id}``: the name and the price change until the
   session ends, the code and the variant only in a draft. The stock is not
-  among the fields: it moves by the restock route's deltas only.
+  among the fields: it moves by the restock route's deltas only;
+- ``POST /{id}/restock`` adds a delta of units (negative to remove) in one
+  conditional update: 409 when the total would fall below the units reserved
+  and sold. Its ``Idempotency-Key`` header is required: the first answer to a
+  key is stored for a day, per seller, and replayed to every request that
+  repeats it, with ``Idempotent-Replayed: true``, so a retried restock adds
+  its units once; the same key with another body or product answers 422
+  (``application.idempotency``).
 
 Prices are integer minor units of the deployment's currency, which every
 answer names.
@@ -21,20 +28,34 @@ answer names.
 from typing import Annotated, Final, Self
 from uuid import UUID
 
-from fastapi import APIRouter, Response, status
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints
+from fastapi import APIRouter, Header, Response, status
+from fastapi.responses import JSONResponse
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from livecart_api.deps import CurrentSeller
-from livecart_api.errors import documented
+from livecart_api.errors import documented, error_answer
 from livecart_api.routes.live_sessions import Cursor, PageSize
 from livecart_core.application.dto import (
+    IDEMPOTENCY_KEY_PATTERN,
+    MAX_IDEMPOTENCY_KEY_LENGTH,
     MAX_PRICE_MINOR,
     MAX_PRODUCT_NAME_LENGTH,
     MAX_STOCK_TOTAL,
+    IdempotencyKey,
     NewProduct,
     ProductChanges,
     ProductRecord,
+    StoredResponse,
 )
+from livecart_core.application.idempotency import IdempotentRequests
+from livecart_core.application.ports import RecordNotFound, StockConflict
 from livecart_core.application.products import SellerProducts
 from livecart_core.domain.codes import (
     MAX_VARIANT_LENGTH,
@@ -43,6 +64,7 @@ from livecart_core.domain.codes import (
     parse_product_code,
     parse_variant,
 )
+from livecart_core.domain.errors import EditRefused
 
 PREFIX: Final = "/api/v1/live-sessions/{session_id}/products"
 DEFAULT_PAGE_SIZE: Final = 50
@@ -50,6 +72,9 @@ DEFAULT_PAGE_SIZE: Final = 50
 # canonical, a variant 32, and folding may drop spaces around them.
 MAX_TYPED_CODE_LENGTH: Final = 16
 MAX_TYPED_VARIANT_LENGTH: Final = 2 * MAX_VARIANT_LENGTH
+# The route's namespace in the idempotency store: {p}:idem:restock:{seller_id}:{key}.
+RESTOCK_SCOPE: Final = "restock"
+REPLAYED_HEADER: Final = "Idempotent-Replayed"
 
 
 def _canonical_code(text: str) -> str:
@@ -110,6 +135,36 @@ class ProductUpdate(BaseModel):
     price_minor: PriceMinor | None = None
 
 
+class RestockRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delta: int = Field(
+        ge=-MAX_STOCK_TOTAL,
+        le=MAX_STOCK_TOTAL,
+        description="Units to add to the stock total, or to remove when negative; never 0.",
+    )
+
+    @field_validator("delta")
+    @classmethod
+    def _moves_something(cls, value: int) -> int:
+        if value == 0:
+            raise ValueError("a restock moves at least one unit")
+        return value
+
+
+IdempotencyKeyHeader = Annotated[
+    str,
+    Header(
+        alias="Idempotency-Key",
+        min_length=1,
+        max_length=MAX_IDEMPOTENCY_KEY_LENGTH,
+        pattern=IDEMPOTENCY_KEY_PATTERN,
+        description="A key of the client's choice, such as a UUID, the same for every retry of "
+        "one restock: its first answer is replayed for a day.",
+    ),
+]
+
+
 class ProductResponse(BaseModel):
     id: UUID
     session_id: UUID
@@ -150,7 +205,7 @@ NOT_FOUND: Final = "No session of this seller has this id, or no product of it h
 CONFLICT: Final = "The catalog cannot hold the product, or the session's status forbids it"
 
 
-def build_product_router(products: SellerProducts) -> APIRouter:
+def build_product_router(products: SellerProducts, idempotent: IdempotentRequests) -> APIRouter:
     router = APIRouter(prefix=PREFIX, tags=["products"])
 
     @router.post(
@@ -218,5 +273,48 @@ def build_product_router(products: SellerProducts) -> APIRouter:
             price_minor=body.price_minor,
         )
         return ProductResponse.of(await products.update(seller.id, session_id, product_id, changes))
+
+    @router.post(
+        "/{product_id}/restock",
+        summary="Add or remove stock units, once per Idempotency-Key",
+        response_model=ProductResponse,
+        responses=documented(
+            {
+                401: UNAUTHORIZED,
+                404: NOT_FOUND,
+                409: "The total would fall below the units reserved and sold, the session has "
+                "ended, or the request of this key has not answered yet",
+                422: "The body or the key is invalid, or the key was sent with another request",
+            }
+        ),
+    )
+    async def restock_product(
+        seller: CurrentSeller,
+        session_id: UUID,
+        product_id: UUID,
+        body: RestockRequest,
+        idempotency_key: IdempotencyKeyHeader,
+    ) -> JSONResponse:
+        async def restock() -> StoredResponse:
+            try:
+                product = await products.restock(seller.id, session_id, product_id, body.delta)
+            except (RecordNotFound, EditRefused, StockConflict) as refusal:
+                # A refusal is an answer too: it is stored and replayed like a success.
+                status_code, detail = error_answer(refusal)
+                return StoredResponse(status_code=status_code, body={"detail": detail})
+            return StoredResponse(
+                status_code=status.HTTP_200_OK,
+                body=ProductResponse.of(product).model_dump(mode="json"),
+            )
+
+        answer = await idempotent.run(
+            IdempotencyKey(RESTOCK_SCOPE, seller.id, idempotency_key),
+            {"session_id": str(session_id), "product_id": str(product_id), "delta": body.delta},
+            restock,
+        )
+        headers = {REPLAYED_HEADER: "true"} if answer.replayed else None
+        return JSONResponse(
+            answer.response.body, status_code=answer.response.status_code, headers=headers
+        )
 
     return router

@@ -4,12 +4,14 @@ As for the sessions (``application.live_sessions``), every method takes the
 seller's id and every repository call filters by it, so a product of another
 seller's session is ``RecordNotFound``. The session's status decides what a
 product still takes (``domain.live_sessions``): in a draft everything, while
-live everything but its code and variant, once ended nothing.
+live everything but its code and variant, once ended nothing. The stock
+only moves by restock deltas, which a single conditional update applies.
 """
 
 from uuid import UUID
 
 from livecart_core.application.dto import (
+    MAX_STOCK_TOTAL,
     NewProduct,
     Page,
     ProductChanges,
@@ -48,3 +50,15 @@ class SellerProducts:
         self, seller_id: UUID, session_id: UUID, product_id: UUID, changes: ProductChanges
     ) -> ProductRecord:
         return await self._products.update(seller_id, session_id, product_id, changes)
+
+    async def restock(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID, delta: int
+    ) -> ProductRecord:
+        """Add ``delta`` units (negative to remove); ``StockConflict`` below reserved and sold.
+
+        The API runs it under an idempotency key, so a repeated request adds
+        the units once (``application.idempotency``).
+        """
+        if delta == 0 or abs(delta) > MAX_STOCK_TOTAL:
+            raise ValueError(f"a restock moves 1 to {MAX_STOCK_TOTAL} units, not {delta}")
+        return await self._products.restock(seller_id, session_id, product_id, delta)

@@ -6,7 +6,8 @@
 - the refusals that depend on the state of a row are 409: a transition the
   machine does not allow, a change the session's status no longer takes, a
   taken live id, a product the catalog cannot hold, a restock below what is
-  reserved and sold.
+  reserved and sold, a request whose idempotency key has not answered yet;
+- an idempotency key sent again with another request is 422.
 
 The body is always ``{"detail": ...}``, with a message chosen here: an
 exception's own text may name ids or values and never reaches a client. The
@@ -21,6 +22,11 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from livecart_core.application.dto import MAX_STOCK_TOTAL
+from livecart_core.application.idempotency import (
+    IdempotencyKeyReused,
+    IdempotentRequestInFlight,
+)
 from livecart_core.application.ports import (
     LiveSessionConflict,
     ProductConflict,
@@ -45,6 +51,8 @@ ANSWERED: Final = (
     LiveSessionConflict,
     ProductConflict,
     StockConflict,
+    IdempotencyKeyReused,
+    IdempotentRequestInFlight,
 )
 
 
@@ -52,8 +60,8 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
-def error_answer(error: Exception) -> tuple[int, str] | None:
-    """The status code and detail that answer ``error``, or ``None`` when it is not ours to map."""
+def error_answer(error: Exception) -> tuple[int, str]:
+    """The status code and detail that answer ``error``; any other error is raised again."""
     match error:
         case RecordNotFound():
             return 404, NOT_FOUND
@@ -70,17 +78,19 @@ def error_answer(error: Exception) -> tuple[int, str] | None:
             return 409, "Another session has this platform and live id"
         case ProductConflict(conflict=conflict):
             return 409, CATALOG_CONFLICTS[conflict]
+        case StockConflict(above_maximum=True):
+            return 409, f"The stock total would rise above {MAX_STOCK_TOTAL}"
         case StockConflict():
             return 409, "The stock total would fall below the units reserved and sold"
-    return None
+        case IdempotentRequestInFlight():
+            return 409, "The request of this Idempotency-Key has not answered yet: try again"
+        case IdempotencyKeyReused():
+            return 422, "This Idempotency-Key was sent with another request"
+    raise error
 
 
 async def _answer(_request: Request, error: Exception) -> JSONResponse:
-    answer = error_answer(error)
-    if answer is None:
-        # Only the types of ANSWERED are registered, and each has its answer.
-        raise error
-    status_code, detail = answer
+    status_code, detail = error_answer(error)
     return JSONResponse({"detail": detail}, status_code=status_code)
 
 

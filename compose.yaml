@@ -38,6 +38,7 @@ x-runtime-environment: &runtime-environment
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
   DATABASE_URL: postgresql+asyncpg://livecart_app:${LIVECART_APP_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/livecart
   REDIS_URL: redis://:${REDIS_PASSWORD:?set it in .env (cp .env.example .env)}@redis:6379/0
+  REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-livecart}
   JWT_SECRET: ${JWT_SECRET:?set it in .env (cp .env.example .env)}
   ORDER_TOKEN_KEY: ${ORDER_TOKEN_KEY:?set it in .env (cp .env.example .env)}
   MAX_QUANTITY_PER_COMMENT: ${MAX_QUANTITY_PER_COMMENT:-10}

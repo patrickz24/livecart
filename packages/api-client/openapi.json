@@ -517,6 +517,23 @@
         "title": "ReadinessStatus",
         "type": "object"
       },
+      "RestockRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "delta": {
+            "description": "Units to add to the stock total, or to remove when negative; never 0.",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "title": "Delta",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "delta"
+        ],
+        "title": "RestockRequest",
+        "type": "object"
+      },
       "SellerProfile": {
         "properties": {
           "display_name": {
@@ -1486,6 +1503,118 @@
           }
         ],
         "summary": "Change a product's name and price, and in a draft its code and variant",
+        "tags": [
+          "products"
+        ]
+      }
+    },
+    "/api/v1/live-sessions/{session_id}/products/{product_id}/restock": {
+      "post": {
+        "operationId": "restock_product",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Session Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "product_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Product Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "A key of the client's choice, such as a UUID, the same for every retry of one restock: its first answer is replayed for a day.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "description": "A key of the client's choice, such as a UUID, the same for every retry of one restock: its first answer is replayed for a day.",
+              "maxLength": 255,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RestockRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Not authenticated, or the access token was refused"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No session of this seller has this id, or no product of it has this one"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The total would fall below the units reserved and sold, the session has ended, or the request of this key has not answered yet"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The body or the key is invalid, or the key was sent with another request"
+          }
+        },
+        "security": [
+          {
+            "SellerAccessToken": []
+          }
+        ],
+        "summary": "Add or remove stock units, once per Idempotency-Key",
         "tags": [
           "products"
         ]

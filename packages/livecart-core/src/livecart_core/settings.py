@@ -25,6 +25,9 @@ PLACEHOLDER_MARKER = "change-me"
 # Bounds of the reservation and payment delays: from a minute to a day.
 MIN_DELAY_SECONDS: Final = 60
 MAX_DELAY_SECONDS: Final = 86_400
+# Words of letters, digits, "_" and "-" joined by ":", as in "livecart" or "livecart:staging".
+REDIS_KEY_PREFIX_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*")
+MAX_REDIS_KEY_PREFIX_LENGTH: Final = 64
 
 
 class AppEnv(StrEnum):
@@ -109,6 +112,9 @@ class Settings(BaseAppSettings):
 
     database_url: SecretStr
     redis_url: SecretStr
+    # The first segment of every Redis key the processes write ({p} in the plan),
+    # so that two deployments, or two test runs, can share one Redis.
+    redis_key_prefix: str = "livecart"
     # Signs the sellers' access tokens (HS256).
     jwt_secret: SecretStr
     # Derives the buyers' order access tokens (livecart_core.order_tokens).
@@ -137,6 +143,18 @@ class Settings(BaseAppSettings):
     @classmethod
     def _check_redis_url(cls, value: SecretStr) -> SecretStr:
         return require_scheme(value, "redis", "rediss")
+
+    @field_validator("redis_key_prefix")
+    @classmethod
+    def _check_redis_key_prefix(cls, value: str) -> str:
+        if len(value) > MAX_REDIS_KEY_PREFIX_LENGTH or not REDIS_KEY_PREFIX_PATTERN.fullmatch(
+            value
+        ):
+            raise ValueError(
+                f"must be words of letters, digits, '_' and '-' joined by ':', "
+                f"{MAX_REDIS_KEY_PREFIX_LENGTH} characters at most"
+            )
+        return value
 
     @field_validator("jwt_secret", "order_token_key")
     @classmethod

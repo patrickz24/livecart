@@ -26,6 +26,7 @@ from typing import Final
 from uuid import UUID
 
 from livecart_core.application.dto import (
+    MAX_STOCK_TOTAL,
     AttemptOpening,
     AttemptOpeningKind,
     BuyerNotification,
@@ -37,6 +38,8 @@ from livecart_core.application.dto import (
     CommentClaim,
     FallbackReceipt,
     FallbackRequest,
+    IdempotencyKey,
+    IdempotencyRecord,
     InboxComment,
     IncomingComment,
     LiveSessionChanges,
@@ -548,6 +551,33 @@ class FakeCarrierProvider(_ScriptedFailures):
 
     def _now(self) -> datetime:
         return self._clock.now()
+
+
+# --- Idempotency -----------------------------------------------------------------------
+
+
+class InMemoryIdempotencyStore(_ScriptedFailures):
+    """The store of idempotent answers, in a dict; claims never expire, where Redis's last a day."""
+
+    def __init__(self) -> None:
+        self.records: dict[IdempotencyKey, IdempotencyRecord] = {}
+
+    async def claim(self, key: IdempotencyKey, fingerprint: str) -> IdempotencyRecord | None:
+        self._maybe_fail("claim")
+        first = self.records.get(key)
+        if first is None:
+            self.records[key] = IdempotencyRecord(fingerprint=fingerprint)
+        return first
+
+    async def save(self, key: IdempotencyKey, record: IdempotencyRecord) -> None:
+        self._maybe_fail("save")
+        # SET XX: an answer never recreates a key that was released meanwhile.
+        if key in self.records:
+            self.records[key] = record
+
+    async def release(self, key: IdempotencyKey) -> None:
+        self._maybe_fail("release")
+        self.records.pop(key, None)
 
 
 # --- Repositories ----------------------------------------------------------------------
@@ -1117,14 +1147,25 @@ class InMemoryProductStockRepository(_Repository):
         if conflict is not None:
             raise ProductConflict(conflict)
 
-    async def restock(self, product_id: UUID, delta: int) -> ProductRecord:
-        product = _row(self._tables.products, product_id, "product")
+    async def restock(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID, delta: int
+    ) -> ProductRecord:
+        session = self._db.session_of(seller_id, session_id)
+        product = self._tables.products.get(product_id)
+        if session is None or product is None or product.session_id != session_id:
+            raise RecordNotFound(f"no product {product_id} in session {session_id}")
+        check_session_edit(session.status)
         stock = product.stock
         total = stock.total + delta
         if total < stock.reserved + stock.sold:
             raise StockConflict(
                 f"product {product_id}: a total of {total} is below the "
                 f"{stock.reserved} reserved and {stock.sold} sold"
+            )
+        if total > MAX_STOCK_TOTAL:
+            raise StockConflict(
+                f"product {product_id}: a total of {total} is above {MAX_STOCK_TOTAL}",
+                above_maximum=True,
             )
         product = replace(product, stock=replace(stock, total=total))
         self._tables.products[product_id] = product

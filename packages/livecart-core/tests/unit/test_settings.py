@@ -23,7 +23,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
     extra = ("WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT", "RESERVATION_TTL_SECONDS")
     keys = ("JWT_SECRET", "ORDER_TOKEN_KEY")
-    for name in (*names, *extra, *keys, "DEFAULT_CURRENCY"):
+    for name in (*names, *extra, *keys, "DEFAULT_CURRENCY", "REDIS_KEY_PREFIX"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -239,6 +239,21 @@ def test_the_deployment_currency_is_the_euro_by_default() -> None:
 def test_the_deployment_currency_is_an_iso_4217_code(value: str) -> None:
     with pytest.raises(ValidationError, match="ISO 4217"):
         load(DEFAULT_CURRENCY=value, **dev_env())
+
+
+def test_the_redis_keys_are_prefixed_livecart_by_default() -> None:
+    assert load(**dev_env()).redis_key_prefix == "livecart"
+
+
+@pytest.mark.parametrize("value", ["livecart", "livecart:staging", "lc_2-b", "test:0af3"])
+def test_a_redis_key_prefix_is_words_joined_by_colons(value: str) -> None:
+    assert load(**dev_env(), REDIS_KEY_PREFIX=value).redis_key_prefix == value
+
+
+@pytest.mark.parametrize("value", ["", "live cart", "livecart:", ":livecart", "a::b", "x" * 65])
+def test_a_redis_key_prefix_refuses_what_would_blur_the_key_segments(value: str) -> None:
+    with pytest.raises(ValidationError, match="redis_key_prefix"):
+        load(**dev_env(), REDIS_KEY_PREFIX=value)
 
 
 def test_the_signing_keys_are_secrets() -> None:

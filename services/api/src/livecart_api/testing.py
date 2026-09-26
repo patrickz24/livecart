@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
-from livecart_core.application.ports import Clock, PasswordHasher
+from livecart_core.application.ports import Clock, IdempotencyStore, PasswordHasher
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
@@ -29,7 +29,12 @@ from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.settings import AppEnv, Settings
 from livecart_core.testing.backends import CURRENCY
-from livecart_core.testing.fakes import FakeClock, FakePasswordHasher, InMemoryDatabase
+from livecart_core.testing.fakes import (
+    FakeClock,
+    FakePasswordHasher,
+    InMemoryDatabase,
+    InMemoryIdempotencyStore,
+)
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 # The origin of open_client's requests, as a browser would send it in Origin.
@@ -75,6 +80,7 @@ def memory_resources(
     checks: Sequence[ReadinessCheck] = (),
     passwords: PasswordHasher | None = None,
     clock: Clock | None = None,
+    idempotency: IdempotencyStore | None = None,
 ) -> Resources:
     """Resources over the in-memory repositories of ``database``, with nothing to close.
 
@@ -89,13 +95,17 @@ def memory_resources(
         clock=clock if clock is not None else current_time_clock(),
         live_sessions=database.live_sessions,
         products=database.products,
+        idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
     )
 
 
-def postgres_resources(engine: AsyncEngine, *, clock: Clock) -> Resources:
+def postgres_resources(
+    engine: AsyncEngine, *, clock: Clock, idempotency: IdempotencyStore | None = None
+) -> Resources:
     """Resources over the SQL adapters on ``engine`` (livecart_app on livecart_test) and argon2id.
 
-    The integration tests own the engine: nothing is closed with the app.
+    The integration tests own the engine, and the Redis client of the store
+    they may pass: nothing is closed with the app.
     """
     return Resources(
         readiness_checks=(),
@@ -106,6 +116,7 @@ def postgres_resources(engine: AsyncEngine, *, clock: Clock) -> Resources:
         clock=clock,
         live_sessions=SqlLiveSessionRepository(engine),
         products=SqlProductStockRepository(engine, currency=CURRENCY),
+        idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
     )
 
 
@@ -174,6 +185,9 @@ SELLER_OBJECT_ROUTES: tuple[SellerRoute, ...] = (
     SellerRoute("GET", f"{SESSION_PATH}/products"),
     SellerRoute("GET", PRODUCT_PATH),
     SellerRoute("PATCH", PRODUCT_PATH, {"name": "Taken over"}),
+    SellerRoute(
+        "POST", f"{PRODUCT_PATH}/restock", {"delta": 1}, {"Idempotency-Key": "isolation-check"}
+    ),
 )
 # The seller routes that name no object: they read or create the caller's own rows only.
 SELLER_OWN_ROUTES = frozenset(

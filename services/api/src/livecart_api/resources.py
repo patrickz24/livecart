@@ -11,6 +11,7 @@ from functools import partial
 
 from livecart_core.application.ports import (
     Clock,
+    IdempotencyStore,
     LiveSessionRepository,
     PasswordHasher,
     ProductStockRepository,
@@ -23,6 +24,7 @@ from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionReposito
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.settings import Settings
@@ -47,6 +49,7 @@ class Resources:
     clock: Clock
     live_sessions: LiveSessionRepository
     products: ProductStockRepository
+    idempotency: IdempotencyStore
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -81,4 +84,5 @@ def build_resources(settings: Settings) -> Resources:
         clock=SystemClock(),
         live_sessions=SqlLiveSessionRepository(engine),
         products=SqlProductStockRepository(engine, currency=settings.default_currency),
+        idempotency=RedisIdempotencyStore(redis, prefix=settings.redis_key_prefix),
     )

@@ -18,6 +18,7 @@ from livecart_api.routes.auth import SellerAuth, build_auth_router
 from livecart_api.routes.health import build_health_router
 from livecart_api.routes.live_sessions import build_live_session_router
 from livecart_api.routes.products import build_product_router
+from livecart_core.application.idempotency import IdempotentRequests
 from livecart_core.application.live_sessions import SellerLiveSessions
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.application.products import SellerProducts
@@ -104,7 +105,12 @@ def create_app(
     app.include_router(
         build_live_session_router(SellerLiveSessions(resources.live_sessions, resources.clock))
     )
-    app.include_router(build_product_router(SellerProducts(resources.products, resources.clock)))
+    app.include_router(
+        build_product_router(
+            SellerProducts(resources.products, resources.clock),
+            IdempotentRequests(resources.idempotency),
+        )
+    )
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)
     errors.install(app)
 

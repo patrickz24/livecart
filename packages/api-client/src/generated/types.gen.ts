@@ -291,6 +291,18 @@ export type ReadinessStatus = {
 };
 
 /**
+ * RestockRequest
+ */
+export type RestockRequest = {
+    /**
+     * Delta
+     *
+     * Units to add to the stock total, or to remove when negative; never 0.
+     */
+    delta: number;
+};
+
+/**
  * SellerProfile
  */
 export type SellerProfile = {
@@ -839,6 +851,60 @@ export type UpdateProductResponses = {
 };
 
 export type UpdateProductResponse = UpdateProductResponses[keyof UpdateProductResponses];
+
+export type RestockProductData = {
+    body: RestockRequest;
+    headers: {
+        /**
+         * Idempotency-Key
+         *
+         * A key of the client's choice, such as a UUID, the same for every retry of one restock: its first answer is replayed for a day.
+         */
+        'Idempotency-Key': string;
+    };
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+        /**
+         * Product Id
+         */
+        product_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/products/{product_id}/restock';
+};
+
+export type RestockProductErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id, or no product of it has this one
+     */
+    404: ErrorResponse;
+    /**
+     * The total would fall below the units reserved and sold, the session has ended, or the request of this key has not answered yet
+     */
+    409: ErrorResponse;
+    /**
+     * The body or the key is invalid, or the key was sent with another request
+     */
+    422: ErrorResponse;
+};
+
+export type RestockProductError = RestockProductErrors[keyof RestockProductErrors];
+
+export type RestockProductResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProductResponse;
+};
+
+export type RestockProductResponse = RestockProductResponses[keyof RestockProductResponses];
 
 export type StartLiveSessionData = {
     body?: never;

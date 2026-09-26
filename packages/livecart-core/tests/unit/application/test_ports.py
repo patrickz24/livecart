@@ -11,6 +11,7 @@ from livecart_core.application.ports import (
     CommentInbox,
     CommentQueue,
     EventPublisher,
+    IdempotencyStore,
     IntentFallback,
     InvalidSignature,
     LiveSessionConflict,
@@ -48,6 +49,7 @@ from livecart_core.testing.fakes import (
     FakePaymentProvider,
     FakePlatformAdapter,
     InMemoryDatabase,
+    InMemoryIdempotencyStore,
 )
 
 
@@ -75,6 +77,7 @@ def test_every_fake_satisfies_its_port() -> None:
     payments: list[PaymentRepository] = [database.payments]
     shipments: list[ShipmentRepository] = [database.shipments]
     webhook_events: list[WebhookEventRegistry] = [database.webhook_events]
+    idempotency: list[IdempotencyStore] = [InMemoryIdempotencyStore()]
 
     ports: list[Sequence[object]] = [
         clocks,
@@ -95,6 +98,7 @@ def test_every_fake_satisfies_its_port() -> None:
         payments,
         shipments,
         webhook_events,
+        idempotency,
     ]
     assert all(ports)
 

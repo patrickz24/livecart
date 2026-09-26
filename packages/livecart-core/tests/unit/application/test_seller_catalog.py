@@ -12,6 +12,7 @@ import pytest
 
 from livecart_core.application.dto import (
     MAX_PAGE_SIZE,
+    MAX_STOCK_TOTAL,
     LiveSessionChanges,
     NewLiveSession,
     NewProduct,
@@ -89,6 +90,19 @@ async def test_a_page_size_is_bounded_before_any_query(limit: int) -> None:
         await sessions.list(session.seller_id, limit=limit)
     with pytest.raises(ValueError, match="page holds"):
         await products.list(session.seller_id, session.id, limit=limit)
+
+
+async def test_a_restock_moves_the_stock_by_a_bounded_delta() -> None:
+    database, _, _, products = _use_cases()
+    session = database.add_live_session(seller_id=database.add_seller().id)
+    product = database.add_product(session.id, "Z99", stock_total=10)
+
+    restocked = await products.restock(session.seller_id, session.id, product.id, 5)
+
+    assert restocked.stock == StockLevel(15)
+    for delta in (0, MAX_STOCK_TOTAL + 1, -MAX_STOCK_TOTAL - 1):
+        with pytest.raises(ValueError, match="restock moves"):
+            await products.restock(session.seller_id, session.id, product.id, delta)
 
 
 async def test_a_seller_adds_reads_edits_and_lists_the_products_of_a_session() -> None:

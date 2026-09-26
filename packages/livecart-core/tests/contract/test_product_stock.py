@@ -9,6 +9,7 @@ from uuid import UUID
 import pytest
 
 from livecart_core.application.dto import (
+    MAX_STOCK_TOTAL,
     LiveSessionRecord,
     NewProduct,
     ProductChanges,
@@ -59,9 +60,10 @@ async def test_products_are_listed_per_session_in_creation_order(
 async def test_a_restock_adds_or_removes_units(backend: ReservationBackend) -> None:
     session = await backend.add_live_session()
     product = await backend.add_product(session.id, "Z99", stock_total=10)
+    restock = backend.products.restock
 
-    added = await backend.products.restock(product.id, 5)
-    removed = await backend.products.restock(product.id, -12)
+    added = await restock(session.seller_id, session.id, product.id, 5)
+    removed = await restock(session.seller_id, session.id, product.id, -12)
 
     assert added.stock == StockLevel(15)
     assert removed.stock == StockLevel(3)
@@ -75,15 +77,54 @@ async def test_a_restock_never_goes_below_what_is_reserved_and_sold(
     product = await backend.add_product(session.id, "Z99", stock_total=10)
     # Reservations and sales go through the orders; setting them directly keeps this test short.
     await backend.set_stock(product.id, StockLevel(10, reserved=3, sold=2))
+    restock = backend.products.restock
 
-    assert (await backend.products.restock(product.id, -5)).stock.available == 0
-    with pytest.raises(StockConflict, match="below"):
-        await backend.products.restock(product.id, -1)
-    with pytest.raises(RecordNotFound):
-        await backend.products.restock(UNKNOWN, 1)
+    assert (await restock(session.seller_id, session.id, product.id, -5)).stock.available == 0
+    with pytest.raises(StockConflict, match="below") as refused:
+        await restock(session.seller_id, session.id, product.id, -1)
+
+    assert not refused.value.above_maximum
     stored = await backend.products.get(product.id)
     assert stored is not None
     assert stored.stock == StockLevel(5, reserved=3, sold=2)
+
+
+async def test_a_restock_never_goes_above_the_maximum(backend: ReservationBackend) -> None:
+    session = await backend.add_live_session()
+    product = await backend.add_product(session.id, "Z99", stock_total=10)
+    restock = backend.products.restock
+
+    full = await restock(session.seller_id, session.id, product.id, MAX_STOCK_TOTAL - 10)
+    with pytest.raises(StockConflict, match="above") as refused:
+        await restock(session.seller_id, session.id, product.id, 1)
+
+    assert full.stock == StockLevel(MAX_STOCK_TOTAL)
+    assert refused.value.above_maximum
+    assert await backend.products.get(product.id) == full
+
+
+async def test_a_restock_reaches_only_the_sellers_products_of_a_session_not_ended(
+    backend: ReservationBackend,
+) -> None:
+    session = await backend.add_live_session(status=LiveSessionStatus.DRAFT)
+    product = await backend.add_product(session.id, "Z99", stock_total=10)
+    sibling = await backend.add_live_session(external_live_id="live-2", seller_id=session.seller_id)
+    other = await backend.add_seller()
+    restock = backend.products.restock
+
+    drafted = await restock(session.seller_id, session.id, product.id, 1)
+    with pytest.raises(RecordNotFound):
+        await restock(other, session.id, product.id, 1)
+    with pytest.raises(RecordNotFound):
+        await restock(session.seller_id, sibling.id, product.id, 1)
+    with pytest.raises(RecordNotFound):
+        await restock(session.seller_id, session.id, UNKNOWN, 1)
+    await backend.set_session_status(session.id, LiveSessionStatus.ENDED)
+    with pytest.raises(EditRefused):
+        await restock(session.seller_id, session.id, product.id, 1)
+
+    assert drafted.stock == StockLevel(11)
+    assert await backend.products.get(product.id) == drafted
 
 
 # --- A seller's catalog ----------------------------------------------------------------

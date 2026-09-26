@@ -13,6 +13,7 @@ from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionReposito
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.settings import AppEnv, Settings
 from livecart_core.testing.fakes import InMemoryDatabase
@@ -121,6 +122,7 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert isinstance(resources.clock, SystemClock)
     assert isinstance(resources.live_sessions, SqlLiveSessionRepository)
     assert isinstance(resources.products, SqlProductStockRepository)
+    assert isinstance(resources.idempotency, RedisIdempotencyStore)
     await resources.aclose()  # nothing was connected: closing must not fail
 
 

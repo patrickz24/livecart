@@ -16,8 +16,10 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from livecart_core.application.ports import IdempotencyStore
 from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.db.engine import create_db_engine
+from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
     AuthBackend,
@@ -34,6 +36,7 @@ from livecart_core.testing.database import (
     load_integration_settings,
     unreachable_servers,
 )
+from livecart_core.testing.fakes import InMemoryIdempotencyStore
 from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
 
@@ -150,3 +153,13 @@ async def redis_key_prefix(redis_client: Redis) -> AsyncIterator[str]:
         yield prefix
     finally:
         await delete_keys_with_prefix(redis_client, prefix)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def idempotency_store(request: pytest.FixtureRequest) -> IdempotencyStore:
+    """The store of idempotent answers of this run of a contract scenario: the fake, then Redis."""
+    if request.param == "memory":
+        return InMemoryIdempotencyStore()
+    client: Redis = request.getfixturevalue("redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    return RedisIdempotencyStore(client, prefix=prefix)

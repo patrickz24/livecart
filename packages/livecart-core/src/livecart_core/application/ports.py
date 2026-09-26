@@ -43,6 +43,8 @@ from livecart_core.application.dto import (
     CommentClaim,
     FallbackReceipt,
     FallbackRequest,
+    IdempotencyKey,
+    IdempotencyRecord,
     InboxComment,
     IncomingComment,
     LiveSessionChanges,
@@ -105,7 +107,14 @@ class InvalidSignature(PortError):
 
 
 class StockConflict(PortError):
-    """A restock that would bring a product's stock total below its reserved and sold units."""
+    """A restock that would bring a product's stock total below its reserved and sold units.
+
+    ``above_maximum`` marks the other bound: a total above ``MAX_STOCK_TOTAL``.
+    """
+
+    def __init__(self, message: str, *, above_maximum: bool = False) -> None:
+        super().__init__(message)
+        self.above_maximum = above_maximum
 
 
 class SellerConflict(PortError):
@@ -572,12 +581,43 @@ class ProductStockRepository(Protocol):
         Raises ``RecordNotFound``, ``EditRefused`` and ``ProductConflict``.
         """
 
-    async def restock(self, product_id: UUID, delta: int) -> ProductRecord:
-        """Add ``delta`` (negative to remove) to the stock total.
+    async def restock(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID, delta: int
+    ) -> ProductRecord:
+        """Add ``delta`` (negative to remove) to the stock of a product of the seller's session.
 
-        Raises ``StockConflict`` when the total would fall below the reserved
-        and sold units.
+        One conditional update decides, so a restock never races a
+        reservation. Raises ``RecordNotFound``, ``EditRefused`` for an ended
+        session, and ``StockConflict`` when the total would fall below the
+        reserved and sold units or rise above ``MAX_STOCK_TOTAL``.
         """
+
+
+# How long the first answer to an idempotency key is kept, and replayed: a day.
+IDEMPOTENCY_TTL_SECONDS: Final = 86_400
+
+
+class IdempotencyStore(Protocol):
+    """The first answer to each idempotency key of a seller, kept for a day (Redis, ``SET NX EX``).
+
+    ``claim`` is the one atomic step: of several requests under one key,
+    exactly one gets ``None`` and runs; the others read what it left, its
+    fingerprint and, once it answered, its answer. A failure of the store
+    raises ``ServiceUnavailable``.
+    """
+
+    async def claim(self, key: IdempotencyKey, fingerprint: str) -> IdempotencyRecord | None:
+        """Claim ``key`` for the request of ``fingerprint``.
+
+        ``None`` when this call claimed it; otherwise the record of the
+        request that did, whose ``response`` is ``None`` while it runs.
+        """
+
+    async def save(self, key: IdempotencyKey, record: IdempotencyRecord) -> None:
+        """Replace the claim with the claiming request's answer, keeping the claim's expiry."""
+
+    async def release(self, key: IdempotencyKey) -> None:
+        """Drop the claim of a request that failed without answering, so the key may run again."""
 
 
 # How many order references unit 3 draws before it gives up with ServiceUnavailable.

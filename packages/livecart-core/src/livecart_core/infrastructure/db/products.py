@@ -2,9 +2,21 @@
 
 The counters only move through conditional ``UPDATE`` statements whose
 ``WHERE`` holds the rule, so that the check and the write are one statement
-and no read-then-write race exists: here the restock, and in
-``SqlOrderRepository.reserve`` the reservation. ``ck_products_stock`` is the
-last line of defence behind both.
+and no read-then-write race exists: here the restock::
+
+    UPDATE products SET stock_total = stock_total + :delta
+    FROM live_sessions
+    WHERE products.id = :id AND products.session_id = live_sessions.id
+      AND live_sessions.id = :session AND live_sessions.seller_id = :seller
+      AND live_sessions.status IN ('draft', 'live')
+      AND stock_total + :delta >= reserved + sold
+      AND stock_total + :delta <= :max
+    RETURNING ...
+
+and in ``SqlOrderRepository.reserve`` the reservation. When a reservation
+holds the row, the restock waits and evaluates its ``WHERE`` again on the
+counters the reservation committed. ``ck_products_stock`` is the last line of
+defence behind both.
 
 A seller's writes to a catalog (``add``, ``update``) first lock the
 session's row with ``FOR NO KEY UPDATE``, filtered by the seller: the rules
@@ -26,6 +38,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from livecart_core.application.dto import (
+    MAX_STOCK_TOTAL,
     NewProduct,
     Page,
     ProductChanges,
@@ -49,6 +62,8 @@ from livecart_core.infrastructure.db.tables import live_sessions, products
 from livecart_core.infrastructure.db.units import transaction, violated_constraint
 
 KEY_CONSTRAINT = "uq_products_session_id_code_variant"
+# The statuses whose products take a restock: an ended session changes no more.
+RESTOCKABLE = (LiveSessionStatus.DRAFT.value, LiveSessionStatus.LIVE.value)
 
 
 def stock_level(row: Row[Any]) -> StockLevel:
@@ -208,28 +223,47 @@ class SqlProductStockRepository:
             raise
         return self._record(row)
 
-    async def restock(self, product_id: UUID, delta: int) -> ProductRecord:
+    async def restock(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID, delta: int
+    ) -> ProductRecord:
+        total = products.c.stock_total + delta
         async with transaction(self._engine) as connection:
             row = (
                 await connection.execute(
                     update(products)
                     .where(
                         products.c.id == product_id,
-                        products.c.stock_total + delta >= products.c.reserved + products.c.sold,
+                        products.c.session_id == live_sessions.c.id,
+                        owned_session(seller_id, session_id),
+                        live_sessions.c.status.in_(RESTOCKABLE),
+                        total >= products.c.reserved + products.c.sold,
+                        total <= MAX_STOCK_TOTAL,
                     )
-                    .values(stock_total=products.c.stock_total + delta)
+                    .values(stock_total=total)
                     .returning(*products.c)
                 )
             ).one_or_none()
             if row is not None:
                 return self._record(row)
+            # Nothing matched: read why, with the same filter.
             current = (
-                await connection.execute(select(products).where(products.c.id == product_id))
+                await connection.execute(
+                    select(products, live_sessions.c.status.label("session_status"))
+                    .join(live_sessions, products.c.session_id == live_sessions.c.id)
+                    .where(products.c.id == product_id, owned_session(seller_id, session_id))
+                )
             ).one_or_none()
         if current is None:
-            raise RecordNotFound(f"no product {product_id}")
+            raise RecordNotFound(f"no product {product_id} in session {session_id}")
+        check_session_edit(LiveSessionStatus(current.session_status))
+        new_total = current.stock_total + delta
+        if new_total > MAX_STOCK_TOTAL:
+            raise StockConflict(
+                f"product {product_id}: a total of {new_total} is above {MAX_STOCK_TOTAL}",
+                above_maximum=True,
+            )
         raise StockConflict(
-            f"product {product_id}: a total of {current.stock_total + delta} is below the "
+            f"product {product_id}: a total of {new_total} is below the "
             f"{current.reserved} reserved and {current.sold} sold"
         )
 
