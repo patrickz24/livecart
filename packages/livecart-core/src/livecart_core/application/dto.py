@@ -19,7 +19,7 @@ PostgreSQL, milestone 3), and every timestamp is timezone-aware.
 """
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -741,6 +741,22 @@ class ReservationResult:
     def __post_init__(self) -> None:
         if (self.intent.outcome is IntentOutcome.RESERVED) != (self.order is not None):
             raise ValueError("an order exists exactly when the intent was reserved")
+
+
+@dataclass(frozen=True, slots=True)
+class ExpiredReservations:
+    """One batch of the expiry sweep: the orders it expired, lowest id first.
+
+    ``stock`` holds the counters of each product whose reserved units it
+    released, as they stand after the release.
+    """
+
+    orders: tuple[OrderRecord, ...] = ()
+    stock: Mapping[UUID, StockLevel] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if {order.product_id for order in self.orders} != set(self.stock):
+            raise ValueError("the stock of every product released, and only of those")
 
 
 @dataclass(frozen=True, slots=True)

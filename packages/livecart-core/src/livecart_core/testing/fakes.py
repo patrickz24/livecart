@@ -38,6 +38,7 @@ from livecart_core.application.dto import (
     CheckoutStatus,
     CommentBatch,
     CommentClaim,
+    ExpiredReservations,
     FallbackReceipt,
     FallbackRequest,
     IdempotencyKey,
@@ -1395,7 +1396,7 @@ class InMemoryOrderRepository(_Repository):
         self._tables.orders[order_id] = order
         return order
 
-    async def expire_due(self, *, now: datetime, limit: int) -> list[OrderRecord]:
+    async def expire_due(self, *, now: datetime, limit: int) -> ExpiredReservations:
         _require_aware(now)
         _require_positive("limit", limit)
         paying = {
@@ -1420,7 +1421,11 @@ class InMemoryOrderRepository(_Repository):
             order = replace(order, status=OrderStatus.EXPIRED, expired_at=now)
             self._tables.orders[order.id] = order
             expired.append(order)
-        return expired
+        released = sorted({order.product_id for order in expired})
+        return ExpiredReservations(
+            tuple(expired),
+            {product_id: self._tables.products[product_id].stock for product_id in released},
+        )
 
     async def record_payment(self, order_id: UUID, *, now: datetime) -> OrderTransition:
         _require_aware(now)

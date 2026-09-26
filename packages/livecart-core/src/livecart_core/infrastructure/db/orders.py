@@ -35,11 +35,32 @@
 Locks are taken in one order, the comment then the product, so two units
 cannot deadlock. Every deadline comes from the request's ``now`` (the
 ``Clock`` port), never from the database clock.
+
+``expire_due``, the first step of the expiry sweep, is one transaction too:
+
+1. ``SELECT ... FOR UPDATE SKIP LOCKED LIMIT :limit`` of the pending orders
+   whose reservation ended before ``now`` and that have no pending payment,
+   lowest id first: another sweep's orders are skipped, not waited for, so
+   that sweeps running at once take disjoint batches;
+2. one ``UPDATE products SET reserved = reserved - :q`` per product, the
+   quantities of its orders summed, in ascending product id order, so that
+   two sweeps lock products in the same order;
+3. ``UPDATE orders SET status = 'expired', expired_at = :now`` with the
+   guard ``status = 'pending_payment' AND reserved_until < :now``.
+
+The orders are only row-locked until the products are released, and set to
+expired last: a reservation of the same buyer and product that runs
+meanwhile finds the order still pending in ``uq_orders_pending_buyer_product``
+at once (``already_reserved``), where an order already updated by this
+transaction would make its insert wait for the sweep while the sweep waits
+for its product: a deadlock.
 """
 
 import secrets
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -49,6 +70,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from livecart_core.application.dto import (
     BuyerOrderRecord,
+    ExpiredReservations,
     IntentSource,
     OrderRecord,
     PurchaseIntentRecord,
@@ -67,7 +89,12 @@ from livecart_core.domain.reference import (
     RandomSource,
     generate_order_reference,
 )
-from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
+from livecart_core.domain.state_machines import (
+    CommentStatus,
+    LiveSessionStatus,
+    OrderStatus,
+    PaymentStatus,
+)
 from livecart_core.infrastructure.db.comments import parse_values
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.products import stock_level
@@ -75,6 +102,7 @@ from livecart_core.infrastructure.db.tables import (
     comments,
     live_sessions,
     orders,
+    payments,
     products,
     purchase_intents,
 )
@@ -213,6 +241,63 @@ class SqlOrderRepository:
             product_variant=Variant(row.product_variant),
             product_name=row.product_name,
             access_token_hash=row.access_token_hash,
+        )
+
+    async def expire_due(self, *, now: datetime, limit: int) -> ExpiredReservations:
+        if limit < 1:
+            raise ValueError(f"limit must be positive, not {limit}")
+        paying = (
+            select(payments.c.id)
+            .where(
+                payments.c.order_id == orders.c.id,
+                payments.c.status == PaymentStatus.PENDING.value,
+            )
+            .exists()
+        )
+        due = (orders.c.status == OrderStatus.PENDING_PAYMENT.value) & (
+            orders.c.reserved_until < now
+        )
+        async with transaction(self._engine) as connection:
+            locked = (
+                await connection.execute(
+                    select(orders.c.id, orders.c.product_id, orders.c.quantity)
+                    .where(due, ~paying)
+                    .order_by(orders.c.id)
+                    .limit(limit)
+                    .with_for_update(skip_locked=True)
+                )
+            ).all()
+            if not locked:
+                return ExpiredReservations()
+            released: Counter[UUID] = Counter()
+            for row in locked:
+                released[row.product_id] += row.quantity
+            stock = {}
+            for product_id in sorted(released):
+                counters = (
+                    await connection.execute(
+                        update(products)
+                        .where(products.c.id == product_id)
+                        .values(reserved=products.c.reserved - released[product_id])
+                        .returning(products.c.stock_total, products.c.reserved, products.c.sold)
+                    )
+                ).one()
+                stock[product_id] = stock_level(counters)
+            expired = (
+                await connection.execute(
+                    update(orders)
+                    .where(orders.c.id.in_([row.id for row in locked]), due)
+                    .values(status=OrderStatus.EXPIRED.value, expired_at=now)
+                    .returning(*orders.c)
+                )
+            ).all()
+            if len(expired) != len(locked):
+                # Impossible while this transaction holds their rows: roll the
+                # release back rather than free stock that an order still holds.
+                raise RuntimeError("an order locked by the sweep changed under its lock")
+        return ExpiredReservations(
+            tuple(sorted((order_record(row) for row in expired), key=lambda order: order.id)),
+            stock,
         )
 
     # --- The steps of unit 3 -----------------------------------------------------------

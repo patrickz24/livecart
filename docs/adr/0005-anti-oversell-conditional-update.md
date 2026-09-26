@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-26. Milestone 3 implemented the reservation and its proof under concurrency. The expiry of unpaid reservations arrives in milestone 4a and gets its own section in this record then.
+Accepted, 2026-09-26. Milestone 3 implemented the reservation and its proof under concurrency, milestone 4a the expiry of unpaid reservations for the orders without a payment in flight. The orders with one wait for milestone 5, which expires the provider's session first.
 
 ## Context
 
@@ -37,6 +37,18 @@ During a live, hundreds of buyers comment on the same product within seconds, an
 
 The comment's row is locked before the product's in every unit, so two units cannot deadlock. The reservation lasts until `now + RESERVATION_TTL_SECONDS` (900 by default, from 60 to 86400, validated at startup), `now` coming from the `Clock` port. A lock that waits more than `lock_timeout` (2 s), a deadlock or a lost connection rolls the whole unit back as `ServiceUnavailable`: the comment stays `received`, for its redelivery.
 
+### Expiry of unpaid reservations
+
+Every worker sweeps every 5 s (`ExpireReservations`, `SqlOrderRepository.expire_due`). A batch is one transaction:
+
+1. `SELECT ... FOR UPDATE SKIP LOCKED LIMIT 100` of the orders `pending_payment` whose `reserved_until` is before `now` (the `Clock` port's) and that have no pending payment, lowest id first, by the partial index `ix_orders_pending_reserved_until`. Another sweep's rows are skipped, not waited for: sweeps running at once in several workers take disjoint batches;
+2. one aggregated `UPDATE products SET reserved = reserved - :q` per product, in ascending product id order, so that two sweeps lock products in the same order;
+3. `UPDATE orders SET status = 'expired', expired_at = :now` with the guard `status = 'pending_payment' AND reserved_until < :now`.
+
+The order rows are only locked (`FOR UPDATE`) until the products are released, and updated last. A reservation of the same buyer and product that runs meanwhile holds the product's row and inserts its order: against a row that is only locked, `uq_orders_pending_buyer_product` fails at once and the intent is `already_reserved`, whereas a row this transaction had already updated would make that insert wait for the sweep, while the sweep waits for the product: a deadlock. A full batch means more may be due: the sweep goes on until a batch comes back short or the tick's 5 s have passed. After each batch commits, `order.updated` and `stock.updated` are published, best effort.
+
+`tests/contract/test_reservation_expiry.py` runs the rules on the fake and on PostgreSQL (the payment in flight left alone, a reservation ending exactly at `now` not due yet, two sweeps at once expiring each order exactly once), and `tests/integration/test_reservation_expiry_postgres.py` shortens `RESERVATION_TTL_SECONDS` to 2 s with an injected clock: the order expires, the unit is for sale again, and two concurrent sweeps through the worker's pool release 250 orders exactly once (a second release would break `ck_products_stock`).
+
 The seller's restock is the same kind of statement: one `UPDATE ... SET stock_total = stock_total + :delta` whose `WHERE` requires the new total to stay between `reserved + sold` and the maximum, so a restock waiting on a reservation decides on the counters it committed, and answers 409 otherwise.
 
 ### The proof
@@ -50,8 +62,8 @@ The seller's restock is the same kind of statement: one `UPDATE ... SET stock_to
 - Reservations of one product serialize on its row lock, each for the length of one short transaction; different products reserve in parallel. The pool bounds the concurrency, and `lock_timeout` bounds each wait.
 - A burst never fails for a reason another attempt would fix: the loser of the last unit gets a final answer, `out_of_stock`, the first time.
 - A buyer holds at most one pending order per product, of at most `MAX_QUANTITY_PER_COMMENT` (10) units: a troll can still hold that much stock per account and product until the reservation expires.
-- Until the expiry sweep of milestone 4a runs, `reserved_until` is recorded but nothing releases an unpaid reservation.
-- Ending a session never waits for the reservations, nor they for it: the reservation reads the session's row without locking it, and the `FOR KEY SHARE` of its foreign keys does not conflict with the `FOR NO KEY UPDATE` of the transition. A reservation whose statement started before an `end` committed still reads the session as live, and may open a pending order in a session that is ended by the time it commits (checked with two connections on PostgreSQL 16). The stock stays exact, since the product's row is what serializes the reservations; that order expires like any other, with the sweep of milestone 4a. A hard cut would need `end` to lock the session's product rows (`FOR NO KEY UPDATE`) before it changes the status.
+- An unpaid reservation holds its stock for `RESERVATION_TTL_SECONDS` plus at most one sweep interval (5 s). The orders with a payment in flight are not released before milestone 5, which asks the provider to expire its session first.
+- Ending a session never waits for the reservations, nor they for it: the reservation reads the session's row without locking it, and the `FOR KEY SHARE` of its foreign keys does not conflict with the `FOR NO KEY UPDATE` of the transition. A reservation whose statement started before an `end` committed still reads the session as live, and may open a pending order in a session that is ended by the time it commits (checked with two connections on PostgreSQL 16). The stock stays exact, since the product's row is what serializes the reservations; that order expires like any other, with the sweep. A hard cut would need `end` to lock the session's product rows (`FOR NO KEY UPDATE`) before it changes the status.
 
 ## Alternatives considered
 

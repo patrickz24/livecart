@@ -118,6 +118,8 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.ingest_comments" in application
     assert "livecart_core.application.process_comment" in application
     assert "livecart_core.application.session_events" in application
+    assert "livecart_core.application.reclaim_comments" in application
+    assert "livecart_core.application.expire_reservations" in application
     assert "livecart_core.domain.sellers" in domain
     assert "livecart_core.domain.live_sessions" in domain
 
@@ -299,6 +301,9 @@ def test_the_entry_points_are_among_the_modules_checked_for_raw_sql() -> None:
     assert "livecart_api.middleware.security_headers" in checked
     assert "livecart_worker.main" in checked
     assert "livecart_worker.heartbeat" in checked
+    assert "livecart_worker.consumer" in checked
+    assert "livecart_worker.reclaim" in checked
+    assert "livecart_worker.sweeps" in checked
     assert "livecart_api.testing" not in checked
 
 

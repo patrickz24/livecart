@@ -7,7 +7,6 @@ import pytest
 
 from livecart_core.application.dto import (
     IntentSource,
-    PaymentProviderName,
     ReservationRequest,
     ShippingAddress,
     StockLevel,
@@ -119,60 +118,10 @@ async def test_an_order_records_its_shipping_address() -> None:
         await database.orders.set_shipping_address(UNKNOWN, address)
 
 
-async def test_the_sweep_expires_due_orders_without_pending_payment() -> None:
-    database, session_id, product_id = _database()
-    due = await _order_id(database, session_id, "comment-1")
-    paying = await _order_id(database, session_id, "comment-2")
-    await database.payments.open_attempt(
-        paying,
-        provider=PaymentProviderName.MOCK,
-        return_url="livecart://payment-return",
-        now=NOW,
-        grace=timedelta(seconds=60),
-        max_attempts=3,
-    )
-    later = await database.orders.reserve(
-        _request(await _claimed(database, "comment-3", author="late"), session_id, ttl=2 * TTL)
-    )
-    assert later is not None
-    assert later.order is not None
-    sweep_at = NOW + TTL + timedelta(seconds=1)
-
-    expired = await database.orders.expire_due(now=sweep_at, limit=10)
-
-    assert [order.id for order in expired] == [due]
-    assert expired[0].status is OrderStatus.EXPIRED
-    assert expired[0].expired_at == sweep_at
-    assert await database.orders.get(due) == expired[0]
-    product = await database.products.get(product_id)
-    assert product is not None
-    assert product.stock == StockLevel(10, reserved=2)
-    assert await database.orders.expire_due(now=sweep_at, limit=10) == []
-
-
-async def test_a_reservation_ending_exactly_now_is_not_due_yet() -> None:
-    database, session_id, _ = _database()
-    await _order_id(database, session_id, "comment-1")
-
-    assert await database.orders.expire_due(now=NOW + TTL, limit=10) == []
-
-
-async def test_the_sweep_takes_the_lowest_ids_first_within_its_limit() -> None:
-    database, session_id, _ = _database()
-    ids = [await _order_id(database, session_id, f"comment-{n}") for n in range(3)]
-
-    first = await database.orders.expire_due(now=NOW + 2 * TTL, limit=2)
-    rest = await database.orders.expire_due(now=NOW + 2 * TTL, limit=2)
-
-    assert [order.id for order in first] == ids[:2]
-    assert [order.id for order in rest] == ids[2:]
-
-
-async def test_the_sweep_refuses_nonsensical_arguments() -> None:
+async def test_the_sweep_needs_an_aware_time() -> None:
+    # Its limit and its rules run on every backend: tests/contract.
     database, _, _ = _database()
 
-    with pytest.raises(ValueError, match="limit"):
-        await database.orders.expire_due(now=NOW, limit=0)
     with pytest.raises(ValueError, match="naive"):
         await database.orders.expire_due(now=NOW.replace(tzinfo=None), limit=1)
 

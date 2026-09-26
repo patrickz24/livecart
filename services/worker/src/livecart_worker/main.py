@@ -7,6 +7,8 @@ then runs the worker's loops in one TaskGroup:
 - the comment consumer (``consumer.CommentConsumer`` over ``ProcessComment``);
 - the reclaim loop, every 30 s (``reclaim``): deliveries left idle by another
   consumer redelivered or dead-lettered, then the safe trim of the stream;
+- the expiry sweep, every 5 s (``sweeps``): the reservations nobody paid in
+  time expired, and their stock released;
 - the heartbeat, which also checks that the consumer keeps going round.
 
 SIGTERM (``docker stop``) and SIGINT (Ctrl+C) set a stop event that every
@@ -23,6 +25,7 @@ from typing import Final
 
 import structlog
 
+from livecart_core.application.expire_reservations import ExpireReservations
 from livecart_core.application.ports import Clock
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
@@ -40,6 +43,7 @@ from livecart_core.settings import Settings
 from livecart_worker.consumer import CommentConsumer, default_consumer_name
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
 from livecart_worker.reclaim import RECLAIM_INTERVAL_S, run_reclaim
+from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
 logger = structlog.get_logger(__name__)
 
@@ -85,11 +89,12 @@ async def serve(
     clock: Clock | None = None,
     consumer_name: str | None = None,
     reclaim_interval_s: float = RECLAIM_INTERVAL_S,
+    expiry_interval_s: float = EXPIRY_INTERVAL_S,
 ) -> None:
     """Run every worker loop until ``stop`` is set.
 
     ``clock`` and ``consumer_name`` default to the system clock and to
-    ``<host>-<pid>``; the tests fix them, and the reclaim interval.
+    ``<host>-<pid>``; the tests fix them, and the intervals of the loops.
     """
     clock = clock if clock is not None else SystemClock()
     redis = create_redis_client(settings.redis_url)
@@ -102,16 +107,18 @@ async def serve(
     try:
         queue = RedisCommentQueue(redis, prefix=settings.redis_key_prefix)
         inbox = SqlCommentInbox(engine)
+        orders = SqlOrderRepository(
+            engine,
+            currency=settings.default_currency,
+            access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
+        )
+        events = NullEventPublisher()
         process = ProcessComment(
             inbox=inbox,
             sessions=SqlLiveSessionRepository(engine),
-            orders=SqlOrderRepository(
-                engine,
-                currency=settings.default_currency,
-                access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
-            ),
+            orders=orders,
             queue=queue,
-            events=NullEventPublisher(),
+            events=events,
             clock=clock,
             lease=settings.message_process_timeout,
             reservation_ttl=settings.reservation_ttl,
@@ -132,9 +139,11 @@ async def serve(
             min_idle=settings.queue_reclaim_min_idle,
             max_deliveries=settings.queue_max_deliveries,
         )
+        expire = ExpireReservations(orders, events, clock, budget=EXPIRY_BUDGET)
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
             loops.create_task(run_reclaim(reclaim, consumer, stop, interval_s=reclaim_interval_s))
+            loops.create_task(run_expiry_sweep(expire, stop, interval_s=expiry_interval_s))
             loops.create_task(
                 run_heartbeat(
                     ping=partial(ping_redis, redis),

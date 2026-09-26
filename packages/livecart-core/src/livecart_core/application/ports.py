@@ -42,6 +42,7 @@ from livecart_core.application.dto import (
     CheckoutRequest,
     CheckoutSession,
     CommentClaim,
+    ExpiredReservations,
     FallbackReceipt,
     FallbackRequest,
     IdempotencyKey,
@@ -732,7 +733,29 @@ class OrderLookup(Protocol):
         """The order with this reference and the product it holds, or ``None``."""
 
 
-class OrderRepository(OrderReservations, OrderLookup, Protocol):
+# The most orders one batch of the expiry sweep expires, in one transaction.
+EXPIRY_BATCH: Final = 100
+
+
+class ReservationExpiry(Protocol):
+    """The release of the reservations nobody paid: what ``ExpireReservations`` needs.
+
+    Several sweeps, one per worker, run at once: each order is expired, and
+    its stock released, exactly once, by whichever takes it first.
+    """
+
+    async def expire_due(self, *, now: datetime, limit: int) -> ExpiredReservations:
+        """First step of the expiry sweep, and the whole of it until milestone 5.
+
+        One unit: expires at most ``limit`` pending orders whose reservation
+        ended before ``now`` and that have no pending payment, lowest id
+        first, skipping those another sweep holds, and releases their
+        reserved stock, product by product. Returns the expired orders and
+        the counters of each product after the release.
+        """
+
+
+class OrderRepository(OrderReservations, OrderLookup, ReservationExpiry, Protocol):
     """Purchase intents and orders, with the stock effects of their transitions."""
 
     async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:
@@ -740,14 +763,6 @@ class OrderRepository(OrderReservations, OrderLookup, Protocol):
 
     async def set_shipping_address(self, order_id: UUID, address: ShippingAddress) -> OrderRecord:
         """Record where the buyer wants the order delivered."""
-
-    async def expire_due(self, *, now: datetime, limit: int) -> list[OrderRecord]:
-        """First step of the expiry sweep, and the whole of it until milestone 5.
-
-        Expires at most ``limit`` pending orders whose reservation ended
-        before ``now`` and that have no pending payment, lowest id first,
-        releasing their reserved stock. Returns the expired orders.
-        """
 
     async def record_payment(self, order_id: UUID, *, now: datetime) -> OrderTransition:
         """A confirmed payment, stamped ``paid_at``.

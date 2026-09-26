@@ -20,7 +20,13 @@ from uuid import UUID
 from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.dto import LiveSessionRecord, Platform, ProductRecord, StockLevel
+from livecart_core.application.dto import (
+    LiveSessionRecord,
+    PaymentProviderName,
+    Platform,
+    ProductRecord,
+    StockLevel,
+)
 from livecart_core.application.ports import (
     CommentInbox,
     LiveSessionRepository,
@@ -28,13 +34,19 @@ from livecart_core.application.ports import (
     OrderReservations,
     ProductStockRepository,
     RefreshTokenRepository,
+    ReservationExpiry,
     SellerRepository,
 )
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import RejectionReason
 from livecart_core.domain.reference import RandomSource
-from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
+from livecart_core.domain.state_machines import (
+    CommentStatus,
+    LiveSessionStatus,
+    OrderStatus,
+    PaymentStatus,
+)
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.ids import new_id
@@ -60,8 +72,8 @@ ORDER_TOKENS = TEST_ORDER_TOKENS
 type CountedTable = Literal["purchase_intents", "orders"]
 
 
-class BackendOrders(OrderReservations, OrderLookup, Protocol):
-    """The order ports both backends implement so far: unit 3, its reads and the buyer's."""
+class BackendOrders(OrderReservations, OrderLookup, ReservationExpiry, Protocol):
+    """The order ports both backends implement so far: unit 3, its reads, the buyer's, the sweep."""
 
 
 class ReservationBackend(Protocol):
@@ -124,6 +136,10 @@ class ReservationBackend(Protocol):
 
     async def expire_order(self, order_id: UUID) -> None:
         """Expire a pending order and release its stock, as the sweep does."""
+        ...
+
+    async def add_pending_payment(self, order_id: UUID) -> None:
+        """A payment attempt in flight for the order, as StartCheckout opens one (milestone 5)."""
         ...
 
     async def set_stock(self, product_id: UUID, stock: StockLevel) -> None:
@@ -232,8 +248,20 @@ class InMemoryBackend:
         expired = await self.database.orders.expire_due(
             now=order.reserved_until + timedelta(seconds=1), limit=len(self.database.tables.orders)
         )
-        if order_id not in {row.id for row in expired}:
+        if order_id not in {row.id for row in expired.orders}:
             raise AssertionError(f"order {order_id} was not pending")
+
+    async def add_pending_payment(self, order_id: UUID) -> None:
+        opening = await self.database.payments.open_attempt(
+            order_id,
+            provider=PaymentProviderName.MOCK,
+            return_url="livecart://payment-return",
+            now=FAKE_CLOCK_START,
+            grace=timedelta(seconds=60),
+            max_attempts=3,
+        )
+        if opening.payment is None:
+            raise AssertionError(f"order {order_id} takes no payment: {opening.kind}")
 
     async def set_stock(self, product_id: UUID, stock: StockLevel) -> None:
         product = self.database.tables.products[product_id]
@@ -457,6 +485,28 @@ class PostgresBackend:
                 update(tables.products)
                 .where(tables.products.c.id == order.product_id)
                 .values(reserved=tables.products.c.reserved - order.quantity)
+            )
+
+    async def add_pending_payment(self, order_id: UUID) -> None:
+        async with self._migrator.begin() as connection:
+            order = (
+                await connection.execute(
+                    select(tables.orders.c.total_minor, tables.orders.c.currency).where(
+                        tables.orders.c.id == order_id
+                    )
+                )
+            ).one()
+            await connection.execute(
+                insert(tables.payments).values(
+                    id=new_id(),
+                    order_id=order_id,
+                    attempt_no=1,
+                    provider=PaymentProviderName.MOCK.value,
+                    return_url="livecart://payment-return",
+                    amount_minor=order.total_minor,
+                    currency=order.currency,
+                    status=PaymentStatus.PENDING.value,
+                )
             )
 
     async def set_stock(self, product_id: UUID, stock: StockLevel) -> None:

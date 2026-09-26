@@ -3,11 +3,14 @@
 Comments queued on the real stream are leased, parsed and reserved in
 livecart_test as livecart_app, and every delivery is acknowledged: the
 group's pending entries list ends empty. A real lock timeout is retried in
-the process rather than left to the reclaim.
+the process rather than left to the reclaim, and the expiry sweep releases
+a reservation nobody paid.
 """
 
 import asyncio
 from collections.abc import AsyncIterator
+from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +20,11 @@ from redis.asyncio import Redis
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.domain.state_machines import CommentStatus
+from livecart_core.application.dto import IntentSource, ReservationRequest
+from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.domain.quantity import Quantity
+from livecart_core.domain.state_machines import CommentStatus, OrderStatus
+from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import GROUP, RedisCommentQueue
 from livecart_core.infrastructure.db import tables
 from livecart_core.settings import Settings
@@ -152,3 +159,41 @@ async def test_a_lock_timeout_is_retried_in_the_process(
     assert [(log["delivery_count"], log["handling"]) for log in handled] == [(1, "processed")]
     pending: Any = await redis_client.xpending(queue.stream_key, GROUP)
     assert pending["pending"] == 0
+
+
+async def test_the_worker_expires_the_reservations_nobody_paid(
+    postgres_backend: PostgresBackend, migrator_engine: AsyncEngine, worker: None
+) -> None:
+    session = await postgres_backend.add_live_session()
+    product = await postgres_backend.add_product(session.id, "B07", stock_total=10)
+    comment_id = await postgres_backend.add_comment("c-unpaid")
+    an_hour_ago = SystemClock().now() - timedelta(hours=1)
+    result = await postgres_backend.orders.reserve(
+        ReservationRequest(
+            comment_id=comment_id,
+            session_id=session.id,
+            product_code=ProductCode("B07"),
+            variant=Variant(),
+            quantity=Quantity(2),
+            source=IntentSource.PARSER,
+            confidence=Decimal("1.00"),
+            evidence=("je prends", "B07"),
+            now=an_hour_ago,
+            reserved_until=an_hour_ago + timedelta(minutes=15),
+        )
+    )
+    assert result is not None
+    assert result.order is not None
+    order_id = result.order.id
+
+    async def released() -> bool:
+        return await _reserved(migrator_engine) == 0
+
+    # The worker sweeps every 5 s: within one interval, and a margin.
+    await until(released, within_s=8, every_s=0.1)
+    order = await postgres_backend.orders.get(order_id)
+    assert order is not None
+    assert order.status is OrderStatus.EXPIRED
+    stored = await postgres_backend.products.get(product.id)
+    assert stored is not None
+    assert stored.stock.reserved == 0
