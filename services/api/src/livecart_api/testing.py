@@ -323,7 +323,7 @@ async def open_order(
     """A pending order of an existing product, opened through unit 3 as the worker will open it."""
     claim = await database.comments.claim(
         queued_comment(external_comment_id=f"comment-{buyer}-{code}", author=buyer),
-        consumer="worker-1",
+        holder="worker-1",
         now=FAKE_CLOCK_START,
         lease=timedelta(seconds=30),
     )

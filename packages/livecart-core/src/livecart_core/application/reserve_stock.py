@@ -15,7 +15,12 @@ its session resolved and its intent settled by the parser or the LLM.
 from datetime import timedelta
 from uuid import UUID
 
-from livecart_core.application.dto import ReservationRequest, ReservationResult, ResolvedIntent
+from livecart_core.application.dto import (
+    ParseSummary,
+    ReservationRequest,
+    ReservationResult,
+    ResolvedIntent,
+)
 from livecart_core.application.ports import Clock, OrderReservations
 
 
@@ -39,8 +44,14 @@ class ReserveStock:
         self._reservation_ttl = reservation_ttl
 
     async def __call__(
-        self, comment_id: UUID, session_id: UUID, intent: ResolvedIntent
+        self,
+        comment_id: UUID,
+        session_id: UUID,
+        intent: ResolvedIntent,
+        *,
+        parse: ParseSummary | None = None,
     ) -> ReservationResult | None:
+        """Unit 3; ``parse``, what the parser said of the comment, is recorded with it."""
         now = self._clock.now()
         return await self._orders.reserve(
             ReservationRequest(
@@ -54,5 +65,6 @@ class ReserveStock:
                 evidence=intent.evidence,
                 now=now,
                 reserved_until=now + self._reservation_ttl,
+                parse=parse,
             )
         )

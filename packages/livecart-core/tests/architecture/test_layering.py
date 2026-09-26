@@ -270,6 +270,7 @@ def test_the_adapters_are_among_the_modules_checked_for_raw_sql() -> None:
     checked = set(_runtime_modules())
 
     assert "livecart_core.infrastructure.db.orders" in checked
+    assert "livecart_core.infrastructure.db.comments" in checked
     assert "livecart_core.infrastructure.db.live_sessions" in checked
     assert "livecart_core.infrastructure.idempotency" in checked
     assert "livecart_core.infrastructure.ratelimit" in checked

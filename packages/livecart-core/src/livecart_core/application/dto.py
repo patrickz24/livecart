@@ -32,8 +32,14 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, mod
 from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
-from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome, RejectionReason
-from livecart_core.domain.parser import Ambiguous, Match
+from livecart_core.domain.outcomes import (
+    PARSER_REJECTIONS,
+    AmbiguityReason,
+    IntentOutcome,
+    LlmOutcome,
+    RejectionReason,
+)
+from livecart_core.domain.parser import Ambiguous, Match, ParseResult
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import (
@@ -507,6 +513,45 @@ class FallbackReceipt:
 # --- Comment inbox ---------------------------------------------------------------------
 
 
+class ParseKind(StrEnum):
+    """What the deterministic parser returned: ``comments.parse_result``."""
+
+    MATCH = "match"
+    AMBIGUOUS = "ambiguous"
+    REJECTED = "rejected"
+
+
+@dataclass(frozen=True, slots=True)
+class ParseSummary:
+    """What the parser said of a comment: ``comments.parse_result`` and ``comments.parse_reason``.
+
+    Kept beside the comment's outcome for the dashboard and the metrics: an
+    ambiguity keeps the reason the fallback was asked to settle, even once the
+    comment is processed or rejected, and a match has no reason.
+    """
+
+    kind: ParseKind
+    reason: AmbiguityReason | RejectionReason | None = None
+
+    def __post_init__(self) -> None:
+        if self.kind is ParseKind.MATCH:
+            valid = self.reason is None
+        elif self.kind is ParseKind.AMBIGUOUS:
+            valid = isinstance(self.reason, AmbiguityReason)
+        else:
+            valid = self.reason in PARSER_REJECTIONS
+        if not valid:
+            raise ValueError(f"{self.reason!r} is not the reason of a {self.kind} parse")
+
+    @classmethod
+    def of(cls, result: ParseResult) -> Self:
+        if isinstance(result, Match):
+            return cls(ParseKind.MATCH)
+        if isinstance(result, Ambiguous):
+            return cls(ParseKind.AMBIGUOUS, result.reason)
+        return cls(ParseKind.REJECTED, result.reason)
+
+
 @dataclass(frozen=True, slots=True)
 class InboxComment:
     """A row of the ``comments`` inbox."""
@@ -521,9 +566,13 @@ class InboxComment:
     created_at: datetime
     # None until the session is resolved, and for good when it is not found.
     session_id: UUID | None = None
+    # The delivery that holds or last held the processing lease, and until when.
     claimed_by: str | None = None
     claimed_until: datetime | None = None
     rejection_reason: RejectionReason | None = None
+    # None until the parser has read the comment, and for good when it never
+    # did (no session to read it against).
+    parse: ParseSummary | None = None
     llm_receipt: FallbackReceipt | None = None
 
     def __post_init__(self) -> None:
@@ -598,12 +647,17 @@ class ReservationRequest:
     now: datetime
     # now + RESERVATION_TTL_SECONDS, computed by the use case from its settings.
     reserved_until: datetime
+    # What the parser said of the comment, recorded with its settlement; None
+    # leaves comments.parse_result as it is.
+    parse: ParseSummary | None = None
 
     def __post_init__(self) -> None:
         if not Decimal(0) <= self.confidence <= Decimal(1):
             raise ValueError(f"confidence must be from 0 to 1, not {self.confidence}")
         if self.reserved_until <= self.now:
             raise ValueError("a reservation must end after it starts")
+        if self.parse is not None and self.parse.kind is ParseKind.REJECTED:
+            raise ValueError("a comment the parser rejected reserves nothing")
 
 
 @dataclass(frozen=True, slots=True)

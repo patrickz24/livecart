@@ -42,12 +42,14 @@ from livecart_core.application.dto import (
     MAX_TITLE_LENGTH,
     CarrierName,
     IntentSource,
+    ParseKind,
     PaymentProviderName,
     Platform,
     WebhookOutcome,
 )
 from livecart_core.domain.codes import MAX_VARIANT_LENGTH, PRODUCT_CODE_PATTERN
 from livecart_core.domain.outcomes import (
+    PARSER_REJECTIONS,
     AmbiguityReason,
     IntentOutcome,
     LlmOutcome,
@@ -84,17 +86,6 @@ NAMING_CONVENTION: Final = {
 SHA256_BYTES: Final = 32
 # The width of orders.reference: "LC-" and six symbols.
 REFERENCE_LENGTH: Final = len(REFERENCE_PREFIX) + REFERENCE_SYMBOLS
-# The parser's own rejections, as stored in comments.parse_reason beside the
-# ambiguity reasons; session resolution and the fallback add the others.
-PARSER_REJECTIONS: Final = (
-    RejectionReason.NO_INTENT,
-    RejectionReason.MULTIPLE_PRODUCTS,
-    RejectionReason.QUANTITY_OUT_OF_BOUNDS,
-    RejectionReason.VARIANT_NOT_FOUND,
-)
-# What the parser returned: comments.parse_result.
-PARSE_RESULTS: Final = ("match", "ambiguous", "rejected")
-
 metadata: Final = sa.MetaData(naming_convention=NAMING_CONVENTION)
 
 
@@ -332,7 +323,7 @@ comments: Final = sa.Table(
         == sa.column("rejection_reason", sa.String).is_not(None),
         name="ck_comments_rejection_reason_when_rejected",
     ),
-    _one_of("parse_result", PARSE_RESULTS, name="ck_comments_parse_result"),
+    _one_of("parse_result", ParseKind, name="ck_comments_parse_result"),
     _one_of(
         "parse_reason", (*PARSER_REJECTIONS, *AmbiguityReason), name="ck_comments_parse_reason"
     ),

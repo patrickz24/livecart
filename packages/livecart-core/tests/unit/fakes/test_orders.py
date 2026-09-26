@@ -34,7 +34,7 @@ UNKNOWN = UUID(int=404)
 
 async def _claimed(database: InMemoryDatabase, comment: str, *, author: str = "buyer-1") -> UUID:
     envelope = queued_comment(external_comment_id=comment, author=author)
-    claim = await database.comments.claim(envelope, consumer="worker-1", now=NOW, lease=LEASE)
+    claim = await database.comments.claim(envelope, holder="worker-1", now=NOW, lease=LEASE)
     return claim.comment.id
 
 

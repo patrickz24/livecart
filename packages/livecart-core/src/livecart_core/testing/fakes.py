@@ -53,6 +53,7 @@ from livecart_core.application.dto import (
     OrderRecord,
     OrderTransition,
     Page,
+    ParseSummary,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
@@ -943,7 +944,7 @@ class InMemoryRefreshTokenRepository(_Repository):
 
 class InMemoryCommentInbox(_Repository):
     async def claim(
-        self, comment: QueuedComment, *, consumer: str, now: datetime, lease: timedelta
+        self, comment: QueuedComment, *, holder: str, now: datetime, lease: timedelta
     ) -> CommentClaim:
         _require_aware(now)
         _require_positive("lease", lease.total_seconds())
@@ -959,13 +960,13 @@ class InMemoryCommentInbox(_Repository):
                 correlation_id=comment.correlation_id,
                 status=CommentStatus.RECEIVED,
                 created_at=now,
-                claimed_by=consumer,
+                claimed_by=holder,
                 claimed_until=now + lease,
             )
         elif known.status is CommentStatus.RECEIVED and (
-            known.claimed_until is None or known.claimed_until < now
+            known.claimed_until is None or known.claimed_until < now or known.claimed_by == holder
         ):
-            row = replace(known, claimed_by=consumer, claimed_until=now + lease)
+            row = replace(known, claimed_by=holder, claimed_until=now + lease)
         else:
             return CommentClaim(acquired=False, comment=known)
         self._tables.comments[row.id] = row
@@ -984,13 +985,22 @@ class InMemoryCommentInbox(_Repository):
         return receipt
 
     async def reject(
-        self, comment_id: UUID, reason: RejectionReason, *, session_id: UUID | None
+        self,
+        comment_id: UUID,
+        reason: RejectionReason,
+        *,
+        session_id: UUID | None,
+        parse: ParseSummary | None = None,
     ) -> TransitionOutcome:
         row = _row(self._tables.comments, comment_id, "comment")
         outcome = transition(COMMENT_TRANSITIONS, row.status, CommentStatus.REJECTED)
         if outcome is TransitionOutcome.APPLIED:
             self._tables.comments[comment_id] = replace(
-                row, status=CommentStatus.REJECTED, rejection_reason=reason, session_id=session_id
+                row,
+                status=CommentStatus.REJECTED,
+                rejection_reason=reason,
+                session_id=session_id,
+                parse=parse if parse is not None else row.parse,
             )
         return outcome
 
@@ -1317,7 +1327,10 @@ class InMemoryOrderRepository(_Repository):
             self._tables.order_token_hashes[order.id] = self._db.access_token_hash(order.id)
             self._tables.products[product.id] = replace(product, stock=stock)
         self._tables.comments[comment.id] = replace(
-            comment, status=CommentStatus.PROCESSED, session_id=session.id
+            comment,
+            status=CommentStatus.PROCESSED,
+            session_id=session.id,
+            parse=request.parse if request.parse is not None else comment.parse,
         )
         self._tables.intents[intent.id] = intent
         return ReservationResult(intent, order, stock)

@@ -42,7 +42,7 @@ async def _order(database: InMemoryDatabase, comment: str = "comment-1") -> UUID
         database.add_product(session.id, "B07", price=Money(1_250, "EUR"))
     envelope = queued_comment(external_comment_id=comment, author=f"buyer-of-{comment}")
     claim = await database.comments.claim(
-        envelope, consumer="worker-1", now=NOW, lease=timedelta(seconds=30)
+        envelope, holder="worker-1", now=NOW, lease=timedelta(seconds=30)
     )
     result = await database.orders.reserve(
         ReservationRequest(

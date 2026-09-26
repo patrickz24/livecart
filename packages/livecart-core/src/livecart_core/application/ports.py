@@ -56,6 +56,7 @@ from livecart_core.application.dto import (
     OrderRecord,
     OrderTransition,
     Page,
+    ParseSummary,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
@@ -460,13 +461,16 @@ class CommentInbox(Protocol):
     """
 
     async def claim(
-        self, comment: QueuedComment, *, consumer: str, now: datetime, lease: timedelta
+        self, comment: QueuedComment, *, holder: str, now: datetime, lease: timedelta
     ) -> CommentClaim:
         """Unit 1: record the comment if it is new, then try to take its lease.
 
-        ``consumer`` gets the lease, until ``now + lease``, when the comment is
-        still received and no lease runs at ``now``; ``acquired`` says whether
-        it did. A known comment keeps the text of its first delivery.
+        ``holder`` names one delivery (``ProcessComment`` passes its consumer
+        and its delivery id). It gets the lease, until ``now + lease``, when
+        the comment is still received and no other holder's lease runs at
+        ``now``: a holder claiming again, such as a retry of its delivery,
+        takes the lease again, its lease extended. ``acquired`` says whether it
+        did. A known comment keeps the text of its first delivery.
         """
 
     async def get(self, comment_id: UUID) -> InboxComment | None:
@@ -482,9 +486,17 @@ class CommentInbox(Protocol):
         """
 
     async def reject(
-        self, comment_id: UUID, reason: RejectionReason, *, session_id: UUID | None
+        self,
+        comment_id: UUID,
+        reason: RejectionReason,
+        *,
+        session_id: UUID | None,
+        parse: ParseSummary | None = None,
     ) -> TransitionOutcome:
-        """Settle a received comment as rejected; a second rejection keeps the first reason."""
+        """Settle a received comment as rejected; a second rejection keeps the first reason.
+
+        ``parse``, when the parser read the comment, is recorded with it.
+        """
 
     async def dead_letter(self, platform: Platform, external_comment_id: str) -> TransitionOutcome:
         """Settle a received comment as dead-lettered, once its last delivery failed."""
@@ -678,13 +690,15 @@ class OrderReservations(Protocol):
     async def reserve(self, request: ReservationRequest) -> ReservationResult | None:
         """Unit 3: settle the comment as processed, reserve, record the intent, open the order.
 
-        The stock is reserved when the session is live and enough is
-        available; the intent is then ``reserved`` and a pending order opens
-        under a fresh reference, for the comment's author, until
-        ``reserved_until``. The intent is ``out_of_stock`` when the stock is
-        short or the session no longer live, and ``already_reserved`` when the
-        buyer already has a pending order for the product; neither changes the
-        stock, and short stock is checked first. Returns ``None``, having
+        The comment is settled with its session and, when the request carries
+        one, what the parser said of it. The stock is reserved when the
+        session is live and enough is available; the intent is then
+        ``reserved`` and a pending order opens under a fresh reference, for
+        the comment's author, until ``reserved_until``. The intent is
+        ``out_of_stock`` when the stock is short or the session no longer
+        live, and ``already_reserved`` when the buyer already has a pending
+        order for the product; neither changes the stock, and short stock is
+        checked first. Returns ``None``, having
         written nothing, when the comment is no longer received (another
         delivery settled it). Raises ``ServiceUnavailable``, having written
         nothing, when three reference draws all collide.

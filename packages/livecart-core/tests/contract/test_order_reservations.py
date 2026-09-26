@@ -6,6 +6,7 @@ is marked ``integration``. The fake and the SQL adapter keep the same promises
 """
 
 import asyncio
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -14,6 +15,8 @@ import pytest
 
 from livecart_core.application.dto import (
     IntentSource,
+    ParseKind,
+    ParseSummary,
     ReservationRequest,
     ResolvedIntent,
     StockLevel,
@@ -22,7 +25,7 @@ from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
 from livecart_core.application.reserve_stock import ReserveStock
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
-from livecart_core.domain.outcomes import IntentOutcome
+from livecart_core.domain.outcomes import AmbiguityReason, IntentOutcome
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import REFERENCE_SPACE, OrderReference, encode_reference
 from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
@@ -100,6 +103,28 @@ async def test_a_reservation_opens_a_pending_order_for_the_author(
     assert await backend.orders.find_reservation(comment_id) == result
     assert await backend.orders.get(order.id) == order
     assert await backend.orders.get_by_reference(order.reference) == order
+
+
+@pytest.mark.parametrize(
+    "parse",
+    [
+        ParseSummary(ParseKind.MATCH),
+        ParseSummary(ParseKind.AMBIGUOUS, AmbiguityReason.PRODUCT_BY_NAME),
+        None,
+    ],
+)
+async def test_the_settlement_records_what_the_parser_said(
+    backend: ReservationBackend, parse: ParseSummary | None
+) -> None:
+    session_id, _, _ = await _seed(backend)
+    comment_id = await backend.add_comment("comment-1")
+
+    await backend.orders.reserve(replace(_request(comment_id, session_id), parse=parse))
+
+    comment = await backend.comments.get(comment_id)
+    assert comment is not None
+    assert comment.status is CommentStatus.PROCESSED
+    assert comment.parse == parse
 
 
 async def test_short_stock_records_an_out_of_stock_intent(backend: ReservationBackend) -> None:

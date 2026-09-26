@@ -68,6 +68,7 @@ from livecart_core.domain.reference import (
     generate_order_reference,
 )
 from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
+from livecart_core.infrastructure.db.comments import parse_values
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.products import stock_level
 from livecart_core.infrastructure.db.tables import (
@@ -254,7 +255,11 @@ class SqlOrderRepository:
                     comments.c.id == request.comment_id,
                     comments.c.status == CommentStatus.RECEIVED.value,
                 )
-                .values(status=CommentStatus.PROCESSED.value, session_id=request.session_id)
+                .values(
+                    status=CommentStatus.PROCESSED.value,
+                    session_id=request.session_id,
+                    **parse_values(request.parse),
+                )
                 .returning(comments.c.author_platform_user_id)
             )
         ).scalar_one_or_none()

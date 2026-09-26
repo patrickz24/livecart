@@ -38,7 +38,7 @@ async def _order(
     """A pending order of B07, opened through unit 3 as the worker will open it."""
     claim = await database.comments.claim(
         queued_comment(external_comment_id=f"comment-{buyer}", author=buyer),
-        consumer="worker-1",
+        holder="worker-1",
         now=NOW,
         lease=timedelta(seconds=30),
     )

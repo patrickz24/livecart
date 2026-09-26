@@ -37,7 +37,7 @@ async def _setup(
     session = database.add_live_session()
     database.add_catalog(session.id, demo_catalog(), stock_total=stock_total)
     claim = await database.comments.claim(
-        queued_comment(), consumer="worker-1", now=clock.now(), lease=LEASE
+        queued_comment(), holder="worker-1", now=clock.now(), lease=LEASE
     )
     reserve = ReserveStock(database.orders, clock, reservation_ttl=TTL)
     return database, clock, reserve, session.id, claim.comment.id

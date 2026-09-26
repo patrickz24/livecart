@@ -35,6 +35,8 @@ from livecart_core.application.dto import (
     NewProduct,
     OrderRecord,
     Page,
+    ParseKind,
+    ParseSummary,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
@@ -67,7 +69,7 @@ from livecart_core.domain.outcomes import (
     LlmOutcome,
     RejectionReason,
 )
-from livecart_core.domain.parser import Ambiguous
+from livecart_core.domain.parser import Ambiguous, parse_comment
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import (
@@ -76,7 +78,12 @@ from livecart_core.domain.state_machines import (
     OrderStatus,
     PaymentStatus,
 )
-from livecart_core.testing.builders import demo_catalog, incoming_comment, queued_comment
+from livecart_core.testing.builders import (
+    DEMO_MAX_QUANTITY,
+    demo_catalog,
+    incoming_comment,
+    queued_comment,
+)
 from livecart_core.testing.fakes import FAKE_CLOCK_START
 
 NOW = FAKE_CLOCK_START
@@ -411,6 +418,48 @@ def test_a_reservation_refuses_a_confidence_out_of_range(confidence: str) -> Non
 def test_a_reservation_must_end_after_now(ttl: timedelta) -> None:
     with pytest.raises(ValueError, match="end after"):
         replace(RESERVATION, reserved_until=NOW + ttl)
+
+
+def test_a_reservation_never_carries_a_parser_rejection() -> None:
+    matched = replace(RESERVATION, parse=ParseSummary(ParseKind.MATCH))
+
+    assert matched.parse == ParseSummary(ParseKind.MATCH)
+    with pytest.raises(ValueError, match="reserves nothing"):
+        replace(RESERVATION, parse=ParseSummary(ParseKind.REJECTED, RejectionReason.NO_INTENT))
+
+
+def test_a_parse_summary_says_what_the_parser_returned() -> None:
+    catalog = demo_catalog()
+
+    def summary(text: str) -> ParseSummary:
+        return ParseSummary.of(parse_comment(text, catalog, max_quantity=DEMO_MAX_QUANTITY))
+
+    assert summary("je prends A12 M") == ParseSummary(ParseKind.MATCH)
+    assert summary("je prends A13") == ParseSummary(
+        ParseKind.AMBIGUOUS, AmbiguityReason.UNKNOWN_CODE
+    )
+    assert summary("trop beau") == ParseSummary(ParseKind.REJECTED, RejectionReason.NO_INTENT)
+    assert [kind.value for kind in ParseKind] == ["match", "ambiguous", "rejected"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "reason"),
+    [
+        (ParseKind.MATCH, RejectionReason.NO_INTENT),
+        (ParseKind.AMBIGUOUS, None),
+        (ParseKind.AMBIGUOUS, RejectionReason.NO_INTENT),
+        (ParseKind.REJECTED, None),
+        (ParseKind.REJECTED, AmbiguityReason.UNKNOWN_CODE),
+        # Decided before the parser runs, or once it has: never the parser's own.
+        (ParseKind.REJECTED, RejectionReason.SESSION_NOT_FOUND),
+        (ParseKind.REJECTED, RejectionReason.AMBIGUOUS_UNRESOLVED),
+    ],
+)
+def test_a_parse_summary_takes_the_reasons_of_its_kind_only(
+    kind: ParseKind, reason: AmbiguityReason | RejectionReason | None
+) -> None:
+    with pytest.raises(ValueError, match="not the reason"):
+        ParseSummary(kind, reason)
 
 
 def test_an_order_total_is_its_unit_price_times_its_quantity() -> None:

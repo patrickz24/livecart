@@ -8,6 +8,7 @@ records what became of a resolved intent.
 """
 
 from enum import StrEnum
+from typing import Final
 
 
 class RejectionReason(StrEnum):
@@ -23,6 +24,17 @@ class RejectionReason(StrEnum):
     # Decided by session resolution, before the parser runs.
     SESSION_NOT_FOUND = "session_not_found"
     SESSION_NOT_LIVE = "session_not_live"
+
+
+# The rejections the parser itself decides, in the order of its rules: what
+# comments.parse_reason may hold beside the ambiguity reasons. A tuple, so
+# that the CHECK built from it lists them in a stable order.
+PARSER_REJECTIONS: Final = (
+    RejectionReason.NO_INTENT,
+    RejectionReason.MULTIPLE_PRODUCTS,
+    RejectionReason.QUANTITY_OUT_OF_BOUNDS,
+    RejectionReason.VARIANT_NOT_FOUND,
+)
 
 
 class AmbiguityReason(StrEnum):

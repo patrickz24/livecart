@@ -2,7 +2,8 @@
 
 ADR 0002 asks every SQL adapter to pass the scenarios of its in-memory fake.
 ``tests/contract`` writes each scenario once, against ``ReservationBackend``
-(stock and reservations) or ``AuthBackend`` (sellers and refresh tokens),
+(the comment inbox, stock and reservations) or ``AuthBackend`` (sellers and
+refresh tokens),
 and runs it on ``InMemoryBackend`` (the fakes of ``fakes.py``) and on
 ``PostgresBackend`` (the SQL adapters on livecart_test). A backend gives the
 repositories under test, and seeds or reads the rows the scenarios need
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import LiveSessionRecord, Platform, ProductRecord, StockLevel
 from livecart_core.application.ports import (
+    CommentInbox,
     LiveSessionRepository,
     OrderLookup,
     OrderReservations,
@@ -34,6 +36,7 @@ from livecart_core.domain.outcomes import RejectionReason
 from livecart_core.domain.reference import RandomSource
 from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
 from livecart_core.infrastructure.db import tables
+from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
@@ -63,6 +66,9 @@ class BackendOrders(OrderReservations, OrderLookup, Protocol):
 
 class ReservationBackend(Protocol):
     """The repositories under test, and the seeding and reading helpers of the scenarios."""
+
+    @property
+    def comments(self) -> CommentInbox: ...
 
     @property
     def live_sessions(self) -> LiveSessionRepository: ...
@@ -148,6 +154,10 @@ class InMemoryBackend:
         self.database = InMemoryDatabase(random_source=random_source)
 
     @property
+    def comments(self) -> CommentInbox:
+        return self.database.comments
+
+    @property
     def live_sessions(self) -> LiveSessionRepository:
         return self.database.live_sessions
 
@@ -200,7 +210,7 @@ class InMemoryBackend:
     async def add_comment(self, external_comment_id: str, *, author: str = "buyer-1") -> UUID:
         claim = await self.database.comments.claim(
             queued_comment(external_comment_id=external_comment_id, author=author),
-            consumer="worker-1",
+            holder="worker-1",
             now=FAKE_CLOCK_START,
             lease=LEASE,
         )
@@ -260,6 +270,7 @@ class PostgresBackend:
         random_source: RandomSource = secrets,
     ) -> None:
         self._migrator = migrator_engine
+        self._comments = SqlCommentInbox(app_engine)
         self._live_sessions = SqlLiveSessionRepository(app_engine)
         self._products = SqlProductStockRepository(app_engine, currency=CURRENCY)
         self._orders = SqlOrderRepository(
@@ -270,6 +281,10 @@ class PostgresBackend:
         )
         self._sellers = SqlSellerRepository(app_engine)
         self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
+
+    @property
+    def comments(self) -> CommentInbox:
+        return self._comments
 
     @property
     def live_sessions(self) -> LiveSessionRepository:
