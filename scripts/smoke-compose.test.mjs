@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { containerState, parseComposePs, serviceProblems } from "./smoke-compose.mjs";
+import { containerState, parseComposePs, runningJobs, serviceProblems } from "./smoke-compose.mjs";
 
 const running = (service, health = "healthy", name = `livecart-${service}-1`) => ({
   Name: name,
@@ -66,5 +66,25 @@ describe("serviceProblems", () => {
       "worker: no container",
       "simulator: not covered by this smoke test",
     ]);
+  });
+});
+
+describe("runningJobs", () => {
+  const expected = { migrate: "completed", seed: "completed", api: "healthy" };
+  const exited = (service) => ({
+    Name: `livecart-${service}-1`,
+    Service: service,
+    State: "exited",
+    ExitCode: 0,
+  });
+
+  it("names the one-shot jobs that have not exited yet", () => {
+    const containers = [exited("migrate"), running("seed", ""), running("api")];
+    assert.deepEqual(runningJobs(containers, expected), ["livecart-seed-1"]);
+  });
+
+  it("is empty once every job has exited, whatever its code", () => {
+    const failed = { ...exited("seed"), ExitCode: 1 };
+    assert.deepEqual(runningJobs([exited("migrate"), failed, running("api")], expected), []);
   });
 });

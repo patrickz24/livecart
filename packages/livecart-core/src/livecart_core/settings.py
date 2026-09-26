@@ -58,6 +58,13 @@ class LogLevel(StrEnum):
     ERROR = "ERROR"
 
 
+def require_currency(value: str) -> str:
+    """An ISO 4217 code, such as EUR: the one currency of a deployment."""
+    if not re.fullmatch("[A-Z]{3}", value):
+        raise ValueError("must be a three-letter upper-case ISO 4217 code, such as EUR")
+    return value
+
+
 def require_scheme(url: SecretStr, *schemes: str) -> SecretStr:
     """Check the URL scheme without ever echoing the URL, which holds a password."""
     scheme, separator, _ = url.get_secret_value().partition("://")
@@ -236,9 +243,7 @@ class Settings(BaseAppSettings):
     @field_validator("default_currency")
     @classmethod
     def _check_default_currency(cls, value: str) -> str:
-        if not re.fullmatch("[A-Z]{3}", value):
-            raise ValueError("must be a three-letter upper-case ISO 4217 code, such as EUR")
-        return value
+        return require_currency(value)
 
     @field_validator(*RATE_LIMITS)
     @classmethod
@@ -291,3 +296,28 @@ class MigrationSettings(BaseAppSettings):
     @classmethod
     def _check_migrator_url(cls, value: SecretStr) -> SecretStr:
         return require_scheme(value, "postgresql+asyncpg")
+
+
+class SeedSettings(BaseAppSettings):
+    """Settings of ``livecart-seed``, which loads the demo data as ``livecart_migrator``.
+
+    The migrator, because ``--reset-loadtest`` deletes rows, which
+    ``livecart_app`` may not. ``SEED_DEMO_PASSWORD`` is the password of the
+    demo sellers; like every secret, its change-me placeholder is refused in
+    production.
+    """
+
+    migrator_url: SecretStr
+    seed_demo_password: SecretStr
+    # Prices the demo products, as DEFAULT_CURRENCY does the sellers' own.
+    default_currency: str = "EUR"
+
+    @field_validator("migrator_url")
+    @classmethod
+    def _check_migrator_url(cls, value: SecretStr) -> SecretStr:
+        return require_scheme(value, "postgresql+asyncpg")
+
+    @field_validator("default_currency")
+    @classmethod
+    def _check_default_currency(cls, value: str) -> str:
+        return require_currency(value)

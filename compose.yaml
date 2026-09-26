@@ -1,5 +1,6 @@
 # LiveCart local stack, limited to what exists so far: PostgreSQL and Redis,
-# the one-shot migrate job, then the API, the worker and the web container.
+# the one-shot migrate and seed jobs, then the API, the worker and the web
+# container.
 #
 #   cp .env.example .env      # once: secrets have no default here
 #   docker compose up --build
@@ -143,6 +144,27 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    restart: "no"
+
+  # Loads the demo data as livecart_migrator (the reset of the load test session
+  # deletes rows), creating only what is missing, then exits. `make seed` runs it
+  # again; `docker compose run --rm seed --reset-loadtest` empties the load test.
+  seed:
+    <<: *python-service
+    # An entrypoint rather than a command, so that the arguments of
+    # `docker compose run --rm seed ...` are passed to livecart-seed.
+    entrypoint: ["livecart-seed"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MIGRATOR_URL: postgresql+asyncpg://livecart_migrator:${LIVECART_MIGRATOR_PASSWORD:?set it in .env (cp .env.example .env)}@postgres:5432/livecart
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:?set it in .env (cp .env.example .env)}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-EUR}
+    healthcheck:
+      disable: true
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     restart: "no"
 
   api:

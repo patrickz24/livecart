@@ -10,6 +10,7 @@ from livecart_core.settings import (
     AppEnv,
     LogLevel,
     MigrationSettings,
+    SeedSettings,
     Settings,
 )
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
@@ -26,7 +27,14 @@ KEYS = {
 @pytest.fixture(autouse=True)
 def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts from an environment without any LiveCart variable."""
-    names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
+    names = (
+        "APP_ENV",
+        "LOG_LEVEL",
+        "DATABASE_URL",
+        "REDIS_URL",
+        "MIGRATOR_URL",
+        "SEED_DEMO_PASSWORD",
+    )
     extra = ("WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT", "RESERVATION_TTL_SECONDS")
     keys = ("JWT_SECRET", "ORDER_TOKEN_KEY")
     limits = (*(name.upper() for name in RATE_LIMITS), "RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS")
@@ -410,3 +418,39 @@ def test_migrator_placeholder_is_rejected_in_production() -> None:
 def test_migrator_url_must_use_asyncpg() -> None:
     with pytest.raises(ValidationError, match=r"postgresql\+asyncpg"):
         load_migration(MIGRATOR_URL="postgresql://livecart_migrator:x@localhost/livecart")
+
+
+def _seed_settings(**env: str) -> SeedSettings:
+    with pytest.MonkeyPatch.context() as patch:
+        for name, value in env.items():
+            patch.setenv(name, value)
+        return SeedSettings(_env_file=None)
+
+
+SEED_ENV = {
+    "MIGRATOR_URL": "postgresql+asyncpg://livecart_migrator:change-me-migrator@localhost/livecart",
+    "SEED_DEMO_PASSWORD": "change-me-demo-seller",
+}
+
+
+def test_seed_settings_need_the_migrator_and_the_demo_password() -> None:
+    settings = _seed_settings(**SEED_ENV)
+
+    assert settings.seed_demo_password.get_secret_value() == "change-me-demo-seller"
+    assert "change-me-demo-seller" not in repr(settings)
+    assert settings.default_currency == "EUR"
+    for missing in SEED_ENV:
+        with pytest.raises(ValidationError, match=missing.lower()):
+            _seed_settings(**{name: value for name, value in SEED_ENV.items() if name != missing})
+
+
+def test_seed_placeholders_are_rejected_in_production() -> None:
+    with pytest.raises(ValidationError, match="replace: MIGRATOR_URL, SEED_DEMO_PASSWORD"):
+        _seed_settings(APP_ENV="production", **SEED_ENV)
+
+
+def test_seed_settings_check_the_migrator_url_and_the_currency() -> None:
+    with pytest.raises(ValidationError, match=r"postgresql\+asyncpg"):
+        _seed_settings(**{**SEED_ENV, "MIGRATOR_URL": "postgresql://u:p@localhost/livecart"})
+    with pytest.raises(ValidationError, match="ISO 4217"):
+        _seed_settings(DEFAULT_CURRENCY="euro", **SEED_ENV)

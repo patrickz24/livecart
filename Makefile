@@ -28,8 +28,8 @@ test: ## Check the Node version, start PostgreSQL and Redis, then run every suit
 	pnpm -r test
 	pnpm run test:scripts
 
-seed: ## Load the demo data (arrives in milestone 3)
-	@echo "Nothing to seed yet: the demo seed arrives in milestone 3 (docker compose run --rm seed)."
+seed: ## Load the demo data again, creating only what is missing (the stack seeds itself on up)
+	docker compose run --rm seed
 
 load-test: ## Run the k6 comment spike (arrives in milestone 9)
 	@echo "No load test yet: the k6 comment spike arrives in milestone 9 (compose loadtest profile)."

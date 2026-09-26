@@ -14,6 +14,7 @@ import { isMainModule, requirePinnedNode } from "./cli.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const WAIT_TIMEOUT_S = 180;
+const JOBS_TIMEOUT_S = 120;
 const HTTP_TIMEOUT_MS = 5_000;
 
 /** Final state of each compose service: "healthy", or "completed" for one-shot jobs. */
@@ -21,6 +22,7 @@ export const EXPECTED_SERVICES = {
   postgres: "healthy",
   redis: "healthy",
   migrate: "completed",
+  seed: "completed",
   api: "healthy",
   worker: "healthy",
   web: "healthy",
@@ -57,6 +59,16 @@ export const HTTP_CHECKS = [
       response.headers.get("referrer-policy") === "no-referrer",
   },
   {
+    name: "demo storefront through nginx, seeded live with its seven products",
+    url: "http://127.0.0.1:8080/api/v1/storefronts/demo-seller",
+    accept: (response, body) => {
+      if (response.status !== 200) return false;
+      const session = JSON.parse(body).live_session;
+      const codes = new Set(session?.products.map((product) => product.code));
+      return session?.title === "Friday drop" && codes.size === 7;
+    },
+  },
+  {
     name: "dashboard page with its security headers",
     url: "http://127.0.0.1:8080/",
     accept: (response) =>
@@ -81,6 +93,27 @@ export function containerState(container) {
     return container.ExitCode === 0 ? "completed" : `exited with code ${container.ExitCode}`;
   }
   return container.Health || container.State;
+}
+
+/**
+ * The one-shot jobs still running. `up --wait` waits for a job only when
+ * another service depends on its completion, as the API does on migrate; the
+ * seed, which nothing waits for, may still be running when it returns.
+ */
+export function runningJobs(containers, expected = EXPECTED_SERVICES) {
+  return containers
+    .filter((container) => expected[container.Service] === "completed")
+    .filter((container) => container.State !== "exited")
+    .map((container) => container.Name);
+}
+
+async function waitForJobs() {
+  const deadline = Date.now() + JOBS_TIMEOUT_S * 1000;
+  while (Date.now() < deadline) {
+    const running = runningJobs(parseComposePs(compose("ps", "--all", "--format", "json")));
+    if (running.length === 0) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
 }
 
 /** Problems found in the containers, compared with the expected services. */
@@ -131,6 +164,8 @@ async function main() {
     failures += 1;
   }
 
+  // A job still running past the timeout is reported below.
+  await waitForJobs();
   const problems = serviceProblems(parseComposePs(compose("ps", "--all", "--format", "json")));
   for (const problem of problems) console.error(`FAIL  ${problem}`);
   if (problems.length === 0) {

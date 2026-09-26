@@ -110,6 +110,7 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.idempotency" in application
     assert "livecart_core.application.storefront" in application
     assert "livecart_core.application.buyer_orders" in application
+    assert "livecart_core.application.demo_seed" in application
     assert "livecart_core.domain.sellers" in domain
     assert "livecart_core.domain.live_sessions" in domain
 
@@ -264,6 +265,8 @@ def test_the_adapters_are_among_the_modules_checked_for_raw_sql() -> None:
     assert "livecart_core.infrastructure.db.live_sessions" in checked
     assert "livecart_core.infrastructure.idempotency" in checked
     assert "livecart_core.infrastructure.ratelimit" in checked
+    assert "livecart_core.infrastructure.db.session_reset" in checked
+    assert "livecart_core.seed" in checked
     assert "livecart_core.infrastructure.db.products" in checked
     assert "livecart_core.infrastructure.db.sellers" in checked
     assert "livecart_core.infrastructure.db.refresh_tokens" in checked

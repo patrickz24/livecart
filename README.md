@@ -37,6 +37,7 @@ The copy of `.env.example` is the one step before `docker compose up`: `compose.
 | `api`      | FastAPI behind uvicorn                                  | `127.0.0.1:8000`                          |
 | `worker`   | asyncio worker (heartbeat only for now)                 | not published                             |
 | `migrate`  | one-shot Alembic upgrade, as the schema owner           | not published                             |
+| `seed`     | one-shot demo data, created only where missing          | not published                             |
 | `postgres` | PostgreSQL 16, databases `livecart` and `livecart_test` | `127.0.0.1:55432`                         |
 | `redis`    | Redis 8 with a password, append-only file               | `127.0.0.1:56379`                         |
 

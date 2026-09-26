@@ -70,7 +70,7 @@ docker compose up -d --wait postgres redis  # servers of the integration tests
 
 Every command runs from the repository root: the Python processes read `.env` from the working directory.
 
-When `.env.example` gains a variable without a default (`JWT_SECRET` and `ORDER_TOKEN_KEY` in milestone 3), an older `.env` lacks it and `docker compose` refuses to start, naming it: copy its lines from `.env.example` into `.env`.
+When `.env.example` gains a variable without a default (`JWT_SECRET`, `ORDER_TOKEN_KEY` and `SEED_DEMO_PASSWORD` in milestone 3), an older `.env` lacks it and `docker compose` refuses to start, naming it: copy its lines from `.env.example` into `.env`.
 
 ## Make targets and their raw commands
 
@@ -81,7 +81,7 @@ When `.env.example` gains a variable without a default (`JWT_SECRET` and `ORDER_
 | `make dev`       | builds and starts the whole stack in the foreground                          | `docker compose up --build`                                                                                                                                                                                                       |
 | `make lint`      | Node version, lint, format and type checks, pins                             | `pnpm run check:node`<br>`uv run --locked ruff check .`<br>`uv run --locked ruff format --check .`<br>`uv run --locked mypy`<br>`pnpm run lint`<br>`pnpm exec prettier --check .`<br>`pnpm -r typecheck`<br>`pnpm run check:pins` |
 | `make test`      | every test suite, on the compose PostgreSQL and Redis, and the coverage gate | `pnpm run check:node`<br>`docker compose up --detach --wait postgres redis`<br>`uv run --locked pytest --cov`<br>`pnpm -r test`<br>`pnpm run test:scripts`                                                                        |
-| `make seed`      | demo data (arrives in milestone 3)                                           | none yet                                                                                                                                                                                                                          |
+| `make seed`      | loads the demo data again, creating only what is missing                     | `docker compose run --rm seed`                                                                                                                                                                                                    |
 | `make load-test` | k6 comment spike (arrives in milestone 9)                                    | none yet                                                                                                                                                                                                                          |
 | `make gen-api`   | regenerates `openapi.json` and the TypeScript client                         | `pnpm run gen-api`                                                                                                                                                                                                                |
 | `make reset`     | stops the stack and deletes its data volumes                                 | `docker compose down --volumes`                                                                                                                                                                                                   |
@@ -94,6 +94,15 @@ Other useful commands:
 - The compose smoke test that CI runs (starts the stack, checks every service and endpoint): `pnpm run smoke:compose`.
 - The OpenAPI drift check of CI: `pnpm run check:openapi`. `packages/api-client/openapi.json` and `packages/api-client/src/generated/` are generated: never edit them by hand, run `make gen-api` and commit the result with the API change.
 - The PostgreSQL roles and grants of `infra/postgres` are applied once, when the postgres volume is created. After a change to them, re-apply them to the existing volume with `docker compose exec postgres bash /docker-entrypoint-initdb.d/10-init-roles.sh` (idempotent; in Git Bash, prefix it with `MSYS_NO_PATHCONV=1`), or start over with `make reset`, which deletes the data.
+
+## Demo data
+
+`docker compose up` runs the one-shot `seed` service after `migrate`: `livecart-seed` creates, as `livecart_migrator`, only what is missing of the demo data, so running it again changes nothing (`make seed`):
+
+- the seller `demo-seller` (`demo-seller@livecart.test`), with two live sessions on the simulator: `friday-drop`, whose seven products are the catalog the parser corpus is written against (A12 in S, M and L, B07, C3 in four colours, D4 in four sizes, E15, Z99) and F8; and `loadtest`, Z99 alone with 200 in stock;
+- the seller `sample-shop` (`sample-shop@livecart.test`), without a session, for the second brand of the buyer app.
+
+Both sign in with `SEED_DEMO_PASSWORD` from `.env`, set when the seed first creates them: after changing it, `make reset` starts over, as it does for a demo session a seller has ended, which the seed reports and leaves ended. `docker compose run --rm seed --reset-loadtest` also deletes the comments, intents and orders of the `loadtest` session and puts its stock back to 200, before a load test. From the host, against the database of `.env`: `uv run --locked livecart-seed`.
 
 ## Seller accounts
 
