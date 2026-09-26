@@ -22,7 +22,7 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from enum import StrEnum
 from typing import Final, Protocol, Self
 from uuid import UUID
@@ -531,6 +531,43 @@ class FallbackReceipt:
     def __post_init__(self) -> None:
         if (self.outcome is LlmOutcome.OK) != (self.proposal is not None):
             raise ValueError("an ok receipt carries a proposal, and only an ok receipt does")
+
+
+# The unit the LLM budget counts dollars in: every cost is rounded up to it.
+MICRO_USD: Final = Decimal("0.000001")
+_TOKENS_PER_PRICE: Final = Decimal(1_000_000)
+
+
+def to_micro_usd(amount: Decimal) -> int:
+    """Whole micro-dollars, rounded up: a cost never shrinks to nothing on its way to the budget."""
+    return int((amount / MICRO_USD).to_integral_value(rounding=ROUND_CEILING))
+
+
+class LlmPrice(BaseModel):
+    """A model's list price, in US dollars per million input and output tokens.
+
+    What the cost guard counts a call at: the list price of the tokens the
+    provider reported, thinking included in the output. An approximation of
+    the bill, which may differ (caching, batch, discounts, taxes).
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    input_per_mtok: Decimal = Field(ge=0, le=1000)
+    output_per_mtok: Decimal = Field(ge=0, le=1000)
+
+    def cost(self, input_tokens: int, output_tokens: int) -> Decimal:
+        """What these tokens cost, in dollars."""
+        spent = self.input_per_mtok * input_tokens + self.output_per_mtok * output_tokens
+        return spent / _TOKENS_PER_PRICE
+
+
+@dataclass(frozen=True, slots=True)
+class LlmBudgetUsage:
+    """What the LLM budget counted: a session's calls, and the dollars spent on the day (UTC)."""
+
+    session_calls: int
+    spent_today_usd: Decimal
 
 
 # --- Comment inbox ---------------------------------------------------------------------

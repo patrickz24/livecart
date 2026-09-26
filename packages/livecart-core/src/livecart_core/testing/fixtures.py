@@ -19,12 +19,13 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.ports import CommentQueue, IdempotencyStore, RateLimiter
+from livecart_core.application.ports import CommentQueue, IdempotencyStore, LlmBudget, RateLimiter
 from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.engine import WORKER_POOL, create_db_engine
 from livecart_core.infrastructure.events import EVENT_RETENTION, RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
+from livecart_core.infrastructure.llm_budget import RedisLlmBudget
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
@@ -47,6 +48,7 @@ from livecart_core.testing.fakes import (
     FakeClock,
     FakeCommentQueue,
     InMemoryIdempotencyStore,
+    InMemoryLlmBudget,
     InMemoryRateLimiter,
     InMemorySessionEvents,
 )
@@ -218,6 +220,16 @@ def rate_limiter(request: pytest.FixtureRequest) -> RateLimiter:
     client: Redis = request.getfixturevalue("redis_client")
     prefix: str = request.getfixturevalue("redis_key_prefix")
     return RedisRateLimiter(client, prefix=prefix)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def llm_budget(request: pytest.FixtureRequest) -> LlmBudget:
+    """The LLM budget of this run of a contract scenario: the fake, then Redis."""
+    if request.param == "memory":
+        return InMemoryLlmBudget()
+    client: Redis = request.getfixturevalue("redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    return RedisLlmBudget(client, prefix=prefix)
 
 
 @pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])

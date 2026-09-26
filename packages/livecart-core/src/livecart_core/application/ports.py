@@ -31,6 +31,7 @@ with its fake, in the same commit.
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
+from decimal import Decimal
 from typing import Final, Literal, Protocol
 from uuid import UUID
 
@@ -52,6 +53,7 @@ from livecart_core.application.dto import (
     LiveSessionChanges,
     LiveSessionRecord,
     LiveSessionTransition,
+    LlmBudgetUsage,
     NewLiveSession,
     NewProduct,
     OrderRecord,
@@ -276,7 +278,9 @@ class IntentFallback(Protocol):
 
     It never raises for a failure of the model or of its provider: every
     attempt returns a receipt with a closed ``LlmOutcome`` within the
-    request's timeout, ``ok`` with a proposal, anything else without one. Only
+    request's timeout, ``ok`` with a proposal, anything else without one.
+    Only the budget's own store may fail a call (``LlmGuard``), with
+    ``ServiceUnavailable``, as any unit's would. Only
     the comment's text and the catalog reach the model, never the buyer's
     identity. The proposal is not trusted: the domain checks it against the
     catalog before anything is reserved.
@@ -284,6 +288,26 @@ class IntentFallback(Protocol):
 
     async def resolve(self, request: FallbackRequest) -> FallbackReceipt:
         """One attempt to read the comment; see the class docstring."""
+
+
+class LlmBudget(Protocol):
+    """The LLM's spend, shared by every worker (Redis): calls per session, dollars per UTC day.
+
+    The budget only counts: what a count allows is ``LlmGuard``'s rule. The
+    dollars are kept in whole micro-dollars, each cost rounded up
+    (``to_micro_usd``). A session's count lasts two days from its first call,
+    longer than any live, and so does a day's spend; the day is the UTC date
+    of ``now``. A failure of the store raises ``ServiceUnavailable``.
+    """
+
+    async def usage(self, session_id: UUID, *, now: datetime) -> LlmBudgetUsage:
+        """The session's calls so far and the day's spend, counting nothing."""
+
+    async def count_call(self, session_id: UUID, *, now: datetime) -> LlmBudgetUsage:
+        """Count one call of the session; the usage returned includes it."""
+
+    async def add_spend(self, cost_usd: Decimal, *, now: datetime) -> Decimal:
+        """Add a call's cost to the spend of ``now``'s day; return the day's spend."""
 
 
 class NullIntentFallback:

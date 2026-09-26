@@ -22,13 +22,14 @@ import secrets
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Final
 from uuid import UUID
 
 from livecart_core.application.dto import (
     MAX_STOCK_TOTAL,
+    MICRO_USD,
     AttemptOpening,
     AttemptOpeningKind,
     BuyerNotification,
@@ -49,6 +50,7 @@ from livecart_core.application.dto import (
     LiveSessionChanges,
     LiveSessionRecord,
     LiveSessionTransition,
+    LlmBudgetUsage,
     NewLiveSession,
     NewProduct,
     OrderRecord,
@@ -86,6 +88,7 @@ from livecart_core.application.dto import (
     WindowCount,
     event_id_key,
     page_of,
+    to_micro_usd,
 )
 from livecart_core.application.ports import (
     REFERENCE_DRAWS,
@@ -420,6 +423,43 @@ class FakeIntentFallback:
         if not self._receipts:
             raise AssertionError("FakeIntentFallback has no scripted receipt left")
         return self._receipts.popleft()
+
+
+class InMemoryLlmBudget(_ScriptedFailures):
+    """The LLM budget in two dictionaries: calls by session, micro-dollars by UTC day.
+
+    Nothing expires: a test spans minutes, not the two days of the Redis keys.
+    ``fail_next`` fails the next calls of any method.
+    """
+
+    def __init__(self) -> None:
+        self.calls: dict[UUID, int] = {}
+        self.spent_micro_usd: dict[date, int] = {}
+
+    async def usage(self, session_id: UUID, *, now: datetime) -> LlmBudgetUsage:
+        self._maybe_fail("usage")
+        return self._usage(session_id, now)
+
+    async def count_call(self, session_id: UUID, *, now: datetime) -> LlmBudgetUsage:
+        self._maybe_fail("count_call")
+        self.calls[session_id] = self.calls.get(session_id, 0) + 1
+        return self._usage(session_id, now)
+
+    async def add_spend(self, cost_usd: Decimal, *, now: datetime) -> Decimal:
+        self._maybe_fail("add_spend")
+        if cost_usd < 0:
+            raise ValueError(f"a cost is never negative, not {cost_usd}")
+        day = _utc_day(now)
+        self.spent_micro_usd[day] = self.spent_micro_usd.get(day, 0) + to_micro_usd(cost_usd)
+        return self.spent_micro_usd[day] * MICRO_USD
+
+    def _usage(self, session_id: UUID, now: datetime) -> LlmBudgetUsage:
+        spent = self.spent_micro_usd.get(_utc_day(now), 0)
+        return LlmBudgetUsage(self.calls.get(session_id, 0), spent * MICRO_USD)
+
+
+def _utc_day(now: datetime) -> date:
+    return _require_aware(now).astimezone(UTC).date()
 
 
 class FakeEventPublisher(_ScriptedFailures):
