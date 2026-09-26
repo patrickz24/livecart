@@ -11,6 +11,10 @@ Around the routes, every request crosses, from the outside in:
 4. ``RequestBodyLimitMiddleware``: 413 beyond 1 MiB, whether the client
    announced the length or streams the body, as nginx caps it in front.
 
+Outside all of them, the latency middleware of the metrics
+(``livecart_api.metrics``), whose registry the app serves on
+``METRICS_PORT`` while it runs, never on its own port.
+
 No CORS middleware: the dashboard and the mobile app reach the API through
 nginx on their own origin, so no response ever allows another origin to read
 it. The client address the rate limits count is uvicorn's, which trusts
@@ -31,6 +35,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from livecart_api import errors
 from livecart_api.access_tokens import AccessTokens
+from livecart_api.metrics import build_registry
 from livecart_api.middleware.request_context import RequestContextMiddleware
 from livecart_api.middleware.security_headers import SecurityHeadersMiddleware
 from livecart_api.rate_limits import (
@@ -59,6 +64,7 @@ from livecart_core.application.seller_auth import (
     RotateRefreshToken,
 )
 from livecart_core.application.storefront import ViewStorefront
+from livecart_core.metrics import MetricsServer
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
 
@@ -109,14 +115,25 @@ def create_app(
     resources: Resources,
     *,
     readiness_timeout_s: float = READINESS_TIMEOUT_S,
+    metrics_port: int | None = None,
 ) -> FastAPI:
-    """Create the app. It owns ``resources`` and closes them when it shuts down."""
+    """Create the app. It owns ``resources`` and closes them when it shuts down.
+
+    ``metrics_port``, given by the composition root, serves the metrics while
+    the app runs; the tests scrape ``app.state.metrics_registry`` instead.
+    """
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(running: FastAPI) -> AsyncIterator[None]:
+        server = None
+        if metrics_port is not None:
+            server = MetricsServer.start(registry, port=metrics_port)
+        running.state.metrics_server = server
         try:
             yield
         finally:
+            if server is not None:
+                server.close()
             await resources.aclose()
 
     # Interactive docs and the schema route are development conveniences only;
@@ -185,4 +202,6 @@ def create_app(
     )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
+    registry = build_registry(app, ingest, limits)
+    app.state.metrics_registry = registry
     return app

@@ -110,6 +110,25 @@ export const HTTP_CHECKS = [
   },
 ];
 
+/**
+ * The internal Prometheus endpoints: each must answer inside its container,
+ * probed with the image's own livecart-healthcheck, and be published nowhere.
+ */
+export const METRICS_PORT = 9100;
+export const METRICS_SERVICES = ["api"];
+
+/** The compose command that probes a service's metrics from inside its container. */
+export function metricsProbe(service) {
+  return [
+    "exec",
+    "-T",
+    service,
+    "livecart-healthcheck",
+    "http",
+    `http://127.0.0.1:${METRICS_PORT}/metrics`,
+  ];
+}
+
 /** Parse `docker compose ps --format json`: one object per line, or a JSON array. */
 export function parseComposePs(output) {
   const text = output.trim();
@@ -168,6 +187,31 @@ function compose(...args) {
   });
 }
 
+/** A compose command's output, or null when it fails: a port published nowhere, for one. */
+function composeQuietly(...args) {
+  try {
+    return execFileSync("docker", ["compose", ...args], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** Why a service's metrics are not internal only, or null when they are. */
+function metricsProblem(service) {
+  if (composeQuietly(...metricsProbe(service)) === null) {
+    return `no answer on port ${METRICS_PORT} inside the container`;
+  }
+  const published = composeQuietly("port", service, String(METRICS_PORT));
+  if (published !== null && publishedBaseUrl(published) !== null) {
+    return `port ${METRICS_PORT} is published on the host (${published.trim()})`;
+  }
+  return null;
+}
+
 function baseUrls() {
   const urls = {};
   for (const [service, port] of Object.entries(PUBLISHED_PORTS)) {
@@ -223,6 +267,17 @@ async function main() {
       console.log(`ok    ${check.name} (${base}${check.path})`);
     } else {
       console.error(`FAIL  ${check.name} (${base ?? check.service}${check.path}): ${problem}`);
+      failures += 1;
+    }
+  }
+
+  for (const service of METRICS_SERVICES) {
+    const name = `${service} metrics on its internal port ${METRICS_PORT} only`;
+    const problem = metricsProblem(service);
+    if (problem === null) {
+      console.log(`ok    ${name}`);
+    } else {
+      console.error(`FAIL  ${name}: ${problem}`);
       failures += 1;
     }
   }

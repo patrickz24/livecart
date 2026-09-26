@@ -5,6 +5,9 @@ import {
   containerState,
   EXPECTED_SERVICES,
   HTTP_CHECKS,
+  METRICS_PORT,
+  METRICS_SERVICES,
+  metricsProbe,
   parseComposePs,
   PUBLISHED_PORTS,
   publishedBaseUrl,
@@ -113,5 +116,22 @@ describe("HTTP_CHECKS", () => {
       assert.equal(EXPECTED_SERVICES[check.service], "healthy", check.name);
       assert.ok(check.path.startsWith("/"), check.name);
     }
+  });
+});
+
+describe("metricsProbe", () => {
+  it("asks the service's own container for its metrics on the internal port", () => {
+    assert.deepEqual(metricsProbe("api"), [
+      "exec",
+      "-T",
+      "api",
+      "livecart-healthcheck",
+      "http",
+      `http://127.0.0.1:${METRICS_PORT}/metrics`,
+    ]);
+  });
+
+  it("covers only services the smoke test expects healthy", () => {
+    for (const service of METRICS_SERVICES) assert.equal(EXPECTED_SERVICES[service], "healthy");
   });
 });

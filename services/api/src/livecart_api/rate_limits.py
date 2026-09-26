@@ -167,12 +167,11 @@ class RateLimitRules:
 
 
 class RateLimiting:
-    """Applies the rules through the ``RateLimiter`` port, and counts what the metrics will show.
+    """Applies the rules through the ``RateLimiter`` port, and counts what the metrics show.
 
-    The two counters are plain integers named after the Prometheus counters
-    that will expose them once the API gets its metrics port:
-    ``livecart_rate_limiter_errors_total`` and
-    ``livecart_buyer_lookup_not_found_total``.
+    The two counters are plain integers, which the API's metrics read at
+    scrape time as ``livecart_rate_limiter_errors_total`` and
+    ``livecart_buyer_lookup_not_found_total`` (``livecart_api.metrics``).
     """
 
     def __init__(self, limiter: RateLimiter, rules: RateLimitRules) -> None:

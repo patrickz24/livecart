@@ -27,6 +27,7 @@ from livecart_core.infrastructure.db.engine import (
     worker_pool,
 )
 from livecart_core.infrastructure.notifier import LINK_SCHEME_PATTERN
+from livecart_core.metrics import DEFAULT_METRICS_PORT
 from livecart_core.order_tokens import MIN_KEY_BYTES
 
 # Marker of the development placeholders shipped in .env.example.
@@ -97,6 +98,7 @@ MAX_QUEUE_RECLAIM_MIN_IDLE_MS: Final = 3_600_000
 # before a reclaim is: the margin covers a loop late to go round, a slow read
 # and the clocks of Redis and of the worker.
 RECLAIM_IDLE_MARGIN: Final = 2
+MAX_PORT: Final = 65_535
 
 
 class AppEnv(StrEnum):
@@ -282,6 +284,10 @@ class Settings(BaseAppSettings):
     # consumer reclaims it (XAUTOCLAIM). None derives it from the worker's
     # window (queue_reclaim_min_idle); a value set must not be shorter.
     queue_reclaim_min_idle_ms: int | None = None
+    # The internal port of the process's Prometheus endpoint (livecart_core.metrics),
+    # never published on the host nor routed by nginx. None, from an empty
+    # METRICS_PORT, serves no endpoint: the tests, a second process on one host.
+    metrics_port: int | None = DEFAULT_METRICS_PORT
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -444,6 +450,18 @@ class Settings(BaseAppSettings):
     def _derive_an_empty_reclaim_idle_time(cls, value: object) -> object:
         """``QUEUE_RECLAIM_MIN_IDLE_MS=`` derives it too: compose passes the variable unset so."""
         return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("metrics_port", mode="before")
+    @classmethod
+    def _disable_metrics_on_an_empty_port(cls, value: object) -> object:
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("metrics_port")
+    @classmethod
+    def _check_metrics_port(cls, value: int | None) -> int | None:
+        if value is not None and not 1 <= value <= MAX_PORT:
+            raise ValueError(f"must be a TCP port from 1 to {MAX_PORT}, or empty to serve none")
+        return value
 
     @field_validator("queue_max_deliveries")
     @classmethod

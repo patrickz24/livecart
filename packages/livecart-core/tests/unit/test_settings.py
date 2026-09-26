@@ -62,6 +62,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
         *worker,
         "DEFAULT_CURRENCY",
         "REDIS_KEY_PREFIX",
+        "METRICS_PORT",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -667,6 +668,21 @@ SEED_ENV = {
     "MIGRATOR_URL": "postgresql+asyncpg://livecart_migrator:change-me-migrator@localhost/livecart",
     "SEED_DEMO_PASSWORD": "change-me-demo-seller",
 }
+
+
+def test_the_metrics_are_served_on_the_internal_port_9100_by_default() -> None:
+    assert load(**dev_env()).metrics_port == 9100
+    assert load(**dev_env(), METRICS_PORT="9200").metrics_port == 9200
+
+
+def test_an_empty_metrics_port_serves_no_metrics() -> None:
+    assert load(**dev_env(), METRICS_PORT="").metrics_port is None
+
+
+@pytest.mark.parametrize("value", ["0", "65536", "-1"])
+def test_the_metrics_port_is_a_tcp_port(value: str) -> None:
+    with pytest.raises(ValidationError, match="TCP port from 1 to 65535"):
+        load(**dev_env(), METRICS_PORT=value)
 
 
 def test_seed_settings_need_the_migrator_and_the_demo_password() -> None:

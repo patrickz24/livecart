@@ -199,6 +199,10 @@ services:
       REDIS_MAXMEMORY_BYTES: ${REDIS_MAXMEMORY_BYTES:-268435456}
     ports:
       - "127.0.0.1:8000:8000" # loopback only: other clients go through nginx
+    # The Prometheus endpoint (METRICS_PORT, 9100), for a scraper on the compose
+    # network only: never published on the host, never routed by nginx.
+    expose:
+      - "9100"
     healthcheck:
       # Readiness (PostgreSQL and Redis reachable), so that `up --wait` and the
       # web container wait for a usable API. The image default is /health.

@@ -72,9 +72,9 @@ class IngestComments:
 
     ``ServiceUnavailable`` from the queue, when it did not take the whole
     batch or could not tell its backlog, reaches the caller. The counters are
-    named after the Prometheus metrics that will expose them once the API has
-    its metrics port: ``livecart_comments_received_total``,
-    ``livecart_queue_backpressure_total`` and ``livecart_queue_backlog``.
+    plain integers, which the API's metrics read at scrape time as
+    ``livecart_comments_received_total``, ``livecart_queue_backpressure_total``
+    and ``livecart_queue_backlog`` (``livecart_api.metrics``).
     """
 
     def __init__(
