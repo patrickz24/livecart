@@ -57,6 +57,7 @@ RATE_LIMITS: Final = (
     "rate_limit_buyer_token_per_minute",
     "rate_limit_storefront_per_minute",
     "rate_limit_comment_webhook_per_minute",
+    "rate_limit_comment_webhook_signature_failures_per_minute",
 )
 # The bounds of the comment queue's backpressure settings.
 MAX_QUEUE_DEPTH: Final = 1_000_000
@@ -408,6 +409,11 @@ class Settings(LlmSettings):
     # load test, it stops a runaway sender, while backpressure (503) protects
     # the queue.
     rate_limit_comment_webhook_per_minute: int = 6000
+    # Per client address: the webhook calls whose signature fails. Past it, the
+    # address gets 429 before its body is read or its HMAC computed, so that
+    # unsigned calls cannot make the API read and hash 1 MiB bodies at will; a
+    # platform whose signature holds never fills it.
+    rate_limit_comment_webhook_signature_failures_per_minute: int = 60
     # The Host headers the API answers (TrustedHostMiddleware), comma-separated
     # in the environment: another Host is refused with 400 before any route
     # runs, so no URL is ever built from a forged one. 127.0.0.1 serves the

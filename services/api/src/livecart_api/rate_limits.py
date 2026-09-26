@@ -28,7 +28,11 @@ settings may change:
   request;
 - ``POST /api/v1/webhooks/comments/{platform}``: 6000 calls a minute per
   platform, counted once the signature holds, so that a forger fills no
-  counter; a full queue answers 503 instead, which is backpressure, not abuse.
+  platform's counter; a full queue answers 503 instead, which is
+  backpressure, not abuse. The calls whose signature fails count per address
+  instead, 60 a minute: past them the address gets 429 before its body is
+  read, since each refusal costs the API a body of up to 1 MiB to read and
+  hash, and a log line.
 
 The client address is ``request.client``, which uvicorn rewrites from
 ``X-Forwarded-For`` only when the connection comes from nginx
@@ -127,6 +131,7 @@ class RateLimitRules:
     buyer_token: RateLimitRule
     storefront: RateLimitRule
     comment_webhook: RateLimitRule
+    comment_webhook_signature_failures: RateLimitRule
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Self:
@@ -162,6 +167,11 @@ class RateLimitRules:
             ),
             comment_webhook=RateLimitRule(
                 "comment_webhook", settings.rate_limit_comment_webhook_per_minute, MINUTE
+            ),
+            comment_webhook_signature_failures=RateLimitRule(
+                "comment_webhook_signature_failures",
+                settings.rate_limit_comment_webhook_signature_failures_per_minute,
+                MINUTE,
             ),
         )
 

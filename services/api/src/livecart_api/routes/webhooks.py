@@ -6,8 +6,11 @@ before the next one reads anything more:
 
 1. the body is capped at 1 MiB, by nginx and by the API's middleware (413);
 2. ``PlatformAdapter.verify`` checks the signature on the raw body, before
-   anything is parsed, counted or queued: a missing or wrong signature is a
-   401 whose body never says which check failed. A platform that is not in
+   anything is parsed or queued: a missing or wrong signature is a 401 whose
+   body never says which check failed, counted against the client address.
+   An address with 60 such failures in the minute gets 429 before its body
+   is read, so that unsigned calls cannot make the API read and hash bodies
+   of 1 MiB, and log each refusal, at will. A platform that is not in
    ``ENABLED_PLATFORMS`` has no adapter and answers 404;
 3. the platform's rate limit, 6000 calls a minute, counts only signed calls
    (429 beyond);
@@ -35,7 +38,7 @@ from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError
 
 from livecart_api.errors import NOT_FOUND, documented
-from livecart_api.rate_limits import TOO_MANY_REQUESTS, RateLimiting
+from livecart_api.rate_limits import TOO_MANY_REQUESTS, RateLimiting, client_address
 from livecart_core.application.dto import MAX_BATCH_SIZE, CommentBatch, IncomingComment, Platform
 from livecart_core.application.ingest_comments import (
     EnvelopeTooLarge,
@@ -132,11 +135,17 @@ def build_webhook_router(
         adapter = adapters.get(platform)
         if adapter is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, detail=NOT_FOUND)
+        # An address past its signature failures is refused before its body is
+        # read and hashed: those are what an unsigned call costs the API.
+        address = client_address(request)
+        failures = limits.rules.comment_webhook_signature_failures
+        await limits.check(failures, address)
         raw_body = await request.body()
         try:
             adapter.verify(request.headers, raw_body)
         except InvalidSignature:
             logger.warning("comment_webhook_signature_refused", platform=platform.value)
+            await limits.record(failures, address)
             raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=INVALID_SIGNATURE) from None
         await limits.enforce(limits.rules.comment_webhook, platform.value)
         comments = _read_comments(adapter, raw_body)

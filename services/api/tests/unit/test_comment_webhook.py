@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import cast
@@ -26,11 +26,12 @@ from livecart_api.testing import (
     signed_webhook,
     simulator_only,
 )
-from livecart_core.application.dto import CommentBatch, Platform, QueuedComment
+from livecart_core.application.dto import CommentBatch, IncomingComment, Platform, QueuedComment
 from livecart_core.application.ingest_comments import BACKLOG_TTL, IngestComments
 from livecart_core.application.ports import (
     LiveSessionRepository,
     OrderLookup,
+    PlatformAdapter,
     ProductStockRepository,
     RefreshTokenRepository,
     SellerRepository,
@@ -147,8 +148,10 @@ async def test_an_unsigned_forged_or_stale_batch_gets_one_generic_401(api: Api) 
     assert [answer.status_code for answer in answers] == [401] * 5
     assert all(answer.json() == REFUSED for answer in answers)
     assert await api.queued() == []
-    # A refused call fills no counter: only signed calls count.
-    assert api.limiter.windows == {}
+    # A refused call fills no platform's counter: its address's failures only.
+    assert {key.rule: hits for key, (hits, _) in api.limiter.windows.items()} == {
+        "comment_webhook_signature_failures": 5
+    }
 
 
 async def test_the_signature_is_checked_before_the_body_is_read(api: Api) -> None:
@@ -224,6 +227,63 @@ async def test_signed_calls_are_limited_per_platform() -> None:
     assert refused.headers["Retry-After"] == "60"
     assert other.status_code == 202
     assert len(await queue.receive("worker-1", max_messages=100, block_seconds=0)) == 5
+
+
+class CountingAdapter:
+    """A platform adapter that counts the signatures it checks, which read the whole body."""
+
+    def __init__(self, inner: PlatformAdapter) -> None:
+        self._inner = inner
+        self.verified = 0
+
+    @property
+    def platform(self) -> Platform:
+        return self._inner.platform
+
+    def verify(self, headers: Mapping[str, str], raw_body: bytes) -> None:
+        self.verified += 1
+        self._inner.verify(headers, raw_body)
+
+    def parse(self, raw_body: bytes) -> list[IncomingComment]:
+        return self._inner.parse(raw_body)
+
+
+async def test_an_address_past_its_signature_failures_gets_429_before_its_body_is_read() -> None:
+    clock = current_time_clock()
+    queue, limiter = FakeCommentQueue(clock), InMemoryRateLimiter(clock)
+    adapter = CountingAdapter(simulator_only(clock)[Platform.SIMULATOR])
+    resources = memory_resources(
+        InMemoryDatabase(),
+        clock=clock,
+        rate_limiter=limiter,
+        comment_queue=queue,
+        platforms={Platform.SIMULATOR: adapter},
+    )
+    app = create_app(
+        make_settings(rate_limit_comment_webhook_signature_failures_per_minute=2), resources
+    )
+    headers, body = signed_webhook(BATCH, clock)
+
+    async with open_client(app, peer="203.0.113.7") as forger:
+        refused = [(await forger.post(SIMULATOR_WEBHOOK, content=body)).status_code for _ in "ab"]
+        limited = await forger.post(SIMULATOR_WEBHOOK, content=body)
+        # Signed or not, the address waits for its window to end.
+        signed_from_forger = await forger.post(SIMULATOR_WEBHOOK, content=body, headers=headers)
+    async with open_client(app, peer="198.51.100.20") as platform:
+        accepted = await platform.post(SIMULATOR_WEBHOOK, content=body, headers=headers)
+
+    assert refused == [401, 401]
+    assert (limited.status_code, limited.json()) == (429, {"detail": TOO_MANY_REQUESTS})
+    assert limited.headers["Retry-After"] == "60"
+    assert signed_from_forger.status_code == 429
+    # Two refusals and the platform's call: the limited ones were never hashed.
+    assert adapter.verified == 3
+    assert accepted.status_code == 202
+    assert len(await queue.receive("worker-1", max_messages=100, block_seconds=0)) == 2
+    assert {(key.rule, key.subject): hits for key, (hits, _) in limiter.windows.items()} == {
+        ("comment_webhook_signature_failures", "203.0.113.7"): 2,
+        ("comment_webhook", "simulator"): 1,
+    }
 
 
 # --- The batch -------------------------------------------------------------------------

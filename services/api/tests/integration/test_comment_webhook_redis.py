@@ -11,6 +11,7 @@ from livecart_api.testing import (
     SIMULATOR_WEBHOOK,
     current_time_clock,
     make_app,
+    make_settings,
     open_client,
     signed_webhook,
 )
@@ -53,3 +54,30 @@ async def test_a_signed_batch_is_queued_in_the_stream_for_the_workers(
     assert len({delivery.comment.correlation_id for delivery in deliveries}) == 3
     # Only the signed call counted against the platform's limit.
     assert await redis_client.get(f"{redis_key_prefix}:rl:comment_webhook:simulator") == b"1"
+    # The unsigned one counted against its address, in the counter every API shares.
+    failures_key = f"{redis_key_prefix}:rl:comment_webhook_signature_failures:127.0.0.1"
+    assert await redis_client.get(failures_key) == b"1"
+
+
+async def test_unsigned_calls_past_the_limit_of_their_address_get_429(
+    redis_client: Redis, redis_key_prefix: str
+) -> None:
+    clock = current_time_clock()
+    app = make_app(
+        database=InMemoryDatabase(),
+        clock=clock,
+        rate_limiter=RedisRateLimiter(redis_client, prefix=redis_key_prefix),
+        comment_queue=RedisCommentQueue(redis_client, prefix=redis_key_prefix),
+        settings=make_settings(rate_limit_comment_webhook_signature_failures_per_minute=3),
+    )
+    _, body = signed_webhook(CommentBatch(comments=[incoming_comment()]), clock)
+
+    async with open_client(app) as client:
+        answers = [
+            (await client.post(SIMULATOR_WEBHOOK, content=body)).status_code for _ in "abcde"
+        ]
+
+    assert answers == [401, 401, 401, 429, 429]
+    failures_key = f"{redis_key_prefix}:rl:comment_webhook_signature_failures:127.0.0.1"
+    assert await redis_client.get(failures_key) == b"3"
+    assert 0 < await redis_client.ttl(failures_key) <= 60

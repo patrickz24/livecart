@@ -149,6 +149,7 @@ def test_the_rules_follow_the_settings_and_only_the_login_fails_closed() -> None
             rules.buyer_token,
             rules.storefront,
             rules.comment_webhook,
+            rules.comment_webhook_signature_failures,
         )
     ] == [
         ("login", 10, 60, True),
@@ -160,6 +161,7 @@ def test_the_rules_follow_the_settings_and_only_the_login_fails_closed() -> None
         ("buyer_token", 60, 60, False),
         ("storefront", 120, 60, False),
         ("comment_webhook", 6000, 60, False),
+        ("comment_webhook_signature_failures", 60, 60, False),
     ]
 
 
