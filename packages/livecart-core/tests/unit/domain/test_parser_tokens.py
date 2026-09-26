@@ -136,6 +136,16 @@ def test_a_catalog_code_wins_over_a_glued_quantity() -> None:
     assert token.code == ProductCode("X2")
 
 
+def test_a_code_typed_like_a_quantity_is_one_next_to_another_product() -> None:
+    with_x2 = catalog(catalog_product("X2", "Gadget"), catalog_product("B07", "Sac"))
+
+    assert shapes("B07 x2", with_x2) == ["Code:b07", "GluedQuantity:x2"]
+    assert shapes("x2B07", with_x2) == ["GluedQuantity:x2", "Code:b07"]
+    assert shapes("Q7 x2", with_x2) == ["UnknownCode:q7", "GluedQuantity:x2"]
+    # No other product: the code.
+    assert shapes("x2 x2", with_x2) == ["Code:x2", "Code:x2"]
+
+
 @pytest.mark.parametrize("typed", ["2xl", "3XS", "4xl"])
 def test_a_numbered_size_is_one_word(typed: str) -> None:
     assert shapes(typed) == [f"Word:{typed.lower()}"]

@@ -7,7 +7,8 @@ because a buyer glues what belongs together ("A12M", "C3x2", "2xC3"):
 1. the whole word, if it is a catalog code as typed (``a12``);
 2. the whole word, if it is a glued quantity (``x2``, ``qte3``): a catalog
    code wins over a quantity, so a catalog with an ``X2`` product reads
-   ``x2`` as that product;
+   ``x2`` as that product, unless the comment references another product
+   ("je prends B07 x2"): then ``x2`` is the quantity of that one;
 3. the whole word, if exactly one catalog code matches it once O and 0, or
    I, L and 1, are swapped: ``Al2`` reads ``A12``, ``BO7`` reads ``B07``;
 4. otherwise the word splits where a digit is followed by a letter (``a12m``
@@ -299,6 +300,25 @@ class _Reader:
         return split
 
 
+def _quantity_shaped(token: Token) -> re.Match[str] | None:
+    return _GLUED_QUANTITY.fullmatch(token.text) if isinstance(token, Code) else None
+
+
+def _prefer_quantities(tokens: list[Token]) -> list[Token]:
+    """A code typed like a glued quantity is one when another product is referenced."""
+    if not any(
+        isinstance(token, Code | UnknownCode) and _quantity_shaped(token) is None
+        for token in tokens
+    ):
+        return tokens
+    return [
+        GluedQuantity(token.text, token.start, token.end, number_value(shaped.group(1)))
+        if (shaped := _quantity_shaped(token)) is not None
+        else token
+        for token in tokens
+    ]
+
+
 def tokenize(folded: NormalizedText, catalog: Catalog) -> list[Token]:
     """The tokens of a folded comment, in text order; see the module docstring."""
-    return _Reader(folded, catalog).tokens()
+    return _prefer_quantities(_Reader(folded, catalog).tokens())

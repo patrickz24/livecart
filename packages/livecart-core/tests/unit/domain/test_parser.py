@@ -843,6 +843,18 @@ def test_which_product_comes_before_whether_and_which_variant(
     assert ambiguous(text).reason is reason
 
 
+def test_a_catalog_code_typed_like_a_quantity_is_the_quantity_of_another_product() -> None:
+    with_x2 = catalog(catalog_product("X2", "Gadget"), catalog_product("B07", "Sac"))
+
+    assert parse("je prends B07 x2", with_x2) == match(
+        B07, "", 2, Confidence.EXACT, "prends", "B07", "x2"
+    )
+    assert parse("je prends x2 B07", with_x2) == match(
+        B07, "", 2, Confidence.EXACT, "prends", "x2", "B07"
+    )
+    assert parse("x2", with_x2) == match(ProductCode("X2"), "", 1, Confidence.CODE_ALONE, "x2")
+
+
 def test_names_are_only_read_when_no_code_is_given() -> None:
     assert parse("je prends la robe B07") == match(B07, "", 1, Confidence.EXACT, "prends", "B07")
 
