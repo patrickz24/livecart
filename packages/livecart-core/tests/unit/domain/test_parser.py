@@ -260,6 +260,32 @@ def test_a_bare_number_is_a_quantity() -> None:
     assert parse("je prends 2 B07") == match(B07, "", 2, Confidence.EXACT, "prends", "2", "B07")
 
 
+def test_a_number_word_that_repeats_the_digits_agrees_with_them() -> None:
+    assert parse("je prends B07 x2 (deux)") == match(
+        B07, "", 2, Confidence.EXACT, "prends", "B07", "x2", "deux"
+    )
+    assert parse("I take 3 B07, three") == match(
+        B07, "", 3, Confidence.EXACT, "take", "3", "B07", "three"
+    )
+    assert ambiguous("je prends B07 x3 (deux)").reason is AmbiguityReason.CONFLICTING_SIGNALS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "je prends B07 pas de souci",
+        "je prends B07 pas de probleme",
+        "B07 pas mal je prends",
+        "I'll take B07 no worries",
+    ],
+)
+def test_an_idiom_with_a_negation_is_no_doubt(text: str) -> None:
+    result = parse(text)
+
+    assert isinstance(result, Match), result
+    assert result.product_code == B07
+
+
 def test_the_same_quantity_written_twice_is_one_quantity() -> None:
     result = parse("je prends 2 B07 x2")
 

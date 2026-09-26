@@ -29,7 +29,7 @@ def _everything_recognised(reading: Reading) -> list[Mention]:
         *(quantity.mention for quantity in reading.quantities),
         *(variant.mention for variant in reading.variants),
         *reading.variant_words,
-        *reading.number_words,
+        *(word.mention for word in reading.number_words),
         *(mention for named in reading.named_products for mention in named.mentions),
     ]
 
@@ -84,12 +84,14 @@ def decide(reading: Reading, catalog: Catalog, *, max_quantity: int) -> ParseRes
     # 7. A code-shaped token that no catalog code matches, or several do.
     if product is None:
         return Ambiguous(AmbiguityReason.UNKNOWN_CODE, reference.candidates, evidence)
-    # 8. Signals that pull two ways, or a bare number too large to be the quantity.
+    # 8. Signals that pull two ways, or a bare number too large to be the
+    # quantity. A number in words agrees only with the same one in digits.
+    words_agree = all(values == {word.value} for word in reading.number_words)
     if (
         reading.doubts
         or len(values) >= 2
         or (values and not in_bounds)
-        or reading.number_words
+        or not words_agree
         or len(found) >= 2
     ):
         return Ambiguous(AmbiguityReason.CONFLICTING_SIGNALS, (product.code,), evidence)
@@ -110,6 +112,7 @@ def decide(reading: Reading, catalog: Catalog, *, max_quantity: int) -> ParseRes
         *reference.mentions,
         *(mention.mention for mention in reading.variants if mention.variant == variant),
         *(mention.mention for mention in reading.quantities),
+        *(word.mention for word in reading.number_words),
     ]
     return Match(
         product_code=product.code,

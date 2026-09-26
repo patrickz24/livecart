@@ -16,7 +16,7 @@ gets, so that the catalog always wins over the generic vocabulary:
    exemplaires"): "A12 M en 2" and "C3 rouge en 2" are quantities;
 4. phrases: "sold out", "out of stock" and "is sold" (doubts), "i'd like" and
    "would like", "i'll have", "mets-moi", "de cote" (buy signals), "ma
-   commande" and "my order" (the noun, no role);
+   commande", "my order" and "pas de souci" (no role);
 5. the unknown codes left: product references too;
 6. quantities: a number next to a currency, ``%``, a time unit or a decimal
    separator is a price, a discount, a time or a decimal and is ignored
@@ -124,7 +124,8 @@ class Reading:
     quantities: tuple[QuantityMention, ...]
     variants: tuple[VariantMention, ...]
     variant_words: tuple[Mention, ...]
-    number_words: tuple[Mention, ...]
+    # A number the parser does not read as the quantity, with the value it names.
+    number_words: tuple[QuantityMention, ...]
     content: tuple[Mention, ...]
     named_products: tuple[NamedProduct, ...]
 
@@ -187,6 +188,7 @@ class _Grammar:
         self._roles: list[Role | None] = [None] * len(tokens)
         self._quantities: list[QuantityMention] = []
         self._variants: list[VariantMention] = []
+        self._number_words: list[QuantityMention] = []
         # The last token of a phrase, keyed by its first token, which holds its role.
         self._phrase_ends: dict[int, int] = {}
 
@@ -216,7 +218,7 @@ class _Grammar:
             quantities=tuple(self._quantities),
             variants=tuple(self._variants),
             variant_words=self._mentions(Role.VARIANT_WORD),
-            number_words=self._mentions(Role.NUMBER_WORD),
+            number_words=tuple(self._number_words),
             content=self._mentions(Role.CONTENT),
             named_products=() if references else self._named_products(),
         )
@@ -420,8 +422,12 @@ class _Grammar:
         own_name = name_words(product.name) if product is not None else frozenset()
         # Every token but the words has a role by now.
         for i in range(len(self._tokens)):
-            if (word := self._free_word(i)) is not None:
-                self._roles[i] = _word_role(word, own_name)
+            if (word := self._free_word(i)) is None:
+                continue
+            self._roles[i] = _word_role(word, own_name)
+            if self._roles[i] is Role.NUMBER_WORD:
+                value = lexicon.NUMBER_WORD_VALUES[word]
+                self._number_words.append(QuantityMention(value, self._mention(i, i), False))
 
     def _references(self, codes: list[Code], unknown: list[UnknownCode]) -> tuple[Reference, ...]:
         by_key: dict[str, list[Code | UnknownCode]] = {}

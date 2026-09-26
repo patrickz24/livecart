@@ -5,6 +5,8 @@ from livecart_core.domain.parser.lexicon import (
     COLOUR_WORDS,
     GRAMMAR_WORDS,
     NOT_A_TYPO,
+    NUMBER_WORD_VALUES,
+    NUMBER_WORDS,
     SIZE_WORDS,
     in_vocabulary,
     one_edit_apart,
@@ -165,3 +167,8 @@ def test_a_number_glued_to_a_time_or_ordinal_ending(word: str) -> None:
 @pytest.mark.parametrize("word", ["14", "h", "2x", "2pcs", "10h3", "x2", "3eme3", "2ex"])
 def test_other_glued_numbers_are_not_times_or_ordinals(word: str) -> None:
     assert not time_or_ordinal(word)
+
+
+def test_every_number_word_names_a_quantity_above_one() -> None:
+    assert set(NUMBER_WORD_VALUES) == NUMBER_WORDS
+    assert set(NUMBER_WORD_VALUES.values()) <= set(range(2, 11))

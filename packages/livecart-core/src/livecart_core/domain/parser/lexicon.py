@@ -19,6 +19,7 @@ The phone spellings and the slang of ``BUY_SLANG`` ("jprends", "gimme",
 
 import re
 from functools import lru_cache
+from types import MappingProxyType
 from typing import Final
 
 # One word is enough; the pronoun before it ("je", "i'll") is a filler.
@@ -189,9 +190,17 @@ DOUBT_PHRASES: Final = frozenset(
     }
 )
 # Read before the words, with no role: "commande" after a possessive is the
-# noun, as in "annulez ma commande".
+# noun, as in "annulez ma commande", and the negation of "pas de souci" is no
+# doubt.
 NEUTRAL_PHRASES: Final = frozenset(
     {
+        ("pas", "de", "souci"),
+        ("pas", "de", "soucis"),
+        ("pas", "de", "probleme"),
+        ("pas", "de", "problemes"),
+        ("pas", "mal"),
+        ("no", "problem"),
+        ("no", "worries"),
         ("ma", "commande"),
         ("ta", "commande"),
         ("votre", "commande"),
@@ -232,29 +241,31 @@ QUANTITY_SUFFIXES: Final = frozenset(
     }
 )
 # The parser reads quantities in digits only. A number written as a word may
-# change the quantity, so it is a conflicting signal rather than silently 1.
-# "un", "une" and "one" mean the default quantity and are fillers; "neuf" is
-# left out, as it also means "new".
-NUMBER_WORDS: Final = frozenset(
+# change the quantity, so it is a conflicting signal rather than silently 1,
+# unless it repeats the quantity in digits ("x2 (deux)"). "un", "une" and "one"
+# mean the default quantity and are fillers; "neuf" is left out, as it also
+# means "new".
+NUMBER_WORD_VALUES: Final = MappingProxyType(
     {
-        "deux",
-        "trois",
-        "quatre",
-        "cinq",
-        "six",
-        "sept",
-        "huit",
-        "dix",
-        "two",
-        "three",
-        "four",
-        "five",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
+        "deux": 2,
+        "trois": 3,
+        "quatre": 4,
+        "cinq": 5,
+        "six": 6,
+        "sept": 7,
+        "huit": 8,
+        "dix": 10,
+        "two": 2,
+        "three": 3,
+        "four": 4,
+        "five": 5,
+        "seven": 7,
+        "eight": 8,
+        "nine": 9,
+        "ten": 10,
     }
 )
+NUMBER_WORDS: Final = frozenset(NUMBER_WORD_VALUES)
 # The price of the product, not a quantity: "15 euros", "15 balles".
 CURRENCY_WORDS: Final = frozenset(
     {"eur", "euro", "euros", "balle", "balles", "usd", "dollar", "dollars"}
