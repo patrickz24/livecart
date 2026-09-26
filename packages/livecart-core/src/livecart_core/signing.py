@@ -23,6 +23,7 @@ nothing about which check failed.
 
 import hashlib
 import hmac
+import math
 import re
 from collections.abc import Mapping
 from typing import Final
@@ -84,7 +85,8 @@ class WebhookSigner:
         """Raise ``InvalidSignature`` unless ``header`` signs ``body`` close enough to ``now``.
 
         ``now`` is a Unix time from the receiver's ``Clock``; close enough is
-        within ``tolerance_seconds``, before or after.
+        within ``tolerance_seconds``, before or after, in whole seconds like
+        the timestamp: a signature is never refused for a fraction of a second.
         """
         match = _HEADER_PATTERN.fullmatch(header) if header is not None else None
         if match is None:
@@ -92,5 +94,5 @@ class WebhookSigner:
         timestamp, signature = int(match[1]), match[2]
         if not hmac.compare_digest(signature, self._digest(body, timestamp)):
             raise InvalidSignature("the signature does not match the body")
-        if abs(now - timestamp) > tolerance_seconds:
+        if abs(math.floor(now) - timestamp) > tolerance_seconds:
             raise InvalidSignature("the signature is outside the tolerance window")

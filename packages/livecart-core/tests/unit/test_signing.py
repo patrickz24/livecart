@@ -30,18 +30,19 @@ def test_the_header_is_the_timestamp_and_the_hmac_sha256_of_t_dot_body() -> None
     assert SIGNATURE_HEADER == "X-LiveCart-Signature"
 
 
-@pytest.mark.parametrize("delta", [-SIGNATURE_TOLERANCE_SECONDS, -1, 0, 0.5, 300])
+@pytest.mark.parametrize("delta", [-SIGNATURE_TOLERANCE_SECONDS, -1, 0, 0.5, 300, 300.99])
 def test_a_signature_verifies_within_300_s_of_the_clock_either_way(delta: float) -> None:
+    # Whole seconds, like the timestamp: 300.99 s after it is still second 300.
     SIGNER.verify(SIGNER.header(BODY, timestamp=NOW), BODY, now=NOW + delta)
 
 
-@pytest.mark.parametrize("delta", [-301, 300.5, 301, 86_400])
-def test_a_signature_outside_the_window_is_refused_whichever_way(delta: float) -> None:
+@pytest.mark.parametrize("now", [NOW - 301, NOW - 300.01, NOW + 301, NOW + 86_400])
+def test_a_signature_outside_the_window_is_refused_whichever_way(now: float) -> None:
     # A stale signature replays a captured request; a future one would stretch the window.
     header = SIGNER.header(BODY, timestamp=NOW)
 
     with pytest.raises(InvalidSignature):
-        SIGNER.verify(header, BODY, now=NOW - delta)
+        SIGNER.verify(header, BODY, now=now)
 
 
 def test_a_changed_body_another_secret_or_another_timestamp_does_not_verify() -> None:
