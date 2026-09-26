@@ -220,7 +220,7 @@ class SessionEventType(StrEnum):
     """The events published to the stream of a live session.
 
     ``stream.gap`` and ``stream.close`` are not here: the SSE endpoint writes
-    them itself (milestone 4b), they never go through a stream.
+    them itself, they never go through a stream.
     """
 
     INTENT_RECORDED = "intent.recorded"
@@ -234,8 +234,11 @@ class SessionEventType(StrEnum):
 class SessionEvent(BaseModel):
     """One event of a live session, published after the commit that caused it.
 
-    ``data`` stays a plain JSON object until milestone 4b gives each type its
-    schema in the ``LiveSessionEvent`` union of the OpenAPI document.
+    ``data`` is the JSON of its type's payload model
+    (``livecart_core.application.session_events``), which the builders fill:
+    the envelope stays one model on the stream, and the SSE endpoint checks
+    each event against its member of the ``LiveSessionEvent`` union of the
+    OpenAPI document before it relays it.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)

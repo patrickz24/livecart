@@ -10,6 +10,7 @@ from datetime import timedelta
 
 import fastapi.routing
 import pytest
+import structlog
 from fastapi import FastAPI
 from prometheus_client import CollectorRegistry
 
@@ -27,12 +28,19 @@ from livecart_api.testing import (
     current_time_clock,
     make_app,
     make_settings,
+    open_client,
     open_order,
     seller_headers,
 )
-from livecart_core.application.dto import LiveSessionRecord, SessionEvent, StockLevel
+from livecart_core.application.dto import (
+    LiveSessionRecord,
+    SessionEvent,
+    SessionEventType,
+    StockLevel,
+)
 from livecart_core.application.ports import START_CURSOR, Clock
 from livecart_core.application.session_events import stock_updated
+from livecart_core.domain.state_machines import LiveSessionStatus
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.testing.fakes import FakeClock, InMemoryDatabase, InMemorySessionEvents
 from livecart_core.testing.keys import TEST_JWT_SECRET
@@ -297,4 +305,57 @@ def test_the_stream_is_documented_as_events_and_its_errors_as_json() -> None:
     assert [parameter["name"] for parameter in operation["parameters"]] == [
         "session_id",
         "Last-Event-ID",
+    ]
+
+
+async def test_starting_a_session_streams_its_update_and_a_lost_one_is_counted() -> None:
+    clock = current_time_clock()
+    database = InMemoryDatabase()
+    session = database.add_live_session(status=LiveSessionStatus.DRAFT)
+    events = InMemorySessionEvents(clock)
+    app = make_app(database=database, clock=clock, session_events=events)
+    headers = seller_headers(app, session.seller_id)
+    path = f"/api/v1/live-sessions/{session.id}"
+
+    async with (
+        open_client(app) as client,
+        open_event_stream(app, f"{path}/events", headers) as stream,
+    ):
+        await _snapshot(stream)
+        started = await client.post(f"{path}/start", headers=headers)
+        update = await stream.next_message()
+        events.fail_next()
+        ended = await client.post(f"{path}/end", headers=headers)
+
+    assert (started.status_code, ended.status_code) == (200, 200)
+    assert update.event == "session.updated"
+    body = update.json()
+    assert body["type"] == "session.updated"
+    assert body["correlation_id"] is None
+    assert body["data"]["status"] == "live"
+    assert body["data"]["started_at"] is not None
+    registry = app.state.metrics_registry
+    assert isinstance(registry, CollectorRegistry)
+    assert registry.get_sample_value("livecart_session_events_unpublished_total") == 1
+
+
+async def test_an_event_that_fits_no_member_of_the_union_is_skipped_and_logged() -> None:
+    live = _live()
+    malformed = SessionEvent(
+        type=SessionEventType.STOCK_UPDATED,
+        session_id=live.session.id,
+        occurred_at=live.clock.now(),
+        data={"available": "plenty"},
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        async with open_event_stream(live.app, live.path, live.headers()) as stream:
+            await _snapshot(stream)
+            await live.events.publish(malformed)
+            after = await live.publish(7)
+            relayed = await stream.next_message()
+
+    assert relayed.json() == after.model_dump(mode="json")
+    assert [log["event"] for log in logs if log["log_level"] == "error"] == [
+        "session_event_unrelayable"
     ]

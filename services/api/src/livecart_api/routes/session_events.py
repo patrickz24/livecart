@@ -27,14 +27,17 @@ with ``Retry-After``. A stream counts once against the seller's rate limit,
 when it opens.
 """
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
-from typing import Annotated, Final, Literal, Self
+from typing import Annotated, Any, Final, Literal, Self
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi.openapi.constants import REF_PREFIX
 from fastapi.sse import EventSourceResponse, ServerSentEvent
-from pydantic import AwareDatetime, BaseModel, Field, JsonValue
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, RootModel, ValidationError
+from pydantic.json_schema import models_json_schema
 
 from livecart_api.deps import CurrentSeller
 from livecart_api.errors import documented_json
@@ -47,6 +50,9 @@ from livecart_core.application.session_events import (
     IntentPayload,
     OrderPayload,
     RejectionPayload,
+    SessionPayload,
+    ShipmentPayload,
+    StockPayload,
 )
 from livecart_core.application.watch_live_session import (
     CloseReason,
@@ -56,6 +62,8 @@ from livecart_core.application.watch_live_session import (
     FeedSnapshot,
     WatchLiveSession,
 )
+
+logger = structlog.get_logger(__name__)
 
 EVENTS_ROUTE: Final = f"{PREFIX}/{{session_id}}/events"
 SNAPSHOT_EVENT: Final = "snapshot"
@@ -135,40 +143,155 @@ class LiveSessionSnapshot(BaseModel):
         )
 
 
-class SessionEventMessage(BaseModel):
-    """A session event as the stream relays it: its type, its session, when, and its payload."""
+# --- The LiveSessionEvent union: every message of a stream but its snapshot ---------------
+# Each member shares the envelope of a SessionEvent (type, session, time, the
+# comment's correlation id, if any) and holds its own payload in ``data``.
 
-    type: SessionEventType
+
+class _Envelope(BaseModel):
+    # Every field is in every message, defaults included: the schema says so.
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, json_schema_serialization_defaults_required=True
+    )
+
     session_id: UUID
     occurred_at: AwareDatetime
-    correlation_id: str | None
-    data: dict[str, JsonValue]
+    correlation_id: str | None = None
+
+
+class IntentRecorded(_Envelope):
+    """A comment settled on a product: its intent, reserved or not, and its order if one opened."""
+
+    type: Literal["intent.recorded"] = "intent.recorded"
+    data: IntentPayload
+
+
+class CommentRejected(_Envelope):
+    """A comment of the session that carries no intent, and why."""
+
+    type: Literal["comment.rejected"] = "comment.rejected"
+    data: RejectionPayload
+
+
+class OrderUpdated(_Envelope):
+    """An order opened, paid or expired."""
+
+    type: Literal["order.updated"] = "order.updated"
+    data: OrderPayload
+
+
+class StockUpdated(_Envelope):
+    """A product's counters after a reservation, a sale or a release."""
+
+    type: Literal["stock.updated"] = "stock.updated"
+    data: StockPayload
+
+
+class ShipmentUpdated(_Envelope):
+    """A paid order's shipment, as its carrier reports it (milestone 6)."""
+
+    type: Literal["shipment.updated"] = "shipment.updated"
+    data: ShipmentPayload
+
+
+class SessionUpdated(_Envelope):
+    """The session started or ended."""
+
+    type: Literal["session.updated"] = "session.updated"
+    data: SessionPayload
 
 
 class StreamGapData(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     after: str = Field(description="The Last-Event-ID the events after which are gone.")
 
 
-class StreamGap(BaseModel):
-    """``event: stream.gap``: events after the client's cursor are gone; a snapshot follows."""
+class StreamGap(_Envelope):
+    """Events after the client's cursor are gone: drop what it holds, a snapshot follows."""
 
     type: Literal["stream.gap"] = "stream.gap"
-    session_id: UUID
-    occurred_at: AwareDatetime
     data: StreamGapData
 
 
 class StreamCloseData(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     reason: CloseReason
 
 
-class StreamClose(BaseModel):
-    """``event: stream.close``: the last message; reconnect with the last id received."""
+class StreamClose(_Envelope):
+    """The last message: reconnect with the last id received (a fresh token first, if expiring)."""
 
     type: Literal["stream.close"] = "stream.close"
-    session_id: UUID
-    occurred_at: AwareDatetime
     data: StreamCloseData
+
+
+# A plain alias, not a "type" statement: pydantic then inlines the union in
+# LiveSessionEvent, where a "type" alias would become a component of its own.
+LiveSessionEventMember = Annotated[
+    IntentRecorded
+    | CommentRejected
+    | OrderUpdated
+    | StockUpdated
+    | ShipmentUpdated
+    | SessionUpdated
+    | StreamGap
+    | StreamClose,
+    Field(discriminator="type"),
+]
+
+
+class LiveSessionEvent(RootModel[LiveSessionEventMember]):
+    """Every message of a stream after its snapshot, discriminated by ``type``.
+
+    ``type`` is also the message's SSE event name. The first six are the
+    session's events, relayed with their stream id as the SSE id; the last
+    two are the stream's own, without an id.
+    """
+
+
+# The types of the session's own events: those a stream relays from Redis.
+RELAYED_TYPES: Final = frozenset(event_type.value for event_type in SessionEventType)
+# The stream's messages, added to the OpenAPI components (LiveCartApi.openapi).
+STREAM_MODELS: Final[tuple[type[BaseModel], ...]] = (LiveSessionSnapshot, LiveSessionEvent)
+
+
+def add_components(schema: dict[str, Any], models: Sequence[type[BaseModel]]) -> None:
+    """Put the JSON schemas of ``models``, and of every model they hold, in ``schema``'s components.
+
+    A component FastAPI generated already, such as ``ProductResponse``, must
+    come out the same: two definitions under one name would give the
+    generated client one of them at random.
+    """
+    _, definitions = models_json_schema(
+        [(model, "serialization") for model in models],
+        ref_template=f"{REF_PREFIX}{{model}}",
+    )
+    components = schema.setdefault("components", {}).setdefault("schemas", {})
+    for name, definition in definitions.get("$defs", {}).items():
+        if components.setdefault(name, definition) != definition:
+            raise RuntimeError(f"two definitions of the OpenAPI component {name}")
+
+
+def stream_item_schema() -> dict[str, object]:
+    """What each SSE item's data holds: a snapshot first, then ``LiveSessionEvent`` messages."""
+    return {
+        "required": ["event", "data"],
+        "properties": {
+            "data": {
+                "type": "string",
+                "contentMediaType": "application/json",
+                "contentSchema": {
+                    "oneOf": [{"$ref": f"{REF_PREFIX}{model.__name__}"} for model in STREAM_MODELS]
+                },
+            },
+            "event": {
+                "type": "string",
+                "enum": [SNAPSHOT_EVENT, *sorted(RELAYED_TYPES), GAP_EVENT, CLOSE_EVENT],
+            },
+        },
+    }
 
 
 def sse_message(
@@ -181,7 +304,7 @@ def sse_message(
             snapshot = LiveSessionSnapshot.of(message, limit=snapshot_limit, taken_at=now)
             return ServerSentEvent(event=SNAPSHOT_EVENT, id=message.cursor, data=snapshot)
         case StreamedEvent(event_id=event_id, event=event):
-            relayed = SessionEventMessage.model_validate(event.model_dump())
+            relayed = LiveSessionEvent.model_validate(event.model_dump(mode="json"))
             return ServerSentEvent(event=event.type.value, id=event_id, data=relayed)
         case FeedGap(after=after):
             gap = StreamGap(session_id=session_id, occurred_at=now, data=StreamGapData(after=after))
@@ -228,21 +351,41 @@ def build_session_event_router(
         "/{session_id}/events",
         summary="Stream the session's events: a snapshot, then every change (SSE)",
         response_class=EventSourceResponse,
-        responses=documented_json(
-            {
-                401: UNAUTHORIZED,
-                404: NOT_FOUND,
-                503: "This instance serves its most streams, or the events are unavailable",
-            }
-        ),
+        responses={
+            200: {
+                "description": (
+                    "The session's stream: event snapshot (LiveSessionSnapshot), then "
+                    "LiveSessionEvent messages, each named by its type"
+                ),
+                "content": {"text/event-stream": {"itemSchema": stream_item_schema()}},
+            },
+            **documented_json(
+                {
+                    401: UNAUTHORIZED,
+                    404: NOT_FOUND,
+                    503: "This instance serves its most streams, or the events are unavailable",
+                }
+            ),
+        },
     )
     async def stream_live_session_events(
         session_id: UUID,
         messages: Annotated[AsyncIterator[FeedMessage], Depends(open_feed)],
     ) -> AsyncIterator[ServerSentEvent]:
         async for message in messages:
-            yield sse_message(
-                message, session_id=session_id, clock=clock, snapshot_limit=snapshot_limit
-            )
+            try:
+                relayed = sse_message(
+                    message, session_id=session_id, clock=clock, snapshot_limit=snapshot_limit
+                )
+            except ValidationError:
+                # An event that fits no member of the union (a publisher of another
+                # version): skipped and logged, rather than end every stream.
+                logger.error(
+                    "session_event_unrelayable",
+                    session_id=str(session_id),
+                    event_id=message.event_id if isinstance(message, StreamedEvent) else None,
+                )
+                continue
+            yield relayed
 
     return router

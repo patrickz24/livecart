@@ -26,7 +26,12 @@ from livecart_core.application.products import SellerProducts
 from livecart_core.domain.codes import NO_VARIANT, ProductCode
 from livecart_core.domain.money import Money
 from livecart_core.domain.state_machines import LiveSessionStatus, TransitionOutcome
-from livecart_core.testing.fakes import FAKE_CLOCK_START, FakeClock, InMemoryDatabase
+from livecart_core.testing.fakes import (
+    FAKE_CLOCK_START,
+    FakeClock,
+    FakeEventPublisher,
+    InMemoryDatabase,
+)
 
 UNKNOWN = UUID(int=404)
 
@@ -36,7 +41,7 @@ def _use_cases() -> tuple[InMemoryDatabase, FakeClock, SellerLiveSessions, Selle
     return (
         database,
         clock,
-        SellerLiveSessions(database.live_sessions, clock),
+        SellerLiveSessions(database.live_sessions, clock, FakeEventPublisher()),
         SellerProducts(database.products, clock),
     )
 

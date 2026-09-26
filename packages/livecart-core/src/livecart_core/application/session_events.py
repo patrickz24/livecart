@@ -21,12 +21,15 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from livecart_core.application.dto import (
+    CarrierName,
     IntentSource,
+    LiveSessionRecord,
     OrderRecord,
     PurchaseIntentRecord,
     ReservationResult,
     SessionEvent,
     SessionEventType,
+    ShipmentRecord,
     StockLevel,
 )
 from livecart_core.domain.outcomes import IntentOutcome, RejectionReason
@@ -36,7 +39,7 @@ from livecart_core.domain.reference import (
     REFERENCE_PREFIX,
     REFERENCE_SYMBOLS,
 )
-from livecart_core.domain.state_machines import OrderStatus
+from livecart_core.domain.state_machines import LiveSessionStatus, OrderStatus, ShipmentStatus
 
 _PAYLOAD = ConfigDict(extra="forbid", frozen=True)
 
@@ -134,6 +137,50 @@ class StockPayload(BaseModel):
         )
 
 
+class ShipmentPayload(BaseModel):
+    """``shipment.updated``: a paid order's shipment, as its carrier reports it (milestone 6)."""
+
+    model_config = _PAYLOAD
+
+    shipment_id: UUID
+    order_id: UUID
+    status: ShipmentStatus
+    carrier: CarrierName
+    tracking_number: str = Field(min_length=1, max_length=64)
+    last_event_at: AwareDatetime | None = None
+
+    @classmethod
+    def of(cls, shipment: ShipmentRecord) -> Self:
+        return cls(
+            shipment_id=shipment.id,
+            order_id=shipment.order_id,
+            status=shipment.status,
+            carrier=shipment.ref.carrier,
+            tracking_number=shipment.ref.tracking_number,
+            last_event_at=shipment.last_event_at,
+        )
+
+
+class SessionPayload(BaseModel):
+    """``session.updated``: the session started or ended; an ended session reserves no more."""
+
+    model_config = _PAYLOAD
+
+    status: LiveSessionStatus
+    title: str
+    started_at: AwareDatetime | None = None
+    ended_at: AwareDatetime | None = None
+
+    @classmethod
+    def of(cls, session: LiveSessionRecord) -> Self:
+        return cls(
+            status=session.status,
+            title=session.title,
+            started_at=session.started_at,
+            ended_at=session.ended_at,
+        )
+
+
 def _event(
     event_type: SessionEventType,
     session_id: UUID,
@@ -215,6 +262,34 @@ def reservation_events(
         )
     )
     return events
+
+
+def session_updated(session: LiveSessionRecord, *, occurred_at: datetime) -> SessionEvent:
+    """A session that started or ended, as it stands: no comment caused it, so no correlation."""
+    return _event(
+        SessionEventType.SESSION_UPDATED,
+        session.id,
+        SessionPayload.of(session),
+        correlation_id=None,
+        occurred_at=occurred_at,
+    )
+
+
+def shipment_updated(
+    session_id: UUID,
+    shipment: ShipmentRecord,
+    *,
+    correlation_id: str | None,
+    occurred_at: datetime,
+) -> SessionEvent:
+    """A shipment of an order of the session, as its carrier reports it."""
+    return _event(
+        SessionEventType.SHIPMENT_UPDATED,
+        session_id,
+        ShipmentPayload.of(shipment),
+        correlation_id=correlation_id,
+        occurred_at=occurred_at,
+    )
 
 
 def comment_rejected(

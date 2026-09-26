@@ -26,6 +26,73 @@
         "title": "AccessTokenResponse",
         "type": "object"
       },
+      "CarrierName": {
+        "description": "``shipments.carrier``.",
+        "enum": [
+          "mock",
+          "dpd",
+          "chronopost",
+          "dhl"
+        ],
+        "title": "CarrierName",
+        "type": "string"
+      },
+      "CloseReason": {
+        "description": "Why a stream ended: what its client does next.",
+        "enum": [
+          "token_expiring",
+          "max_duration",
+          "unavailable"
+        ],
+        "title": "CloseReason",
+        "type": "string"
+      },
+      "CommentRejected": {
+        "additionalProperties": false,
+        "description": "A comment of the session that carries no intent, and why.",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/RejectionPayload"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "comment.rejected",
+            "default": "comment.rejected",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "CommentRejected",
+        "type": "object"
+      },
       "ErrorResponse": {
         "properties": {
           "detail": {
@@ -66,6 +133,134 @@
         "title": "HealthStatus",
         "type": "object"
       },
+      "IntentOutcome": {
+        "description": "What the stock reservation did with a resolved intent.",
+        "enum": [
+          "reserved",
+          "out_of_stock",
+          "already_reserved"
+        ],
+        "title": "IntentOutcome",
+        "type": "string"
+      },
+      "IntentPayload": {
+        "additionalProperties": false,
+        "description": "``intent.recorded``: a purchase intent, and what its reservation made of it.",
+        "properties": {
+          "comment_id": {
+            "format": "uuid",
+            "title": "Comment Id",
+            "type": "string"
+          },
+          "confidence": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Confidence",
+            "type": "string"
+          },
+          "intent_id": {
+            "format": "uuid",
+            "title": "Intent Id",
+            "type": "string"
+          },
+          "order_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The order the reservation opened, if any.",
+            "title": "Order Id"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/IntentOutcome"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity": {
+            "maximum": 99,
+            "minimum": 1,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "source": {
+            "$ref": "#/components/schemas/IntentSource"
+          }
+        },
+        "required": [
+          "intent_id",
+          "comment_id",
+          "product_id",
+          "quantity",
+          "source",
+          "confidence",
+          "outcome",
+          "order_id"
+        ],
+        "title": "IntentPayload",
+        "type": "object"
+      },
+      "IntentRecorded": {
+        "additionalProperties": false,
+        "description": "A comment settled on a product: its intent, reserved or not, and its order if one opened.",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/IntentPayload"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "intent.recorded",
+            "default": "intent.recorded",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "IntentRecorded",
+        "type": "object"
+      },
+      "IntentSource": {
+        "description": "Who resolved a purchase intent: ``purchase_intents.source``.",
+        "enum": [
+          "parser",
+          "llm"
+        ],
+        "title": "IntentSource",
+        "type": "string"
+      },
       "LiveSessionCreate": {
         "additionalProperties": false,
         "properties": {
@@ -92,6 +287,49 @@
         ],
         "title": "LiveSessionCreate",
         "type": "object"
+      },
+      "LiveSessionEvent": {
+        "description": "Every message of a stream after its snapshot, discriminated by ``type``.\n\n``type`` is also the message's SSE event name. The first six are the\nsession's events, relayed with their stream id as the SSE id; the last\ntwo are the stream's own, without an id.",
+        "discriminator": {
+          "mapping": {
+            "comment.rejected": "#/components/schemas/CommentRejected",
+            "intent.recorded": "#/components/schemas/IntentRecorded",
+            "order.updated": "#/components/schemas/OrderUpdated",
+            "session.updated": "#/components/schemas/SessionUpdated",
+            "shipment.updated": "#/components/schemas/ShipmentUpdated",
+            "stock.updated": "#/components/schemas/StockUpdated",
+            "stream.close": "#/components/schemas/StreamClose",
+            "stream.gap": "#/components/schemas/StreamGap"
+          },
+          "propertyName": "type"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/IntentRecorded"
+          },
+          {
+            "$ref": "#/components/schemas/CommentRejected"
+          },
+          {
+            "$ref": "#/components/schemas/OrderUpdated"
+          },
+          {
+            "$ref": "#/components/schemas/StockUpdated"
+          },
+          {
+            "$ref": "#/components/schemas/ShipmentUpdated"
+          },
+          {
+            "$ref": "#/components/schemas/SessionUpdated"
+          },
+          {
+            "$ref": "#/components/schemas/StreamGap"
+          },
+          {
+            "$ref": "#/components/schemas/StreamClose"
+          }
+        ],
+        "title": "LiveSessionEvent"
       },
       "LiveSessionPage": {
         "properties": {
@@ -184,6 +422,70 @@
           "ended_at"
         ],
         "title": "LiveSessionResponse",
+        "type": "object"
+      },
+      "LiveSessionSnapshot": {
+        "description": "The first message of a stream, ``event: snapshot``: what the dashboard starts from.\n\nThe lists hold the payloads of the matching events, newest first, at most\n``limit`` of each; ``events_cursor`` is the id of the last event before\nthe snapshot was read, which the events that follow come after.",
+        "properties": {
+          "events_cursor": {
+            "pattern": "^(\\d{1,20})-(\\d{1,20})$",
+            "title": "Events Cursor",
+            "type": "string"
+          },
+          "intents": {
+            "items": {
+              "$ref": "#/components/schemas/IntentPayload"
+            },
+            "title": "Intents",
+            "type": "array"
+          },
+          "limit": {
+            "description": "The most items of each list.",
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "orders": {
+            "items": {
+              "$ref": "#/components/schemas/OrderPayload"
+            },
+            "title": "Orders",
+            "type": "array"
+          },
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/ProductResponse"
+            },
+            "title": "Products",
+            "type": "array"
+          },
+          "rejections": {
+            "items": {
+              "$ref": "#/components/schemas/RejectionPayload"
+            },
+            "title": "Rejections",
+            "type": "array"
+          },
+          "session": {
+            "$ref": "#/components/schemas/LiveSessionResponse"
+          },
+          "taken_at": {
+            "format": "date-time",
+            "title": "Taken At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session",
+          "events_cursor",
+          "products",
+          "intents",
+          "rejections",
+          "orders",
+          "limit",
+          "taken_at"
+        ],
+        "title": "LiveSessionSnapshot",
         "type": "object"
       },
       "LiveSessionStatus": {
@@ -349,6 +651,89 @@
         "title": "OrderDetailsResponse",
         "type": "object"
       },
+      "OrderPayload": {
+        "additionalProperties": false,
+        "description": "``order.updated``: an order as it stands, opened by a reservation, then paid or expired.",
+        "properties": {
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "expired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expired At"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "paid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paid At"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity": {
+            "maximum": 99,
+            "minimum": 1,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "reference": {
+            "pattern": "^LC-[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{6}$",
+            "title": "Reference",
+            "type": "string"
+          },
+          "reserved_until": {
+            "format": "date-time",
+            "title": "Reserved Until",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "total_minor": {
+            "minimum": 0,
+            "title": "Total Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order_id",
+          "reference",
+          "status",
+          "product_id",
+          "quantity",
+          "total_minor",
+          "currency",
+          "reserved_until"
+        ],
+        "title": "OrderPayload",
+        "type": "object"
+      },
       "OrderProduct": {
         "properties": {
           "code": {
@@ -423,6 +808,52 @@
           "reserved_until"
         ],
         "title": "OrderStatusResponse",
+        "type": "object"
+      },
+      "OrderUpdated": {
+        "additionalProperties": false,
+        "description": "An order opened, paid or expired.",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/OrderPayload"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "order.updated",
+            "default": "order.updated",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "OrderUpdated",
         "type": "object"
       },
       "Platform": {
@@ -678,6 +1109,40 @@
         "title": "ReadinessStatus",
         "type": "object"
       },
+      "RejectionPayload": {
+        "additionalProperties": false,
+        "description": "``comment.rejected``: a comment of the session that carries no intent, and why.",
+        "properties": {
+          "comment_id": {
+            "format": "uuid",
+            "title": "Comment Id",
+            "type": "string"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/RejectionReason"
+          }
+        },
+        "required": [
+          "comment_id",
+          "reason"
+        ],
+        "title": "RejectionPayload",
+        "type": "object"
+      },
+      "RejectionReason": {
+        "description": "Why a comment carries no order, stored in ``comments.rejection_reason``.",
+        "enum": [
+          "no_intent",
+          "multiple_products",
+          "quantity_out_of_bounds",
+          "variant_not_found",
+          "ambiguous_unresolved",
+          "session_not_found",
+          "session_not_live"
+        ],
+        "title": "RejectionReason",
+        "type": "string"
+      },
       "RestockRequest": {
         "additionalProperties": false,
         "properties": {
@@ -722,6 +1187,204 @@
           "display_name"
         ],
         "title": "SellerProfile",
+        "type": "object"
+      },
+      "SessionPayload": {
+        "additionalProperties": false,
+        "description": "``session.updated``: the session started or ended; an ended session reserves no more.",
+        "properties": {
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Ended At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Started At"
+          },
+          "status": {
+            "$ref": "#/components/schemas/LiveSessionStatus"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "title"
+        ],
+        "title": "SessionPayload",
+        "type": "object"
+      },
+      "SessionUpdated": {
+        "additionalProperties": false,
+        "description": "The session started or ended.",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/SessionPayload"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "session.updated",
+            "default": "session.updated",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "SessionUpdated",
+        "type": "object"
+      },
+      "ShipmentPayload": {
+        "additionalProperties": false,
+        "description": "``shipment.updated``: a paid order's shipment, as its carrier reports it (milestone 6).",
+        "properties": {
+          "carrier": {
+            "$ref": "#/components/schemas/CarrierName"
+          },
+          "last_event_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Last Event At"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "shipment_id": {
+            "format": "uuid",
+            "title": "Shipment Id",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ShipmentStatus"
+          },
+          "tracking_number": {
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Tracking Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "shipment_id",
+          "order_id",
+          "status",
+          "carrier",
+          "tracking_number"
+        ],
+        "title": "ShipmentPayload",
+        "type": "object"
+      },
+      "ShipmentStatus": {
+        "enum": [
+          "created",
+          "in_transit",
+          "out_for_delivery",
+          "delivered",
+          "cancelled"
+        ],
+        "title": "ShipmentStatus",
+        "type": "string"
+      },
+      "ShipmentUpdated": {
+        "additionalProperties": false,
+        "description": "A paid order's shipment, as its carrier reports it (milestone 6).",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ShipmentPayload"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "shipment.updated",
+            "default": "shipment.updated",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "ShipmentUpdated",
         "type": "object"
       },
       "ShippingAddress": {
@@ -772,6 +1435,92 @@
           "country"
         ],
         "title": "ShippingAddress",
+        "type": "object"
+      },
+      "StockPayload": {
+        "additionalProperties": false,
+        "description": "``stock.updated``: a product's counters after a change.",
+        "properties": {
+          "available": {
+            "minimum": 0,
+            "title": "Available",
+            "type": "integer"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "reserved": {
+            "minimum": 0,
+            "title": "Reserved",
+            "type": "integer"
+          },
+          "sold": {
+            "minimum": 0,
+            "title": "Sold",
+            "type": "integer"
+          },
+          "stock_total": {
+            "minimum": 0,
+            "title": "Stock Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "product_id",
+          "stock_total",
+          "reserved",
+          "sold",
+          "available"
+        ],
+        "title": "StockPayload",
+        "type": "object"
+      },
+      "StockUpdated": {
+        "additionalProperties": false,
+        "description": "A product's counters after a reservation, a sale or a release.",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StockPayload"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "stock.updated",
+            "default": "stock.updated",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "StockUpdated",
         "type": "object"
       },
       "StorefrontProduct": {
@@ -877,6 +1626,126 @@
           "products"
         ],
         "title": "StorefrontSession",
+        "type": "object"
+      },
+      "StreamClose": {
+        "additionalProperties": false,
+        "description": "The last message: reconnect with the last id received (a fresh token first, if expiring).",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StreamCloseData"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "stream.close",
+            "default": "stream.close",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "StreamClose",
+        "type": "object"
+      },
+      "StreamCloseData": {
+        "additionalProperties": false,
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/CloseReason"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "StreamCloseData",
+        "type": "object"
+      },
+      "StreamGap": {
+        "additionalProperties": false,
+        "description": "Events after the client's cursor are gone: drop what it holds, a snapshot follows.",
+        "properties": {
+          "correlation_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Correlation Id"
+          },
+          "data": {
+            "$ref": "#/components/schemas/StreamGapData"
+          },
+          "occurred_at": {
+            "format": "date-time",
+            "title": "Occurred At",
+            "type": "string"
+          },
+          "session_id": {
+            "format": "uuid",
+            "title": "Session Id",
+            "type": "string"
+          },
+          "type": {
+            "const": "stream.gap",
+            "default": "stream.gap",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "occurred_at",
+          "correlation_id",
+          "type",
+          "data"
+        ],
+        "title": "StreamGap",
+        "type": "object"
+      },
+      "StreamGapData": {
+        "additionalProperties": false,
+        "properties": {
+          "after": {
+            "description": "The Last-Event-ID the events after which are gone.",
+            "title": "After",
+            "type": "string"
+          }
+        },
+        "required": [
+          "after"
+        ],
+        "title": "StreamGapData",
         "type": "object"
       },
       "ValidationError": {
@@ -1617,9 +2486,31 @@
                 "itemSchema": {
                   "properties": {
                     "data": {
+                      "contentMediaType": "application/json",
+                      "contentSchema": {
+                        "oneOf": [
+                          {
+                            "$ref": "#/components/schemas/LiveSessionSnapshot"
+                          },
+                          {
+                            "$ref": "#/components/schemas/LiveSessionEvent"
+                          }
+                        ]
+                      },
                       "type": "string"
                     },
                     "event": {
+                      "enum": [
+                        "snapshot",
+                        "comment.rejected",
+                        "intent.recorded",
+                        "order.updated",
+                        "session.updated",
+                        "shipment.updated",
+                        "stock.updated",
+                        "stream.gap",
+                        "stream.close"
+                      ],
                       "type": "string"
                     },
                     "id": {
@@ -1630,11 +2521,15 @@
                       "type": "integer"
                     }
                   },
+                  "required": [
+                    "event",
+                    "data"
+                  ],
                   "type": "object"
                 }
               }
             },
-            "description": "Successful Response"
+            "description": "The session's stream: event snapshot (LiveSessionSnapshot), then LiveSessionEvent messages, each named by its type"
           },
           "401": {
             "content": {

@@ -24,6 +24,7 @@ it. The client address the rate limits count is uvicorn's, which trusts
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from importlib.metadata import version
+from typing import Any
 
 import structlog
 from asgi_correlation_id import CorrelationIdMiddleware
@@ -52,7 +53,9 @@ from livecart_api.routes.orders import build_order_router
 from livecart_api.routes.products import build_product_router
 from livecart_api.routes.session_events import (
     EVENTS_ROUTE,
+    STREAM_MODELS,
     StreamSlots,
+    add_components,
     build_session_event_router,
 )
 from livecart_api.routes.storefronts import build_storefront_router
@@ -83,6 +86,25 @@ RETRY_AFTER_S = 1
 # The largest request body, as nginx's client_max_body_size: comment batches
 # of 200 are far below it.
 MAX_REQUEST_BODY_BYTES = 1024 * 1024
+
+
+class LiveCartApi(FastAPI):
+    """The app, whose OpenAPI document also describes the messages of its event streams.
+
+    FastAPI documents a stream of ``ServerSentEvent`` as generic SSE items,
+    since each item names its own event and data: the models of those data,
+    ``LiveSessionSnapshot`` and the ``LiveSessionEvent`` union, reach no
+    component on their own. They are added to ``components.schemas`` from
+    their pydantic JSON schemas (``STREAM_MODELS``), in serialization mode as
+    every response, and the stream route's item points at them; a model of
+    the same name that FastAPI generated must be identical, or the export fails.
+    """
+
+    def openapi(self) -> dict[str, Any]:
+        if self.openapi_schema is None:
+            schema = super().openapi()
+            add_components(schema, STREAM_MODELS)
+        return super().openapi()
 
 
 def _operation_id(route: APIRoute) -> str:
@@ -145,7 +167,7 @@ def create_app(
     # Interactive docs and the schema route are development conveniences only;
     # the committed OpenAPI file is generated from app.openapi() directly.
     docs_enabled = not settings.is_production
-    app = FastAPI(
+    app = LiveCartApi(
         title="LiveCart API",
         version=version("livecart-api"),
         lifespan=lifespan,
@@ -163,9 +185,11 @@ def create_app(
         build_health_router(resources.readiness_checks, timeout_s=readiness_timeout_s)
     )
     app.include_router(build_auth_router(seller_auth, limits))
-    app.include_router(
-        build_live_session_router(SellerLiveSessions(resources.live_sessions, resources.clock))
+    live_sessions = SellerLiveSessions(
+        resources.live_sessions, resources.clock, resources.session_events
     )
+    app.state.live_sessions = live_sessions
+    app.include_router(build_live_session_router(live_sessions))
     slots = StreamSlots(settings.sse_max_streams)
     app.state.stream_slots = slots
     watch = WatchLiveSession(
@@ -220,6 +244,8 @@ def create_app(
     )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
-    registry = build_registry(app, ingest, limits, slots, streaming_routes=(EVENTS_ROUTE,))
+    registry = build_registry(
+        app, ingest, limits, slots, live_sessions, streaming_routes=(EVENTS_ROUTE,)
+    )
     app.state.metrics_registry = registry
     return app

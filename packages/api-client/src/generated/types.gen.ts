@@ -25,6 +25,45 @@ export type AccessTokenResponse = {
 };
 
 /**
+ * CarrierName
+ *
+ * ``shipments.carrier``.
+ */
+export type CarrierName = 'mock' | 'dpd' | 'chronopost' | 'dhl';
+
+/**
+ * CloseReason
+ *
+ * Why a stream ended: what its client does next.
+ */
+export type CloseReason = 'token_expiring' | 'max_duration' | 'unavailable';
+
+/**
+ * CommentRejected
+ *
+ * A comment of the session that carries no intent, and why.
+ */
+export type CommentRejected = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: RejectionPayload;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'comment.rejected';
+};
+
+/**
  * ErrorResponse
  */
 export type ErrorResponse = {
@@ -55,6 +94,81 @@ export type HealthStatus = {
 };
 
 /**
+ * IntentOutcome
+ *
+ * What the stock reservation did with a resolved intent.
+ */
+export type IntentOutcome = 'reserved' | 'out_of_stock' | 'already_reserved';
+
+/**
+ * IntentPayload
+ *
+ * ``intent.recorded``: a purchase intent, and what its reservation made of it.
+ */
+export type IntentPayload = {
+    /**
+     * Comment Id
+     */
+    comment_id: string;
+    /**
+     * Confidence
+     */
+    confidence: string;
+    /**
+     * Intent Id
+     */
+    intent_id: string;
+    /**
+     * Order Id
+     *
+     * The order the reservation opened, if any.
+     */
+    order_id: string | null;
+    outcome: IntentOutcome;
+    /**
+     * Product Id
+     */
+    product_id: string;
+    /**
+     * Quantity
+     */
+    quantity: number;
+    source: IntentSource;
+};
+
+/**
+ * IntentRecorded
+ *
+ * A comment settled on a product: its intent, reserved or not, and its order if one opened.
+ */
+export type IntentRecorded = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: IntentPayload;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'intent.recorded';
+};
+
+/**
+ * IntentSource
+ *
+ * Who resolved a purchase intent: ``purchase_intents.source``.
+ */
+export type IntentSource = 'parser' | 'llm';
+
+/**
  * LiveSessionCreate
  */
 export type LiveSessionCreate = {
@@ -68,6 +182,33 @@ export type LiveSessionCreate = {
      */
     title: string;
 };
+
+/**
+ * LiveSessionEvent
+ *
+ * Every message of a stream after its snapshot, discriminated by ``type``.
+ *
+ * ``type`` is also the message's SSE event name. The first six are the
+ * session's events, relayed with their stream id as the SSE id; the last
+ * two are the stream's own, without an id.
+ */
+export type LiveSessionEvent = ({
+    type: 'intent.recorded';
+} & IntentRecorded) | ({
+    type: 'comment.rejected';
+} & CommentRejected) | ({
+    type: 'order.updated';
+} & OrderUpdated) | ({
+    type: 'stock.updated';
+} & StockUpdated) | ({
+    type: 'shipment.updated';
+} & ShipmentUpdated) | ({
+    type: 'session.updated';
+} & SessionUpdated) | ({
+    type: 'stream.gap';
+} & StreamGap) | ({
+    type: 'stream.close';
+} & StreamClose);
 
 /**
  * LiveSessionPage
@@ -113,6 +254,49 @@ export type LiveSessionResponse = {
      * Title
      */
     title: string;
+};
+
+/**
+ * LiveSessionSnapshot
+ *
+ * The first message of a stream, ``event: snapshot``: what the dashboard starts from.
+ *
+ * The lists hold the payloads of the matching events, newest first, at most
+ * ``limit`` of each; ``events_cursor`` is the id of the last event before
+ * the snapshot was read, which the events that follow come after.
+ */
+export type LiveSessionSnapshot = {
+    /**
+     * Events Cursor
+     */
+    events_cursor: string;
+    /**
+     * Intents
+     */
+    intents: Array<IntentPayload>;
+    /**
+     * Limit
+     *
+     * The most items of each list.
+     */
+    limit: number;
+    /**
+     * Orders
+     */
+    orders: Array<OrderPayload>;
+    /**
+     * Products
+     */
+    products: Array<ProductResponse>;
+    /**
+     * Rejections
+     */
+    rejections: Array<RejectionPayload>;
+    session: LiveSessionResponse;
+    /**
+     * Taken At
+     */
+    taken_at: string;
 };
 
 /**
@@ -191,6 +375,51 @@ export type OrderDetailsResponse = {
 };
 
 /**
+ * OrderPayload
+ *
+ * ``order.updated``: an order as it stands, opened by a reservation, then paid or expired.
+ */
+export type OrderPayload = {
+    /**
+     * Currency
+     */
+    currency: string;
+    /**
+     * Expired At
+     */
+    expired_at?: string | null;
+    /**
+     * Order Id
+     */
+    order_id: string;
+    /**
+     * Paid At
+     */
+    paid_at?: string | null;
+    /**
+     * Product Id
+     */
+    product_id: string;
+    /**
+     * Quantity
+     */
+    quantity: number;
+    /**
+     * Reference
+     */
+    reference: string;
+    /**
+     * Reserved Until
+     */
+    reserved_until: string;
+    status: OrderStatus;
+    /**
+     * Total Minor
+     */
+    total_minor: number;
+};
+
+/**
  * OrderProduct
  */
 export type OrderProduct = {
@@ -241,6 +470,31 @@ export type OrderStatusResponse = {
      * Total Minor
      */
     total_minor: number;
+};
+
+/**
+ * OrderUpdated
+ *
+ * An order opened, paid or expired.
+ */
+export type OrderUpdated = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: OrderPayload;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'order.updated';
 };
 
 /**
@@ -387,6 +641,26 @@ export type ReadinessStatus = {
 };
 
 /**
+ * RejectionPayload
+ *
+ * ``comment.rejected``: a comment of the session that carries no intent, and why.
+ */
+export type RejectionPayload = {
+    /**
+     * Comment Id
+     */
+    comment_id: string;
+    reason: RejectionReason;
+};
+
+/**
+ * RejectionReason
+ *
+ * Why a comment carries no order, stored in ``comments.rejection_reason``.
+ */
+export type RejectionReason = 'no_intent' | 'multiple_products' | 'quantity_out_of_bounds' | 'variant_not_found' | 'ambiguous_unresolved' | 'session_not_found' | 'session_not_live';
+
+/**
  * RestockRequest
  */
 export type RestockRequest = {
@@ -421,6 +695,108 @@ export type SellerProfile = {
 };
 
 /**
+ * SessionPayload
+ *
+ * ``session.updated``: the session started or ended; an ended session reserves no more.
+ */
+export type SessionPayload = {
+    /**
+     * Ended At
+     */
+    ended_at?: string | null;
+    /**
+     * Started At
+     */
+    started_at?: string | null;
+    status: LiveSessionStatus;
+    /**
+     * Title
+     */
+    title: string;
+};
+
+/**
+ * SessionUpdated
+ *
+ * The session started or ended.
+ */
+export type SessionUpdated = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: SessionPayload;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'session.updated';
+};
+
+/**
+ * ShipmentPayload
+ *
+ * ``shipment.updated``: a paid order's shipment, as its carrier reports it (milestone 6).
+ */
+export type ShipmentPayload = {
+    carrier: CarrierName;
+    /**
+     * Last Event At
+     */
+    last_event_at?: string | null;
+    /**
+     * Order Id
+     */
+    order_id: string;
+    /**
+     * Shipment Id
+     */
+    shipment_id: string;
+    status: ShipmentStatus;
+    /**
+     * Tracking Number
+     */
+    tracking_number: string;
+};
+
+/**
+ * ShipmentStatus
+ */
+export type ShipmentStatus = 'created' | 'in_transit' | 'out_for_delivery' | 'delivered' | 'cancelled';
+
+/**
+ * ShipmentUpdated
+ *
+ * A paid order's shipment, as its carrier reports it (milestone 6).
+ */
+export type ShipmentUpdated = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: ShipmentPayload;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'shipment.updated';
+};
+
+/**
  * ShippingAddress
  *
  * A buyer's delivery address, typed in the buyer app and validated here.
@@ -450,6 +826,59 @@ export type ShippingAddress = {
      * Postal Code
      */
     postal_code: string;
+};
+
+/**
+ * StockPayload
+ *
+ * ``stock.updated``: a product's counters after a change.
+ */
+export type StockPayload = {
+    /**
+     * Available
+     */
+    available: number;
+    /**
+     * Product Id
+     */
+    product_id: string;
+    /**
+     * Reserved
+     */
+    reserved: number;
+    /**
+     * Sold
+     */
+    sold: number;
+    /**
+     * Stock Total
+     */
+    stock_total: number;
+};
+
+/**
+ * StockUpdated
+ *
+ * A product's counters after a reservation, a sale or a release.
+ */
+export type StockUpdated = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: StockPayload;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'stock.updated';
 };
 
 /**
@@ -514,6 +943,75 @@ export type StorefrontSession = {
      * Title
      */
     title: string;
+};
+
+/**
+ * StreamClose
+ *
+ * The last message: reconnect with the last id received (a fresh token first, if expiring).
+ */
+export type StreamClose = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: StreamCloseData;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'stream.close';
+};
+
+/**
+ * StreamCloseData
+ */
+export type StreamCloseData = {
+    reason: CloseReason;
+};
+
+/**
+ * StreamGap
+ *
+ * Events after the client's cursor are gone: drop what it holds, a snapshot follows.
+ */
+export type StreamGap = {
+    /**
+     * Correlation Id
+     */
+    correlation_id: string | null;
+    data: StreamGapData;
+    /**
+     * Occurred At
+     */
+    occurred_at: string;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Type
+     */
+    type: 'stream.gap';
+};
+
+/**
+ * StreamGapData
+ */
+export type StreamGapData = {
+    /**
+     * After
+     *
+     * The Last-Event-ID the events after which are gone.
+     */
+    after: string;
 };
 
 /**
@@ -960,7 +1458,7 @@ export type StreamLiveSessionEventsError = StreamLiveSessionEventsErrors[keyof S
 
 export type StreamLiveSessionEventsResponses = {
     /**
-     * Successful Response
+     * The session's stream: event snapshot (LiveSessionSnapshot), then LiveSessionEvent messages, each named by its type
      */
     200: unknown;
 };
