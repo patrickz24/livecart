@@ -25,7 +25,10 @@ settings may change:
 - ``GET /api/v1/storefronts/{seller_slug}``, open to anyone: 120 requests a
   minute per address, a limit the plan does not name. Every viewer opens it,
   so it is the most generous, and it still caps the three queries of each
-  request.
+  request;
+- ``POST /api/v1/webhooks/comments/{platform}``: 6000 calls a minute per
+  platform, counted once the signature holds, so that a forger fills no
+  counter; a full queue answers 503 instead, which is backpressure, not abuse.
 
 The client address is ``request.client``, which uvicorn rewrites from
 ``X-Forwarded-For`` only when the connection comes from nginx
@@ -123,6 +126,7 @@ class RateLimitRules:
     buyer_lookup_not_found_alert: RateLimitRule
     buyer_token: RateLimitRule
     storefront: RateLimitRule
+    comment_webhook: RateLimitRule
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Self:
@@ -155,6 +159,9 @@ class RateLimitRules:
             ),
             storefront=RateLimitRule(
                 "storefront", settings.rate_limit_storefront_per_minute, MINUTE
+            ),
+            comment_webhook=RateLimitRule(
+                "comment_webhook", settings.rate_limit_comment_webhook_per_minute, MINUTE
             ),
         )
 

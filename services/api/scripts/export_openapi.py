@@ -51,6 +51,7 @@ def export_settings() -> Settings:
         # Keys that sign nothing: the export never serves a request.
         jwt_secret=SecretStr("openapi-export-jwt-" * 2),
         order_token_key=SecretStr("openapi-export-order-token-" * 2),
+        comment_webhook_secret_simulator=SecretStr("openapi-export-webhook-" * 2),
         _env_file=None,
     )
 

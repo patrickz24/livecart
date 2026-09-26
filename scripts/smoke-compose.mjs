@@ -87,6 +87,15 @@ export const HTTP_CHECKS = [
     },
   },
   {
+    name: "comment webhook through nginx, refusing an unsigned batch",
+    service: "web",
+    path: "/api/v1/webhooks/comments/simulator",
+    method: "POST",
+    body: JSON.stringify({ comments: [] }),
+    accept: (response, body) =>
+      response.status === 401 && JSON.parse(body).detail === "Invalid signature",
+  },
+  {
     name: "dashboard page with its security headers",
     service: "web",
     path: "/",
@@ -172,6 +181,9 @@ async function runHttpCheck(check, base) {
   if (base === null) return `${check.service} publishes no port ${PUBLISHED_PORTS[check.service]}`;
   try {
     const response = await fetch(`${base}${check.path}`, {
+      method: check.method ?? "GET",
+      body: check.body,
+      headers: check.body === undefined ? undefined : { "Content-Type": "application/json" },
       signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
     });
     const body = await response.text();

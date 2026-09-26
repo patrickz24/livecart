@@ -148,6 +148,7 @@ def test_the_rules_follow_the_settings_and_only_the_login_fails_closed() -> None
             rules.buyer_lookup_not_found_alert,
             rules.buyer_token,
             rules.storefront,
+            rules.comment_webhook,
         )
     ] == [
         ("login", 10, 60, True),
@@ -158,6 +159,7 @@ def test_the_rules_follow_the_settings_and_only_the_login_fails_closed() -> None
         ("buyer_lookup_not_found_all", 100, 60, False),
         ("buyer_token", 60, 60, False),
         ("storefront", 120, 60, False),
+        ("comment_webhook", 6000, 60, False),
     ]
 
 

@@ -7,7 +7,7 @@ a tests folder cannot import each other: the tests import these helpers, with
 their types, from an installed module instead of receiving untyped fixtures.
 """
 
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -23,11 +23,19 @@ from starlette.types import ASGIApp
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
-from livecart_core.application.dto import IntentSource, OrderRecord, ReservationRequest
+from livecart_core.application.dto import (
+    CommentBatch,
+    IntentSource,
+    OrderRecord,
+    Platform,
+    ReservationRequest,
+)
 from livecart_core.application.ports import (
     Clock,
+    CommentQueue,
     IdempotencyStore,
     PasswordHasher,
+    PlatformAdapter,
     RateLimiter,
 )
 from livecart_core.domain.codes import ProductCode, Variant
@@ -38,19 +46,26 @@ from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
+from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
 from livecart_core.settings import AppEnv, Settings
+from livecart_core.signing import SIGNATURE_HEADER, WebhookSigner
 from livecart_core.testing.backends import CURRENCY
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import (
     FAKE_CLOCK_START,
     TEST_ORDER_TOKENS,
     FakeClock,
+    FakeCommentQueue,
     FakePasswordHasher,
     InMemoryDatabase,
     InMemoryIdempotencyStore,
     InMemoryRateLimiter,
 )
-from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.keys import (
+    TEST_COMMENT_WEBHOOK_SECRET,
+    TEST_JWT_SECRET,
+    TEST_ORDER_TOKEN_KEY,
+)
 
 # The origin of open_client's requests, as a browser would send it in Origin.
 TEST_ORIGIN = "http://test"
@@ -79,6 +94,7 @@ def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT, **overrides: object) -> 
         redis_url=SecretStr("redis://:unit@redis.invalid:6379/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
         allowed_hosts=(TEST_HOST, "localhost", "127.0.0.1"),
         _env_file=None,
     )
@@ -102,11 +118,15 @@ def memory_resources(
     clock: Clock | None = None,
     idempotency: IdempotencyStore | None = None,
     rate_limiter: RateLimiter | None = None,
+    platforms: Mapping[Platform, PlatformAdapter] | None = None,
+    comment_queue: CommentQueue | None = None,
 ) -> Resources:
     """Resources over the in-memory repositories of ``database``, with nothing to close.
 
     A test that needs one repository to behave otherwise ``replace``s it. The
-    rate limiter's windows are timed by ``clock``.
+    rate limiter's windows are timed by ``clock``, and the comment webhook
+    serves the simulator only, signed with ``TEST_COMMENT_WEBHOOK_SECRET``,
+    into a fake queue, unless ``platforms`` and ``comment_queue`` say otherwise.
     """
     clock = clock if clock is not None else current_time_clock()
     return Resources(
@@ -121,7 +141,14 @@ def memory_resources(
         idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
         orders=database.orders,
         rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
+        platforms=platforms if platforms is not None else simulator_only(clock),
+        comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
     )
+
+
+def simulator_only(clock: Clock) -> dict[Platform, PlatformAdapter]:
+    """The platforms of the default settings: the simulator, under the tests' webhook secret."""
+    return {Platform.SIMULATOR: SimulatorPlatformAdapter(TEST_COMMENT_WEBHOOK_SECRET, clock)}
 
 
 def postgres_resources(
@@ -130,11 +157,12 @@ def postgres_resources(
     clock: Clock,
     idempotency: IdempotencyStore | None = None,
     rate_limiter: RateLimiter | None = None,
+    comment_queue: CommentQueue | None = None,
 ) -> Resources:
     """Resources over the SQL adapters on ``engine`` (livecart_app on livecart_test) and argon2id.
 
     The integration tests own the engine, and the Redis client of the store
-    they may pass: nothing is closed with the app.
+    or the queue they may pass: nothing is closed with the app.
     """
     return Resources(
         readiness_checks=(),
@@ -150,6 +178,8 @@ def postgres_resources(
             engine, currency=CURRENCY, access_token_hash=TEST_ORDER_TOKENS.stored_hash
         ),
         rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
+        platforms=simulator_only(clock),
+        comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
     )
 
 
@@ -163,6 +193,7 @@ def make_app(
     clock: Clock | None = None,
     rate_limiter: RateLimiter | None = None,
     settings: Settings | None = None,
+    comment_queue: CommentQueue | None = None,
 ) -> FastAPI:
     """The app around ``checks`` and in-memory repositories, with nothing to close.
 
@@ -174,12 +205,31 @@ def make_app(
         passwords=passwords,
         clock=clock,
         rate_limiter=rate_limiter,
+        comment_queue=comment_queue,
     )
     return create_app(
         settings if settings is not None else make_settings(app_env),
         resources,
         readiness_timeout_s=timeout_s,
     )
+
+
+# The path of the simulator's comment webhook.
+SIMULATOR_WEBHOOK = "/api/v1/webhooks/comments/simulator"
+
+
+def signed_webhook(
+    batch: CommentBatch | bytes, clock: Clock, *, age_seconds: int = 0
+) -> tuple[dict[str, str], bytes]:
+    """Headers and body of a comment webhook the simulator signed ``age_seconds`` ago.
+
+    Signed with ``TEST_COMMENT_WEBHOOK_SECRET`` at the time of ``clock``, the
+    clock the app's adapter checks the timestamp against.
+    """
+    body = batch if isinstance(batch, bytes) else batch.model_dump_json().encode()
+    timestamp = int(clock.now().timestamp()) - age_seconds
+    signature = WebhookSigner(TEST_COMMENT_WEBHOOK_SECRET).header(body, timestamp=timestamp)
+    return {SIGNATURE_HEADER: signature, "Content-Type": "application/json"}, body
 
 
 def seller_headers(app: FastAPI, seller_id: UUID) -> dict[str, str]:

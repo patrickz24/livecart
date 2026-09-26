@@ -281,6 +281,7 @@ def test_the_rate_limits_default_to_the_plan() -> None:
     assert settings.buyer_lookup_not_found_alert_per_minute == 100
     assert settings.rate_limit_buyer_token_per_minute == 60
     assert settings.rate_limit_storefront_per_minute == 120
+    assert settings.rate_limit_comment_webhook_per_minute == 6000
 
 
 @pytest.mark.parametrize("name", RATE_LIMITS)

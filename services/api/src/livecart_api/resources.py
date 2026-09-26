@@ -5,22 +5,26 @@ unit test needs a real PostgreSQL or Redis to exercise the HTTP layer; the
 integration tests inject the SQL adapters on livecart_test instead.
 """
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 from functools import partial
 
+from livecart_core.application.dto import Platform
 from livecart_core.application.ports import (
     Clock,
+    CommentQueue,
     IdempotencyStore,
     LiveSessionRepository,
     OrderLookup,
     PasswordHasher,
+    PlatformAdapter,
     ProductStockRepository,
     RateLimiter,
     RefreshTokenRepository,
     SellerRepository,
 )
 from livecart_core.infrastructure.clock import SystemClock
+from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.engine import API_POOL, create_db_engine, ping_database
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
@@ -29,6 +33,7 @@ from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenReposi
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
+from livecart_core.infrastructure.platforms import build_platform_adapters
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.order_tokens import OrderTokens
@@ -57,14 +62,21 @@ class Resources:
     idempotency: IdempotencyStore
     orders: OrderLookup
     rate_limiter: RateLimiter
+    # The comment webhook's adapter of each enabled platform, and the queue it feeds.
+    platforms: Mapping[Platform, PlatformAdapter]
+    comment_queue: CommentQueue
 
 
 def build_resources(settings: Settings) -> Resources:
     """Create the engine, the Redis client and the adapters; nothing connects until first use.
 
     The password hasher computes its dummy hash here, once: one argon2 run
-    when the process starts.
+    when the process starts. The platform adapters are built here too, so an
+    enabled stub or a missing webhook secret stops the process before it
+    listens (``livecart_core.infrastructure.platforms``).
     """
+    clock = SystemClock()
+    platforms = build_platform_adapters(settings, clock)
     engine = create_db_engine(
         settings.database_url,
         application_name="livecart-api",
@@ -88,7 +100,7 @@ def build_resources(settings: Settings) -> Resources:
         sellers=SqlSellerRepository(engine),
         refresh_tokens=SqlRefreshTokenRepository(engine),
         passwords=Argon2PasswordHasher(),
-        clock=SystemClock(),
+        clock=clock,
         live_sessions=SqlLiveSessionRepository(engine),
         products=SqlProductStockRepository(engine, currency=settings.default_currency),
         idempotency=RedisIdempotencyStore(redis, prefix=settings.redis_key_prefix),
@@ -98,4 +110,6 @@ def build_resources(settings: Settings) -> Resources:
             access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
         ),
         rate_limiter=RedisRateLimiter(redis, prefix=settings.redis_key_prefix),
+        platforms=platforms,
+        comment_queue=RedisCommentQueue(redis, prefix=settings.redis_key_prefix),
     )

@@ -918,6 +918,23 @@
         ],
         "title": "ValidationError",
         "type": "object"
+      },
+      "WebhookAccepted": {
+        "description": "A batch acknowledged: every comment of it is queued for the workers.",
+        "properties": {
+          "accepted": {
+            "description": "The comments queued.",
+            "maximum": 200.0,
+            "minimum": 1.0,
+            "title": "Accepted",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "accepted"
+        ],
+        "title": "WebhookAccepted",
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -2370,6 +2387,101 @@
         "summary": "A seller's storefront: the current live session and its products",
         "tags": [
           "storefronts"
+        ]
+      }
+    },
+    "/api/v1/webhooks/comments/{platform}": {
+      "post": {
+        "operationId": "receive_comment_webhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "platform",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Platform"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "description": "The platform's webhook payload, signed with its own header. The simulator's is a CommentBatch, signed with X-LiveCart-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of '<t>.<body>' under COMMENT_WEBHOOK_SECRET_SIMULATOR>.",
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WebhookAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The signature is missing, wrong or too old"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The platform's webhook is not enabled"
+          },
+          "413": {
+            "description": "The body is over 1 MiB"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests: try again after Retry-After seconds"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The comment queue did not take the batch: try again after Retry-After"
+          }
+        },
+        "summary": "Receive a batch of live comments from a platform",
+        "tags": [
+          "webhooks"
         ]
       }
     },

@@ -58,6 +58,7 @@ x-runtime-environment: &runtime-environment
   BUYER_LOOKUP_NOT_FOUND_ALERT_PER_MINUTE: ${BUYER_LOOKUP_NOT_FOUND_ALERT_PER_MINUTE:-100}
   RATE_LIMIT_BUYER_TOKEN_PER_MINUTE: ${RATE_LIMIT_BUYER_TOKEN_PER_MINUTE:-60}
   RATE_LIMIT_STOREFRONT_PER_MINUTE: ${RATE_LIMIT_STOREFRONT_PER_MINUTE:-120}
+  RATE_LIMIT_COMMENT_WEBHOOK_PER_MINUTE: ${RATE_LIMIT_COMMENT_WEBHOOK_PER_MINUTE:-6000}
 
 services:
   postgres:
@@ -185,7 +186,11 @@ services:
       - --proxy-headers
       - --forwarded-allow-ips
       - ${NGINX_IP:-172.30.0.10}
-    environment: *runtime-environment
+    environment:
+      <<: *runtime-environment
+      # Only the API checks the comment webhooks: the worker never receives their keys.
+      ENABLED_PLATFORMS: ${ENABLED_PLATFORMS:-simulator}
+      COMMENT_WEBHOOK_SECRET_SIMULATOR: ${COMMENT_WEBHOOK_SECRET_SIMULATOR:?set it in .env (cp .env.example .env)}
     ports:
       - "127.0.0.1:8000:8000" # loopback only: other clients go through nginx
     healthcheck:

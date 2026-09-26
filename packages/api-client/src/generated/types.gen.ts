@@ -545,6 +545,20 @@ export type ValidationError = {
 };
 
 /**
+ * WebhookAccepted
+ *
+ * A batch acknowledged: every comment of it is queued for the workers.
+ */
+export type WebhookAccepted = {
+    /**
+     * Accepted
+     *
+     * The comments queued.
+     */
+    accepted: number;
+};
+
+/**
  * LoginRequest
  */
 export type LoginRequestWritable = {
@@ -1317,6 +1331,58 @@ export type GetStorefrontResponses = {
 };
 
 export type GetStorefrontResponse = GetStorefrontResponses[keyof GetStorefrontResponses];
+
+export type ReceiveCommentWebhookData = {
+    /**
+     * The platform's webhook payload, signed with its own header. The simulator's is a CommentBatch, signed with X-LiveCart-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of '<t>.<body>' under COMMENT_WEBHOOK_SECRET_SIMULATOR>.
+     */
+    body: {
+        [key: string]: unknown;
+    };
+    path: {
+        platform: Platform;
+    };
+    query?: never;
+    url: '/api/v1/webhooks/comments/{platform}';
+};
+
+export type ReceiveCommentWebhookErrors = {
+    /**
+     * The signature is missing, wrong or too old
+     */
+    401: ErrorResponse;
+    /**
+     * The platform's webhook is not enabled
+     */
+    404: ErrorResponse;
+    /**
+     * The body is over 1 MiB
+     */
+    413: unknown;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+    /**
+     * The comment queue did not take the batch: try again after Retry-After
+     */
+    503: ErrorResponse;
+};
+
+export type ReceiveCommentWebhookError = ReceiveCommentWebhookErrors[keyof ReceiveCommentWebhookErrors];
+
+export type ReceiveCommentWebhookResponses = {
+    /**
+     * Successful Response
+     */
+    202: WebhookAccepted;
+};
+
+export type ReceiveCommentWebhookResponse = ReceiveCommentWebhookResponses[keyof ReceiveCommentWebhookResponses];
 
 export type GetHealthData = {
     body?: never;

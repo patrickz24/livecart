@@ -45,6 +45,7 @@ RATE_LIMITS: Final = (
     "buyer_lookup_not_found_alert_per_minute",
     "rate_limit_buyer_token_per_minute",
     "rate_limit_storefront_per_minute",
+    "rate_limit_comment_webhook_per_minute",
 )
 # One HMAC key per platform's comment webhook (livecart_core.signing).
 COMMENT_WEBHOOK_SECRETS: Final = {
@@ -176,6 +177,11 @@ class Settings(BaseAppSettings):
     # viewer opens the storefront first and a live audience may share one
     # carrier's address (CGNAT), yet a cap on its three queries a request.
     rate_limit_storefront_per_minute: int = 120
+    # Per platform, counted once the signature holds, so that only the
+    # platform's own calls fill its counter: set above the rate of the planned
+    # load test, it stops a runaway sender, while backpressure (503) protects
+    # the queue.
+    rate_limit_comment_webhook_per_minute: int = 6000
     # The Host headers the API answers (TrustedHostMiddleware), comma-separated
     # in the environment: another Host is refused with 400 before any route
     # runs, so no URL is ever built from a forged one. 127.0.0.1 serves the

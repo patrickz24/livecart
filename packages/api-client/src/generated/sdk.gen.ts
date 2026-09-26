@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
+import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, ReceiveCommentWebhookData, ReceiveCommentWebhookErrors, ReceiveCommentWebhookResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -238,6 +238,18 @@ export const getOrderDetails = <ThrowOnError extends boolean = false>(options: O
  * A seller's storefront: the current live session and its products
  */
 export const getStorefront = <ThrowOnError extends boolean = false>(options: Options<GetStorefrontData, ThrowOnError>): RequestResult<GetStorefrontResponses, GetStorefrontErrors, ThrowOnError> => (options.client ?? client).get<GetStorefrontResponses, GetStorefrontErrors, ThrowOnError>({ url: '/api/v1/storefronts/{seller_slug}', ...options });
+
+/**
+ * Receive a batch of live comments from a platform
+ */
+export const receiveCommentWebhook = <ThrowOnError extends boolean = false>(options: Options<ReceiveCommentWebhookData, ThrowOnError>): RequestResult<ReceiveCommentWebhookResponses, ReceiveCommentWebhookErrors, ThrowOnError> => (options.client ?? client).post<ReceiveCommentWebhookResponses, ReceiveCommentWebhookErrors, ThrowOnError>({
+    url: '/api/v1/webhooks/comments/{platform}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
 
 /**
  * Liveness probe

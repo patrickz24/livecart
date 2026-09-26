@@ -46,8 +46,10 @@ from livecart_api.routes.live_sessions import build_live_session_router
 from livecart_api.routes.orders import build_order_router
 from livecart_api.routes.products import build_product_router
 from livecart_api.routes.storefronts import build_storefront_router
+from livecart_api.routes.webhooks import build_webhook_router
 from livecart_core.application.buyer_orders import LookUpOrder
 from livecart_core.application.idempotency import IdempotentRequests
+from livecart_core.application.ingest_comments import IngestComments
 from livecart_core.application.live_sessions import SellerLiveSessions
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.application.products import SellerProducts
@@ -157,6 +159,9 @@ def create_app(
     app.include_router(
         build_order_router(LookUpOrder(resources.orders, OrderTokens.verify), limits)
     )
+    ingest = IngestComments(resources.comment_queue, resources.clock)
+    app.state.ingest_comments = ingest
+    app.include_router(build_webhook_router(resources.platforms, ingest, limits))
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)
     app.add_exception_handler(TooManyRequests, too_many_requests)
     errors.install(app)

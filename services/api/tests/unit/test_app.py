@@ -8,7 +8,9 @@ from pydantic import SecretStr
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, build_resources
 from livecart_api.testing import TEST_HOST, make_app, memory_resources, open_client
+from livecart_core.application.dto import Platform
 from livecart_core.infrastructure.clock import SystemClock
+from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
@@ -16,10 +18,15 @@ from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenReposi
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
+from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.settings import AppEnv, Settings
 from livecart_core.testing.fakes import InMemoryDatabase
-from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.keys import (
+    TEST_COMMENT_WEBHOOK_SECRET,
+    TEST_JWT_SECRET,
+    TEST_ORDER_TOKEN_KEY,
+)
 
 
 async def test_a_request_id_is_generated_and_returned() -> None:
@@ -96,6 +103,7 @@ async def test_shutdown_closes_the_injected_resources() -> None:
         redis_url=SecretStr("redis://redis.invalid:6379/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
         _env_file=None,
     )
     resources = replace(memory_resources(InMemoryDatabase()), aclose=aclose)
@@ -112,6 +120,7 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
         redis_url=SecretStr("redis://redis.invalid:6379/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
         _env_file=None,
     )
 
@@ -127,7 +136,37 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert isinstance(resources.idempotency, RedisIdempotencyStore)
     assert isinstance(resources.orders, SqlOrderRepository)
     assert isinstance(resources.rate_limiter, RedisRateLimiter)
+    assert list(resources.platforms) == [Platform.SIMULATOR]
+    assert isinstance(resources.platforms[Platform.SIMULATOR], SimulatorPlatformAdapter)
+    assert isinstance(resources.comment_queue, RedisCommentQueue)
     await resources.aclose()  # nothing was connected: closing must not fail
+
+
+def _startup_settings(**overrides: object) -> Settings:
+    settings = Settings(
+        database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
+        redis_url=SecretStr("redis://redis.invalid:6379/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
+        comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        _env_file=None,
+    )
+    return settings.model_copy(update=overrides)
+
+
+@pytest.mark.parametrize("stub", [Platform.FACEBOOK, Platform.INSTAGRAM, Platform.TIKTOK])
+def test_the_api_refuses_to_start_with_a_platform_stub_enabled(stub: Platform) -> None:
+    settings = _startup_settings(enabled_platforms=(Platform.SIMULATOR, stub))
+
+    with pytest.raises(NotImplementedError, match=f"{stub} comment webhook is a documented stub"):
+        build_resources(settings)
+
+
+def test_the_api_refuses_to_start_without_the_webhook_secret_of_the_simulator() -> None:
+    settings = _startup_settings(comment_webhook_secret_simulator=None)
+
+    with pytest.raises(ValueError, match="COMMENT_WEBHOOK_SECRET_SIMULATOR must be set"):
+        build_resources(settings)
 
 
 async def test_unreachable_dependencies_answer_503() -> None:
@@ -137,6 +176,7 @@ async def test_unreachable_dependencies_answer_503() -> None:
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
         allowed_hosts=(TEST_HOST,),
         _env_file=None,
     )

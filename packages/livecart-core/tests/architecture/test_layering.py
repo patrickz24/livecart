@@ -115,6 +115,7 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.storefront" in application
     assert "livecart_core.application.buyer_orders" in application
     assert "livecart_core.application.demo_seed" in application
+    assert "livecart_core.application.ingest_comments" in application
     assert "livecart_core.domain.sellers" in domain
     assert "livecart_core.domain.live_sessions" in domain
 
@@ -290,6 +291,7 @@ def test_the_entry_points_are_among_the_modules_checked_for_raw_sql() -> None:
     assert "livecart_api.app" in checked
     assert "livecart_api.routes.orders" in checked
     assert "livecart_api.routes.storefronts" in checked
+    assert "livecart_api.routes.webhooks" in checked
     assert "livecart_api.cli.create_seller" in checked
     assert "livecart_api.middleware.security_headers" in checked
     assert "livecart_worker.main" in checked
