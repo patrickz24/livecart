@@ -4,8 +4,10 @@
 ``livecart_core.application`` may add pydantic. Reading the source rather
 than importing it catches an import inside a function or under
 ``TYPE_CHECKING`` too, and does not depend on what happens to be installed.
-No runtime module of the package may use SQLAlchemy's raw SQL text either
-(ruff's S608 catches SQL built from strings; this catches ``text()``).
+No runtime module of the core package or of the entry points (the API and
+the worker, where the routes and the loops live) may use SQLAlchemy's raw
+SQL text either (ruff's S608 catches SQL built from strings; this catches
+``text()``).
 """
 
 import ast
@@ -16,9 +18,11 @@ from types import ModuleType
 
 import pytest
 
+import livecart_api
 import livecart_core
 import livecart_core.application
 import livecart_core.domain
+import livecart_worker
 
 DOMAIN_ALLOWED = frozenset({"livecart_core.domain"})
 APPLICATION_ALLOWED = frozenset({"livecart_core.domain", "livecart_core.application", "pydantic"})
@@ -181,7 +185,9 @@ def test_the_application_may_add_pydantic_but_nothing_else() -> None:
 # select().with_for_update()): hand-written SQL lives in infra/postgres only,
 # and in the migrations, which are DDL frozen in time.
 RAW_SQL_NAMES = frozenset({"text", "literal_column", "TextClause"})
-RAW_SQL_EXEMPT = ("livecart_core.migrations", "livecart_core.testing")
+# The migrations, and the test support that only tests import.
+RAW_SQL_EXEMPT = ("livecart_core.migrations", "livecart_core.testing", "livecart_api.testing")
+RUNTIME_PACKAGES = (livecart_core, livecart_api, livecart_worker)
 
 
 def _raw_sql_uses(source: str) -> list[str]:
@@ -222,10 +228,11 @@ def _root_name(node: ast.expr) -> str | None:
 
 
 def _runtime_modules() -> dict[str, Path]:
-    """Every module of livecart_core but the migrations and the test support."""
+    """Every module of the core, the API and the worker but the migrations and the test support."""
     return {
         module: path
-        for module, path, _ in _modules(livecart_core)
+        for package in RUNTIME_PACKAGES
+        for module, path, _ in _modules(package)
         if not module.startswith(RAW_SQL_EXEMPT)
     }
 
@@ -272,6 +279,19 @@ def test_the_adapters_are_among_the_modules_checked_for_raw_sql() -> None:
     assert "livecart_core.infrastructure.db.refresh_tokens" in checked
     assert "livecart_core.infrastructure.db.tables" in checked
     assert not any(name.startswith(RAW_SQL_EXEMPT) for name in checked)
+
+
+def test_the_entry_points_are_among_the_modules_checked_for_raw_sql() -> None:
+    checked = set(_runtime_modules())
+
+    assert "livecart_api.app" in checked
+    assert "livecart_api.routes.orders" in checked
+    assert "livecart_api.routes.storefronts" in checked
+    assert "livecart_api.cli.create_seller" in checked
+    assert "livecart_api.middleware.security_headers" in checked
+    assert "livecart_worker.main" in checked
+    assert "livecart_worker.heartbeat" in checked
+    assert "livecart_api.testing" not in checked
 
 
 def test_relative_imports_resolve_against_the_owning_package() -> None:
