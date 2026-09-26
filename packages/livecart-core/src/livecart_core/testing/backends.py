@@ -30,6 +30,7 @@ from livecart_core.application.dto import (
 )
 from livecart_core.application.ports import (
     CommentInbox,
+    LiveSessionActivity,
     LiveSessionRepository,
     OrderLookup,
     OrderReservations,
@@ -50,6 +51,7 @@ from livecart_core.domain.state_machines import (
     PaymentStatus,
 )
 from livecart_core.infrastructure.db import tables
+from livecart_core.infrastructure.db.activity import SqlLiveSessionActivity
 from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
@@ -92,6 +94,9 @@ class ReservationBackend(Protocol):
 
     @property
     def orders(self) -> BackendOrders: ...
+
+    @property
+    def activity(self) -> LiveSessionActivity: ...
 
     async def add_seller(self) -> UUID:
         """A seller whose account no password opens."""
@@ -186,6 +191,10 @@ class InMemoryBackend:
     @property
     def orders(self) -> BackendOrders:
         return self.database.orders
+
+    @property
+    def activity(self) -> LiveSessionActivity:
+        return self.database.activity
 
     @property
     def sellers(self) -> SellerRepository:
@@ -309,6 +318,7 @@ class PostgresBackend:
             access_token_hash=ORDER_TOKENS.stored_hash,
             random_source=random_source,
         )
+        self._activity = SqlLiveSessionActivity(app_engine, currency=CURRENCY)
         self._sellers = SqlSellerRepository(app_engine)
         self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
 
@@ -327,6 +337,10 @@ class PostgresBackend:
     @property
     def orders(self) -> BackendOrders:
         return self._orders
+
+    @property
+    def activity(self) -> LiveSessionActivity:
+        return self._activity
 
     @property
     def sellers(self) -> SellerRepository:

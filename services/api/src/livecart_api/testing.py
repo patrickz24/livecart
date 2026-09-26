@@ -23,6 +23,7 @@ from starlette.types import ASGIApp
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
+from livecart_api.sse_testing import open_event_stream
 from livecart_core.application.dto import (
     CommentBatch,
     IntentSource,
@@ -37,9 +38,11 @@ from livecart_core.application.ports import (
     PasswordHasher,
     PlatformAdapter,
     RateLimiter,
+    SessionEventLog,
 )
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.quantity import Quantity
+from livecart_core.infrastructure.db.activity import SqlLiveSessionActivity
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
@@ -60,6 +63,7 @@ from livecart_core.testing.fakes import (
     InMemoryDatabase,
     InMemoryIdempotencyStore,
     InMemoryRateLimiter,
+    InMemorySessionEvents,
 )
 from livecart_core.testing.keys import (
     TEST_COMMENT_WEBHOOK_SECRET,
@@ -120,6 +124,7 @@ def memory_resources(
     rate_limiter: RateLimiter | None = None,
     platforms: Mapping[Platform, PlatformAdapter] | None = None,
     comment_queue: CommentQueue | None = None,
+    session_events: SessionEventLog | None = None,
 ) -> Resources:
     """Resources over the in-memory repositories of ``database``, with nothing to close.
 
@@ -127,6 +132,7 @@ def memory_resources(
     rate limiter's windows are timed by ``clock``, and the comment webhook
     serves the simulator only, signed with ``TEST_COMMENT_WEBHOOK_SECRET``,
     into a fake queue, unless ``platforms`` and ``comment_queue`` say otherwise.
+    The session events go to in-memory streams unless ``session_events`` does.
     """
     clock = clock if clock is not None else current_time_clock()
     return Resources(
@@ -143,6 +149,10 @@ def memory_resources(
         rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
         platforms=platforms if platforms is not None else simulator_only(clock),
         comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
+        activity=database.activity,
+        session_events=(
+            session_events if session_events is not None else InMemorySessionEvents(clock)
+        ),
     )
 
 
@@ -158,11 +168,12 @@ def postgres_resources(
     idempotency: IdempotencyStore | None = None,
     rate_limiter: RateLimiter | None = None,
     comment_queue: CommentQueue | None = None,
+    session_events: SessionEventLog | None = None,
 ) -> Resources:
     """Resources over the SQL adapters on ``engine`` (livecart_app on livecart_test) and argon2id.
 
-    The integration tests own the engine, and the Redis client of the store
-    or the queue they may pass: nothing is closed with the app.
+    The integration tests own the engine, and the Redis client of the store,
+    the queue or the session streams they may pass: nothing is closed with the app.
     """
     return Resources(
         readiness_checks=(),
@@ -180,6 +191,10 @@ def postgres_resources(
         rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
         platforms=simulator_only(clock),
         comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
+        activity=SqlLiveSessionActivity(engine, currency=CURRENCY),
+        session_events=(
+            session_events if session_events is not None else InMemorySessionEvents(clock)
+        ),
     )
 
 
@@ -194,6 +209,7 @@ def make_app(
     rate_limiter: RateLimiter | None = None,
     settings: Settings | None = None,
     comment_queue: CommentQueue | None = None,
+    session_events: SessionEventLog | None = None,
 ) -> FastAPI:
     """The app around ``checks`` and in-memory repositories, with nothing to close.
 
@@ -206,6 +222,7 @@ def make_app(
         clock=clock,
         rate_limiter=rate_limiter,
         comment_queue=comment_queue,
+        session_events=session_events,
     )
     return create_app(
         settings if settings is not None else make_settings(app_env),
@@ -259,15 +276,40 @@ async def open_client(app: ASGIApp, *, peer: str = TEST_PEER) -> AsyncIterator[h
 
 @dataclass(frozen=True, slots=True)
 class SellerRoute:
-    """A seller route that names a session, and a product for some, with a body it accepts."""
+    """A seller route that names a session, and a product for some, with a body it accepts.
+
+    ``stream`` marks a route that answers a stream of events rather than a
+    body: ``owner_answer`` reads its first message, then disconnects.
+    """
 
     method: str
     path: str
     body: dict[str, object] | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    stream: bool = False
 
     def url(self, session_id: UUID, product_id: UUID) -> str:
         return self.path.format(session_id=session_id, product_id=product_id)
+
+
+async def owner_answer(
+    app: ASGIApp,
+    client: httpx2.AsyncClient,
+    route: SellerRoute,
+    headers: Mapping[str, str],
+    session_id: UUID,
+    product_id: UUID,
+) -> tuple[int, str]:
+    """The status and the body a route answers; of a stream, its first message's data."""
+    url = route.url(session_id, product_id)
+    if route.stream:
+        async with open_event_stream(app, url, {**route.headers, **headers}) as stream:
+            first = await stream.next_message() if stream.status == 200 else None
+        return stream.status, "" if first is None or first.data is None else first.data
+    response = await client.request(
+        route.method, url, json=route.body, headers={**route.headers, **headers}
+    )
+    return response.status_code, response.text
 
 
 SESSION_PATH = "/api/v1/live-sessions/{session_id}"
@@ -276,6 +318,7 @@ PRODUCT_PATH = "/api/v1/live-sessions/{session_id}/products/{product_id}"
 # past validation with: another seller must get the 404 of an unknown id from each one.
 SELLER_OBJECT_ROUTES: tuple[SellerRoute, ...] = (
     SellerRoute("GET", SESSION_PATH),
+    SellerRoute("GET", f"{SESSION_PATH}/events", stream=True),
     SellerRoute("PATCH", SESSION_PATH, {"title": "Taken over"}),
     SellerRoute("POST", f"{SESSION_PATH}/start"),
     SellerRoute("POST", f"{SESSION_PATH}/end"),

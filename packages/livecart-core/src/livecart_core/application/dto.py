@@ -769,6 +769,38 @@ class ReservationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class RecordedIntent:
+    """An intent of a session, and the order its reservation opened, if any."""
+
+    intent: PurchaseIntentRecord
+    order_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RejectedComment:
+    """A comment of a session settled without an intent, and why."""
+
+    comment_id: UUID
+    reason: RejectionReason
+
+
+@dataclass(frozen=True, slots=True)
+class SessionActivity:
+    """What a session's dashboard shows, read in one consistent view: the snapshot of a stream.
+
+    The catalog, with the stock of each product, in creation order; then the
+    latest intents, rejections and orders, newest first, at most the limit
+    the read asked for of each.
+    """
+
+    session: LiveSessionRecord
+    products: tuple[ProductRecord, ...] = ()
+    intents: tuple[RecordedIntent, ...] = ()
+    rejections: tuple[RejectedComment, ...] = ()
+    orders: tuple[OrderRecord, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
 class ExpiredReservations:
     """One batch of the expiry sweep: the orders it expired, lowest id first.
 

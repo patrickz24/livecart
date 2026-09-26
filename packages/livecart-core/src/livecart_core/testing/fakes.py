@@ -66,11 +66,14 @@ from livecart_core.application.dto import (
     QueuedComment,
     QueueDelivery,
     RateLimitKey,
+    RecordedIntent,
     RefreshTokenRecord,
     RegisteredEvent,
+    RejectedComment,
     ReservationRequest,
     ReservationResult,
     SellerRecord,
+    SessionActivity,
     SessionEvent,
     SessionEventType,
     ShipmentRecord,
@@ -802,6 +805,7 @@ class InMemoryDatabase:
         self.live_sessions = InMemoryLiveSessionRepository(self)
         self.products = InMemoryProductStockRepository(self)
         self.orders = InMemoryOrderRepository(self)
+        self.activity = InMemoryLiveSessionActivity(self)
         self.payments = InMemoryPaymentRepository(self)
         self.shipments = InMemoryShipmentRepository(self)
         self.webhook_events = InMemoryWebhookEventRegistry(self)
@@ -1577,6 +1581,39 @@ class InMemoryOrderRepository(_Repository):
         stock = product.stock
         moved = replace(stock, reserved=stock.reserved + reserved, sold=stock.sold + sold)
         self._tables.products[product.id] = replace(product, stock=moved)
+
+
+class InMemoryLiveSessionActivity(_Repository):
+    """The snapshot of a session over the in-memory tables: ids are sequential, so newest first."""
+
+    async def snapshot(self, session_id: UUID, *, limit: int) -> SessionActivity:
+        tables = self._tables
+        session = _row(tables.sessions, session_id, "live session")
+        orders_by_intent = {order.intent_id: order.id for order in tables.orders.values()}
+        intents = [intent for intent in tables.intents.values() if intent.session_id == session_id]
+        rejections = [
+            RejectedComment(comment.id, comment.rejection_reason)
+            for comment in tables.comments.values()
+            if comment.session_id == session_id and comment.rejection_reason is not None
+        ]
+        orders = [order for order in tables.orders.values() if order.session_id == session_id]
+        return SessionActivity(
+            session=session,
+            products=tuple(
+                product for product in tables.products.values() if product.session_id == session_id
+            ),
+            intents=tuple(
+                RecordedIntent(intent, orders_by_intent.get(intent.id))
+                for intent in _newest(intents, limit, key=lambda intent: intent.id)
+            ),
+            rejections=tuple(_newest(rejections, limit, key=lambda item: item.comment_id)),
+            orders=tuple(_newest(orders, limit, key=lambda order: order.id)),
+        )
+
+
+def _newest[R](rows: Sequence[R], limit: int, *, key: Callable[[R], UUID]) -> list[R]:
+    """The ``limit`` rows of highest id, highest first: the newest, as UUID v7 ids sort."""
+    return sorted(rows, key=key, reverse=True)[:limit]
 
 
 class InMemoryPaymentRepository(_Repository):

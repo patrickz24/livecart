@@ -50,13 +50,18 @@ from livecart_api.routes.health import build_health_router
 from livecart_api.routes.live_sessions import build_live_session_router
 from livecart_api.routes.orders import build_order_router
 from livecart_api.routes.products import build_product_router
+from livecart_api.routes.session_events import (
+    EVENTS_ROUTE,
+    StreamSlots,
+    build_session_event_router,
+)
 from livecart_api.routes.storefronts import build_storefront_router
 from livecart_api.routes.webhooks import build_webhook_router
 from livecart_core.application.buyer_orders import LookUpOrder
 from livecart_core.application.idempotency import IdempotentRequests
 from livecart_core.application.ingest_comments import IngestComments
 from livecart_core.application.live_sessions import SellerLiveSessions
-from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.application.ports import SNAPSHOT_LIMIT, ServiceUnavailable
 from livecart_core.application.products import SellerProducts
 from livecart_core.application.seller_auth import (
     AuthenticateSeller,
@@ -64,6 +69,7 @@ from livecart_core.application.seller_auth import (
     RotateRefreshToken,
 )
 from livecart_core.application.storefront import ViewStorefront
+from livecart_core.application.watch_live_session import WatchLiveSession
 from livecart_core.metrics import MetricsServer
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
@@ -160,6 +166,18 @@ def create_app(
     app.include_router(
         build_live_session_router(SellerLiveSessions(resources.live_sessions, resources.clock))
     )
+    slots = StreamSlots(settings.sse_max_streams)
+    app.state.stream_slots = slots
+    watch = WatchLiveSession(
+        resources.live_sessions,
+        resources.activity,
+        resources.session_events,
+        resources.clock,
+        snapshot_limit=SNAPSHOT_LIMIT,
+    )
+    app.include_router(
+        build_session_event_router(watch, slots, resources.clock, snapshot_limit=SNAPSHOT_LIMIT)
+    )
     app.include_router(
         build_product_router(
             SellerProducts(resources.products, resources.clock),
@@ -202,6 +220,6 @@ def create_app(
     )
     app.add_middleware(RequestContextMiddleware)
     app.add_middleware(CorrelationIdMiddleware)
-    registry = build_registry(app, ingest, limits)
+    registry = build_registry(app, ingest, limits, slots, streaming_routes=(EVENTS_ROUTE,))
     app.state.metrics_registry = registry
     return app

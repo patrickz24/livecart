@@ -20,6 +20,7 @@ from livecart_api.testing import (
     SellerRoute,
     make_app,
     open_client,
+    owner_answer,
     seller_headers,
     seller_routes,
 )
@@ -104,11 +105,11 @@ async def test_the_owners_request_on_the_same_route_succeeds(
     sellers: Sellers, route: SellerRoute
 ) -> None:
     # The bodies of the table pass validation: the 404s above are the seller filter's.
-    response = await _send(
-        sellers.client, route, sellers.owner, sellers.session.id, sellers.product.id
+    status, body = await owner_answer(
+        sellers.app, sellers.client, route, sellers.owner, sellers.session.id, sellers.product.id
     )
 
-    assert response.status_code in (200, 201), response.text
+    assert status in (200, 201), body
 
 
 async def test_a_seller_lists_none_of_another_sellers_sessions(sellers: Sellers) -> None:

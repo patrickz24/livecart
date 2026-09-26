@@ -72,6 +72,7 @@ from livecart_core.application.dto import (
     ReservationRequest,
     ReservationResult,
     SellerRecord,
+    SessionActivity,
     SessionEvent,
     ShipmentRecord,
     ShipmentRef,
@@ -789,6 +790,22 @@ class OrderLookup(Protocol):
 
     async def find_by_reference(self, reference: OrderReference) -> BuyerOrderRecord | None:
         """The order with this reference and the product it holds, or ``None``."""
+
+
+# The most intents, rejections and orders a snapshot holds, of each: the newest.
+SNAPSHOT_LIMIT: Final = 200
+
+
+class LiveSessionActivity(Protocol):
+    """The snapshot of a live session, as the SSE endpoint sends it before the session's events."""
+
+    async def snapshot(self, session_id: UUID, *, limit: int) -> SessionActivity:
+        """The session, its products and its latest ``limit`` intents, rejections and orders.
+
+        One consistent read (a single snapshot of the database), so that an
+        order and its product's stock agree. Raises ``RecordNotFound`` when no
+        session has ``session_id``.
+        """
 
 
 # The most orders one batch of the expiry sweep expires, in one transaction.

@@ -913,6 +913,58 @@ export type EndLiveSessionResponses = {
 
 export type EndLiveSessionResponse = EndLiveSessionResponses[keyof EndLiveSessionResponses];
 
+export type StreamLiveSessionEventsData = {
+    body?: never;
+    headers?: {
+        /**
+         * Last-Event-Id
+         *
+         * The id of the last message received, to resume after it without a snapshot.
+         */
+        'Last-Event-ID'?: string | null;
+    };
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/events';
+};
+
+export type StreamLiveSessionEventsErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+    /**
+     * This instance serves its most streams, or the events are unavailable
+     */
+    503: ErrorResponse;
+};
+
+export type StreamLiveSessionEventsError = StreamLiveSessionEventsErrors[keyof StreamLiveSessionEventsErrors];
+
+export type StreamLiveSessionEventsResponses = {
+    /**
+     * Successful Response
+     */
+    200: unknown;
+};
+
 export type ListProductsData = {
     body?: never;
     path: {

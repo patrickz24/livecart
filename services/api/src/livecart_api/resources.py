@@ -14,6 +14,7 @@ from livecart_core.application.ports import (
     Clock,
     CommentQueue,
     IdempotencyStore,
+    LiveSessionActivity,
     LiveSessionRepository,
     OrderLookup,
     PasswordHasher,
@@ -22,15 +23,18 @@ from livecart_core.application.ports import (
     RateLimiter,
     RefreshTokenRepository,
     SellerRepository,
+    SessionEventLog,
 )
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
+from livecart_core.infrastructure.db.activity import SqlLiveSessionActivity
 from livecart_core.infrastructure.db.engine import API_POOL, create_db_engine, ping_database
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.platforms import build_platform_adapters
@@ -65,6 +69,10 @@ class Resources:
     # The comment webhook's adapter of each enabled platform, and the queue it feeds.
     platforms: Mapping[Platform, PlatformAdapter]
     comment_queue: CommentQueue
+    # The snapshot and the streams of the sessions' events (SSE), and the
+    # publisher of a session's start and end.
+    activity: LiveSessionActivity
+    session_events: SessionEventLog
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -112,4 +120,6 @@ def build_resources(settings: Settings) -> Resources:
         rate_limiter=RedisRateLimiter(redis, prefix=settings.redis_key_prefix),
         platforms=platforms,
         comment_queue=RedisCommentQueue(redis, prefix=settings.redis_key_prefix),
+        activity=SqlLiveSessionActivity(engine, currency=settings.default_currency),
+        session_events=RedisSessionEvents(redis, prefix=settings.redis_key_prefix),
     )

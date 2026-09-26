@@ -19,6 +19,7 @@ from ``Host``.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Annotated, Final
 from urllib.parse import urlsplit
 from uuid import UUID
@@ -36,9 +37,14 @@ type Origin = tuple[str, str, int]
 
 @dataclass(frozen=True, slots=True)
 class AuthenticatedSeller:
-    """The seller an access token names."""
+    """The seller an access token names, and when that token expires.
+
+    The expiry bounds what the token opens: a stream of session events
+    closes before it (``livecart_core.application.watch_live_session``).
+    """
 
     id: UUID
+    access_expires_at: datetime
 
 
 def access_tokens(request: Request) -> AccessTokens:
@@ -77,7 +83,7 @@ async def _current_seller(
     # After the token, so that only a seller's own requests fill the seller's counter.
     limits = rate_limiting(request)
     await limits.enforce(limits.rules.seller, str(claims.seller_id))
-    return AuthenticatedSeller(claims.seller_id)
+    return AuthenticatedSeller(claims.seller_id, claims.expires_at)
 
 
 CurrentSeller = Annotated[AuthenticatedSeller, Depends(_current_seller)]

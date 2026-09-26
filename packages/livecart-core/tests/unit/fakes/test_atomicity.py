@@ -34,6 +34,7 @@ def test_every_repository_fake_is_found() -> None:
         "InMemoryPaymentRepository",
         "InMemoryShipmentRepository",
         "InMemoryWebhookEventRegistry",
+        "InMemoryLiveSessionActivity",
     }
 
 

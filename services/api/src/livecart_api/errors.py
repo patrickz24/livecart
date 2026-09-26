@@ -27,6 +27,7 @@ from typing import Final
 from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
+from fastapi.openapi.constants import REF_PREFIX
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -124,5 +125,20 @@ def documented(descriptions: Mapping[int, str]) -> dict[int | str, dict[str, obj
     """The OpenAPI ``responses`` of a route: each error code, its meaning and its body."""
     return {
         code: {"model": ErrorResponse, "description": description}
+        for code, description in descriptions.items()
+    }
+
+
+def documented_json(descriptions: Mapping[int, str]) -> dict[int | str, dict[str, object]]:
+    """``documented`` for a route whose success is no JSON, such as a stream of events.
+
+    FastAPI files a response ``model`` under the route's own media type
+    (``text/event-stream``), where the errors are JSON: they are declared
+    with their content type instead, and the schema that ``documented``
+    routes put in the components.
+    """
+    body = {"application/json": {"schema": {"$ref": f"{REF_PREFIX}{ErrorResponse.__name__}"}}}
+    return {
+        code: {"description": description, "content": body}
         for code, description in descriptions.items()
     }

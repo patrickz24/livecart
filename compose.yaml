@@ -197,6 +197,8 @@ services:
       QUEUE_MAX_DEPTH: ${QUEUE_MAX_DEPTH:-20000}
       QUEUE_MAX_ENVELOPE_BYTES: ${QUEUE_MAX_ENVELOPE_BYTES:-5120}
       REDIS_MAXMEMORY_BYTES: ${REDIS_MAXMEMORY_BYTES:-268435456}
+      # Streams of session events (SSE) served at once; the next one gets 503.
+      SSE_MAX_STREAMS: ${SSE_MAX_STREAMS:-200}
     ports:
       - "127.0.0.1:8000:8000" # loopback only: other clients go through nginx
     # The Prometheus endpoint (METRICS_PORT, 9100), for a scraper on the compose

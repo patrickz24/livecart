@@ -11,6 +11,7 @@ from uuid import UUID
 
 import httpx2
 import pytest
+from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_api.app import create_app
@@ -20,6 +21,7 @@ from livecart_api.testing import (
     current_time_clock,
     make_settings,
     open_client,
+    owner_answer,
     postgres_resources,
     seller_headers,
 )
@@ -35,6 +37,7 @@ UNKNOWN = UUID(int=404)
 
 @dataclass
 class PostgresApi:
+    app: FastAPI
     client: httpx2.AsyncClient
     backend: PostgresBackend
     owner_id: UUID
@@ -51,6 +54,7 @@ async def api(
     owner_id, intruder_id = await backend.add_seller(), await backend.add_seller()
     async with open_client(app) as client:
         yield PostgresApi(
+            app,
             client,
             backend,
             owner_id,
@@ -133,6 +137,6 @@ async def test_the_owners_request_on_the_same_route_succeeds(
 ) -> None:
     session, product = await _live_session_with_a_product(api)
 
-    response = await _send(api, route, api.owner, session.id, product.id)
+    status, body = await owner_answer(api.app, api.client, route, api.owner, session.id, product.id)
 
-    assert response.status_code in (200, 201), response.text
+    assert status in (200, 201), body

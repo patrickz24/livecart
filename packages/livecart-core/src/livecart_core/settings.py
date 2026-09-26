@@ -99,6 +99,8 @@ MAX_QUEUE_RECLAIM_MIN_IDLE_MS: Final = 3_600_000
 # and the clocks of Redis and of the worker.
 RECLAIM_IDLE_MARGIN: Final = 2
 MAX_PORT: Final = 65_535
+# Redis's default maxclients is 10000: the streams of an instance stay far below.
+MAX_SSE_STREAMS: Final = 5_000
 
 
 class AppEnv(StrEnum):
@@ -288,6 +290,10 @@ class Settings(BaseAppSettings):
     # never published on the host nor routed by nginx. None, from an empty
     # METRICS_PORT, serves no endpoint: the tests, a second process on one host.
     metrics_port: int | None = DEFAULT_METRICS_PORT
+    # The streams of session events one API instance serves at once (SSE,
+    # GET /api/v1/live-sessions/{id}/events): each holds a Redis connection
+    # blocked in XREAD, so the next one answers 503 with Retry-After.
+    sse_max_streams: int = 200
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -461,6 +467,13 @@ class Settings(BaseAppSettings):
     def _check_metrics_port(cls, value: int | None) -> int | None:
         if value is not None and not 1 <= value <= MAX_PORT:
             raise ValueError(f"must be a TCP port from 1 to {MAX_PORT}, or empty to serve none")
+        return value
+
+    @field_validator("sse_max_streams")
+    @classmethod
+    def _check_sse_max_streams(cls, value: int) -> int:
+        if not 1 <= value <= MAX_SSE_STREAMS:
+            raise ValueError(f"must be from 1 to {MAX_SSE_STREAMS} streams")
         return value
 
     @field_validator("queue_max_deliveries")
