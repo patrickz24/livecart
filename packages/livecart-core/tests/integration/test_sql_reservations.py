@@ -2,9 +2,11 @@
 
 The reservation is one conditional ``UPDATE`` and no row is read to decide
 it; a unit runs in READ COMMITTED under the server-side timeouts; a lock held
-too long comes out as ``ServiceUnavailable`` with nothing written.
+too long comes out as ``ServiceUnavailable`` with nothing written, and so
+does a transaction left idle, which the server ends.
 """
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import timedelta
@@ -110,12 +112,37 @@ async def test_every_unit_runs_in_read_committed_under_the_server_timeouts(
     async with transaction(app_engine) as connection:
         settings = [
             (await connection.execute(text(f"SHOW {name}"))).scalar_one()
-            for name in ("transaction_isolation", "statement_timeout", "lock_timeout")
+            for name in (
+                "transaction_isolation",
+                "statement_timeout",
+                "lock_timeout",
+                "idle_in_transaction_session_timeout",
+            )
         ]
         role = (await connection.execute(text("SELECT current_user"))).scalar_one()
 
-    assert settings == ["read committed", "5s", "2s"]
+    assert settings == ["read committed", "5s", "2s", "30s"]
     assert role == "livecart_app"
+
+
+async def test_a_transaction_left_idle_is_ended_by_the_server_as_a_transient_failure(
+    database_schema: None, app_engine: AsyncEngine
+) -> None:
+    async def stalled_unit() -> None:
+        async with transaction(app_engine) as connection:
+            # The engine's 30 s, shortened for this transaction alone.
+            await connection.execute(
+                text("SET LOCAL idle_in_transaction_session_timeout = '100ms'")
+            )
+            await asyncio.sleep(0.5)
+            await connection.execute(select(1))
+
+    with pytest.raises(ServiceUnavailable, match="database unavailable"):
+        await stalled_unit()
+
+    # The pool hands out a working connection again.
+    async with transaction(app_engine) as connection:
+        assert (await connection.execute(select(1))).scalar_one() == 1
 
 
 async def test_a_lock_held_too_long_is_a_transient_failure_with_nothing_written(

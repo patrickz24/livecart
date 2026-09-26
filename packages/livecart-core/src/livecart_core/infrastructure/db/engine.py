@@ -1,12 +1,13 @@
 """Async engine factory: each process builds exactly one engine at startup.
 
-Every connection runs in READ COMMITTED, with a statement timeout and a lock
-timeout set on the server side. READ COMMITTED is what the stock reservation
-relies on: a blocked ``UPDATE`` re-evaluates its ``WHERE`` on the row version
-that the other transaction committed, so a reservation never oversells and
-never needs a retry, where REPEATABLE READ or SERIALIZABLE would fail it with
-a serialization error instead. It is PostgreSQL's default too, but a server
-or database setting could change the default; the engine does not depend on it.
+Every connection runs in READ COMMITTED, with a statement timeout, a lock
+timeout and an idle-in-transaction timeout set on the server side. READ
+COMMITTED is what the stock reservation relies on: a blocked ``UPDATE``
+re-evaluates its ``WHERE`` on the row version that the other transaction
+committed, so a reservation never oversells and never needs a retry, where
+REPEATABLE READ or SERIALIZABLE would fail it with a serialization error
+instead. It is PostgreSQL's default too, but a server or database setting
+could change the default; the engine does not depend on it.
 
 The pools follow the plan's connection budget (97 connections available):
 
@@ -28,6 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 # Server-side guards applied to every connection, in milliseconds.
 STATEMENT_TIMEOUT_MS: Final = 5000
 LOCK_TIMEOUT_MS: Final = 2000
+# A transaction a bug leaves open between two statements (an await on something
+# else, a task stuck mid-unit) would hold its row locks until the process ends,
+# failing every unit on those rows after lock_timeout. The server ends it after
+# 30 s, the deadline of a whole comment and well under its 120 s reclaim; a unit
+# is a few short statements, never idle that long.
+IDLE_IN_TRANSACTION_TIMEOUT_MS: Final = 30_000
 ISOLATION_LEVEL: Final = "READ COMMITTED"
 # How long a caller waits for a free pooled connection before giving up.
 POOL_TIMEOUT_S: Final = 10.0
@@ -77,6 +84,7 @@ def create_db_engine(
                 "application_name": application_name,
                 "statement_timeout": str(STATEMENT_TIMEOUT_MS),
                 "lock_timeout": str(LOCK_TIMEOUT_MS),
+                "idle_in_transaction_session_timeout": str(IDLE_IN_TRANSACTION_TIMEOUT_MS),
             }
         },
     )
