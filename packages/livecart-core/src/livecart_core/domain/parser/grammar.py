@@ -14,8 +14,8 @@ gets, so that the catalog always wins over the generic vocabulary:
    number after "en" ("en 38"), while no variant is named yet and the product
    comes in numbered sizes, unless a quantity word follows it ("en 2
    exemplaires"): "A12 M en 2" and "C3 rouge en 2" are quantities;
-4. phrases: "sold out" and "out of stock" (doubts), "i'd like" and "would like"
-   (buy signals);
+4. phrases: "sold out", "out of stock" and "is sold" (doubts), "i'd like" and
+   "would like" (buy signals), "ma commande" (the noun, no role);
 5. the unknown codes left: product references too;
 6. quantities: a number next to a currency, ``%``, a time unit or a decimal
    separator is a price, a discount, a time or a decimal and is ignored
@@ -143,6 +143,7 @@ def _phrases_by_first_word() -> dict[str, list[tuple[tuple[str, ...], Role]]]:
     for words, role in [
         *((words, Role.DOUBT) for words in sorted(lexicon.DOUBT_PHRASES)),
         *((words, Role.SIGNAL) for words in sorted(lexicon.BUY_PHRASES)),
+        *((words, Role.NEUTRAL) for words in sorted(lexicon.NEUTRAL_PHRASES)),
     ]:
         phrases.setdefault(words[0], []).append((words, role))
     return phrases

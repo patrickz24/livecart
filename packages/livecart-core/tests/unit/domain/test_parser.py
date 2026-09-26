@@ -576,6 +576,44 @@ def test_conflicting_signals(text: str) -> None:
     assert len(result.candidates) == 1
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        f"j'ai d{SMALL_E_ACUTE}j{SMALL_A_GRAVE} command{SMALL_E_ACUTE} le B07",
+        f"j'ai achet{SMALL_E_ACUTE} B07 la semaine derni{SMALL_E_GRAVE}re",
+        f"j{RIGHT_SINGLE_QUOTE}ai command{SMALL_E_ACUTE} B07",
+        f"B07 d{SMALL_E_ACUTE}j{SMALL_A_GRAVE} r{SMALL_E_ACUTE}serv{SMALL_E_ACUTE}",
+        "I already take B07",
+        "je prends B07 comme hier",
+    ],
+)
+def test_a_purchase_already_made_is_not_a_new_order(text: str) -> None:
+    # Perhaps a confirmation, perhaps a statement: the fallback reads it.
+    assert ambiguous(text).reason is AmbiguityReason.CONFLICTING_SIGNALS
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "B07 reserved for @marie",
+        "achetez B07 vite !",
+        "B07 is sold",
+        "B07 was sold",
+        "annulez ma commande B07",
+        f"ma commande B07 est arriv{SMALL_E_ACUTE}e",
+    ],
+)
+def test_statements_about_a_product_or_an_order_are_not_orders(text: str) -> None:
+    assert rejected(text) is RejectionReason.NO_INTENT
+
+
+def test_commande_after_a_possessive_is_the_noun_but_the_verb_elsewhere() -> None:
+    assert parse("je commande B07") == match(B07, "", 1, Confidence.EXACT, "commande", "B07")
+    assert parse("ma commande: je commande B07") == match(
+        B07, "", 1, Confidence.EXACT, "commande", "B07"
+    )
+
+
 def test_conflicting_signals_quote_both_sides() -> None:
     assert ambiguous("je veux pas B07") == Ambiguous(
         AmbiguityReason.CONFLICTING_SIGNALS, (B07,), ("veux", "pas", "B07")

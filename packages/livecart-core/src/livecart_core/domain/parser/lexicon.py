@@ -63,11 +63,15 @@ NOT_A_TYPO: Final = frozenset(
         "wane",
         "wart",
         "wan",
+        # Someone else's reservation, or a call to the other viewers.
+        "reserved",
+        "achetez",
     }
 )
 
-# A question, a negation or a doubt about the stock. With a buy signal it is a
-# conflicting signal; without one, the comment is not an order.
+# A question, a negation, a doubt about the stock or a purchase already made.
+# With a buy signal it is a conflicting signal; without one, the comment is not
+# an order.
 DOUBT_WORDS: Final = frozenset(
     {
         # Questions.
@@ -115,10 +119,38 @@ DOUBT_WORDS: Final = frozenset(
         "epuises",
         "epuisees",
         "rupture",
+        # A purchase already made. Accents are stripped, so the participle of
+        # "j'ai commande" reads as the verb: the auxiliary "ai" is the tell.
+        "ai",
+        "deja",
+        "hier",
+        "already",
+        "yesterday",
     }
 )
-# "sold out" is read before "sold", the verb.
-DOUBT_PHRASES: Final = frozenset({("sold", "out"), ("out", "of", "stock")})
+# "sold out" is read before "sold", the verb, and so is "is sold": the
+# product is sold, not bought by this buyer.
+DOUBT_PHRASES: Final = frozenset(
+    {
+        ("sold", "out"),
+        ("out", "of", "stock"),
+        ("is", "sold"),
+        ("was", "sold"),
+        ("are", "sold"),
+        ("been", "sold"),
+    }
+)
+# Read before the words, with no role: "commande" after a possessive is the
+# noun, as in "annulez ma commande".
+NEUTRAL_PHRASES: Final = frozenset(
+    {
+        ("ma", "commande"),
+        ("ta", "commande"),
+        ("votre", "commande"),
+        ("mes", "commandes"),
+        ("vos", "commandes"),
+    }
+)
 
 # Written after "x" or before a number: "x2", "qte 2", "quantite: 2".
 QUANTITY_PREFIXES: Final = frozenset({"x", "qte", "qty", "qt", "nb", "quantite", "quantity"})

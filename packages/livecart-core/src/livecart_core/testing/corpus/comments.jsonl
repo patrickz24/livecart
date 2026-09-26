@@ -131,6 +131,7 @@
 {"text": "je prends A12 M c'est combien ?", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["A12"], "tag": "question"}
 {"text": "je prends A12 M ?", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["A12"], "tag": "question"}
 {"text": "je veux Z99 mais pas tout de suite", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["Z99"], "tag": "negation"}
+{"text": "j'ai déjà commandé le B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "past"}
 {"text": "annule B07", "kind": "rejected", "reason": "no_intent", "tag": "negation"}
 {"text": "pas B07", "kind": "rejected", "reason": "no_intent", "tag": "negation"}
 {"text": "B07 sold out ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}

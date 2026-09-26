@@ -67,6 +67,8 @@ def test_a_buy_verb_with_one_typo_is_recognised(typed: str) -> None:
         ("vieux", "a real word one edit away"),
         ("wait", "a real word one edit away"),
         ("taken", "a real word one edit away"),
+        ("reserved", "someone else's reservation"),
+        ("achetez", "a call to the other viewers"),
         ("me", "a word of the grammar"),
         ("ta2e", "not a word"),
         ("slodd", "two edits away"),
