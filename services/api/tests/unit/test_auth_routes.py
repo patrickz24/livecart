@@ -197,6 +197,34 @@ async def test_a_login_body_outside_its_schema_is_refused(
 
     assert response.status_code == 422
     assert api.passwords.verified == []
+    # No error repeats what it refused: a missing or extra field would echo the whole body.
+    errors = response.json()["detail"]
+    assert errors
+    assert all(set(error) <= {"type", "loc", "msg", "ctx"} for error in errors)
+    password = str(body.get("password", ""))
+    assert not password or password not in response.text
+
+
+async def test_a_password_too_long_is_refused_without_being_repeated(api: Api) -> None:
+    password = "P" * 200
+
+    async with open_client(api.app) as client:
+        response = await client.post(
+            LOGIN, json={"email": EMAIL, "password": password}, headers=SAME_ORIGIN
+        )
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "detail": [
+            {
+                "type": "too_long",
+                "loc": ["body", "password"],
+                "msg": "Value should have at most 128 items after validation, not 200",
+                "ctx": {"field_type": "Value", "max_length": 128, "actual_length": 200},
+            }
+        ]
+    }
+    assert password not in response.text
 
 
 @pytest.mark.parametrize("origin", [None, "null", "http://evil.test", "https://test"])

@@ -13,12 +13,20 @@ The body is always ``{"detail": ...}``, with a message chosen here: an
 exception's own text may name ids or values and never reaches a client. The
 handlers that ``install`` registers answer for every route; a route that
 must record its answer first (the idempotent restock) calls ``error_answer``.
+
+A request that fails validation gets FastAPI's 422, each error's location,
+type and message, without the ``input`` FastAPI adds to each: the value it
+refused, and for a missing field or an unexpected one the whole object
+around it, a login's password included. The client sent that value, but a
+response carrying it may be kept by proxies, error trackers or client logs.
 """
 
 from collections.abc import Mapping
 from typing import Final
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -94,10 +102,22 @@ async def _answer(_request: Request, error: Exception) -> JSONResponse:
     return JSONResponse({"detail": detail}, status_code=status_code)
 
 
+async def _invalid_request(_request: Request, error: Exception) -> JSONResponse:
+    if not isinstance(error, RequestValidationError):
+        raise error
+    errors = [
+        {key: value for key, value in item.items() if key != "input"} for item in error.errors()
+    ]
+    return JSONResponse(
+        {"detail": jsonable_encoder(errors)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT
+    )
+
+
 def install(app: FastAPI) -> None:
-    """Register the answers of every error of ``ANSWERED``."""
+    """Register the answers of every error of ``ANSWERED``, and of an invalid request."""
     for error_type in ANSWERED:
         app.add_exception_handler(error_type, _answer)
+    app.add_exception_handler(RequestValidationError, _invalid_request)
 
 
 def documented(descriptions: Mapping[int, str]) -> dict[int | str, dict[str, object]]:
