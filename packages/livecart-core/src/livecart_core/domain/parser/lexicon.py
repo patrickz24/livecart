@@ -122,6 +122,8 @@ DOUBT_PHRASES: Final = frozenset({("sold", "out"), ("out", "of", "stock")})
 
 # Written after "x" or before a number: "x2", "qte 2", "quantite: 2".
 QUANTITY_PREFIXES: Final = frozenset({"x", "qte", "qty", "qt", "nb", "quantite", "quantity"})
+# The prefixes a buyer glues to the number: "x2", "qte3", "nb5".
+GLUED_QUANTITY_PREFIXES: Final = ("x", "qte", "qty", "qt", "nb")
 # Written after a number: "2x", "2 pcs", "2 fois".
 QUANTITY_SUFFIXES: Final = frozenset(
     {

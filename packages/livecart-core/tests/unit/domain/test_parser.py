@@ -452,6 +452,11 @@ def test_the_same_code_twice_is_one_product() -> None:
         "je prends B07 x 1000000000000000000000000",
         "je prends B07 x11 x12",
         "je prends B07 x11 12",
+        # A negative quantity is below 1, not its opposite.
+        "je prends A12 M x-1",
+        "je prends B07 x -2",
+        "je prends B07 qte-3",
+        "je prends B07 -2",
     ],
 )
 def test_quantity_out_of_bounds(text: str) -> None:

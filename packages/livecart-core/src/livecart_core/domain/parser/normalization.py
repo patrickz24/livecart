@@ -29,8 +29,11 @@ Per character, in this order:
 Then, on the folded string: an ``@mention`` is dropped, as it names another
 viewer; a French elision (``l'``, ``j'``, ``qu'``...) is dropped, except
 ``n'``, which becomes the ``NEGATION`` mark; an apostrophe inside a word is
-dropped (``i'll`` reads ``ill``, ``don't`` reads ``dont``); a hyphen between
-one to three letters and a digit is dropped (``A-12`` reads ``a12``); any other
+dropped (``i'll`` reads ``ill``, ``don't`` reads ``dont``); a dash right
+before a digit, at the start of a word or after a glued quantity prefix
+(``-2``, ``x-1``), becomes the ``MINUS`` mark, so that a negative quantity is
+out of bounds rather than read as its opposite; a hyphen between one to three
+other letters and a digit is dropped (``A-12`` reads ``a12``); any other
 apostrophe or dash becomes a space.
 """
 
@@ -40,6 +43,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Final
+
+from livecart_core.domain.parser.lexicon import GLUED_QUANTITY_PREFIXES
 
 # Marks that the folding writes into the text, one character each. None of
 # them can come from the comment itself: a "?" typed by the buyer is the same
@@ -51,6 +56,8 @@ NEGATION: Final = "\u00ac"
 AMOUNT_UNIT: Final = "$"
 # A typed "." folds to a space: only a decimal separator is written as this mark.
 DECIMAL: Final = "."
+# A typed minus sign folds to "-" (see _EXPLICIT): only a sign is written as this mark.
+MINUS: Final = "\u2212"
 
 _EXPLICIT: Final[dict[str, str]] = {
     "\u00d7": "x",  # MULTIPLICATION SIGN
@@ -159,6 +166,17 @@ _WORD_CHAR: Final = r"[^\W_]"
 _MENTION: Final = re.compile(rf"@{_WORD_CHAR}*")
 _ELISION: Final = re.compile(rf"(?<!{_WORD_CHAR})(qu|[cdjlmnst])'(?={_WORD_CHAR})")
 _INNER_APOSTROPHE: Final = re.compile(rf"(?<={_WORD_CHAR})'(?={_WORD_CHAR})")
+# A lookbehind must have a fixed width: one per prefix.
+_SIGN: Final = re.compile(
+    "(?:"
+    + "|".join(
+        [
+            rf"(?<!{_WORD_CHAR})",
+            *(rf"(?<=(?<!{_WORD_CHAR}){prefix})" for prefix in GLUED_QUANTITY_PREFIXES),
+        ]
+    )
+    + ")-(?=[0-9])"
+)
 _CODE_HYPHEN: Final = re.compile(rf"(?<!{_WORD_CHAR})([a-z]{{1,3}})-(?=[0-9])")
 _LEFTOVER: Final = re.compile(r"['-]")
 
@@ -192,5 +210,6 @@ def normalize_comment(text: str) -> NormalizedText:
         lambda match: f" {NEGATION} " if match.group(1) == "n" else " ",
     )
     folded_text = _rewrite(folded_text, _INNER_APOSTROPHE, lambda _: "")
+    folded_text = _rewrite(folded_text, _SIGN, lambda _: MINUS)
     folded_text = _rewrite(folded_text, _CODE_HYPHEN, lambda match: match.group(1))
     return _rewrite(folded_text, _LEFTOVER, lambda _: " ")

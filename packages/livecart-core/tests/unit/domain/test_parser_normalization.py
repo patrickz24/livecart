@@ -4,6 +4,7 @@ from livecart_core.domain.parser.normalization import (
     AMOUNT_UNIT,
     CART,
     DECIMAL,
+    MINUS,
     NEGATION,
     normalize_comment,
 )
@@ -130,13 +131,32 @@ def test_a_hyphen_only_joins_the_two_halves_of_a_code(typed: str, expected: str)
     assert folded(typed) == expected
 
 
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("x-1", f"x{MINUS}1"),
+        ("qte-3", f"qte{MINUS}3"),
+        ("x -1", f"x {MINUS}1"),
+        ("B07 -2", f"b07 {MINUS}2"),
+        (f"B07 {EN_DASH}2", f"b07 {MINUS}2"),
+        ("-50%", f"{MINUS}50{AMOUNT_UNIT}"),
+        ("12-10", "12 10"),
+        # "x" ends another word here: still the two halves of a code.
+        ("AX-2", "ax2"),
+    ],
+    ids=["glued-x", "glued-qte", "spaced", "bare", "en-dash", "discount", "range", "code"],
+)
+def test_a_dash_before_a_digit_is_a_minus_sign(typed: str, expected: str) -> None:
+    assert folded(typed) == expected
+
+
 def test_a_mention_names_another_viewer_and_is_dropped() -> None:
     assert folded("@marie je prends C3") == "je prends c3"
     assert folded("C3 @") == "c3"
 
 
 def test_currency_symbols_and_percent_become_the_amount_unit() -> None:
-    assert folded(f"15{EURO} -50% $3") == f"15{AMOUNT_UNIT} 50{AMOUNT_UNIT} {AMOUNT_UNIT}3"
+    assert folded(f"15{EURO} -50% $3") == f"15{AMOUNT_UNIT} {MINUS}50{AMOUNT_UNIT} {AMOUNT_UNIT}3"
 
 
 @pytest.mark.parametrize(

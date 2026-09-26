@@ -20,8 +20,9 @@ gets, so that the catalog always wins over the generic vocabulary:
 6. quantities: a number next to a currency, ``%``, a time unit or a decimal
    separator is a price, a discount, a time or a decimal and is ignored
    ("15,90 €", "29.99", "14 h"); then a glued quantity ("x2"), a prefix and a
-   number ("x 2", "qte 2"), a number and a suffix ("2x", "2 pcs"), all
-   marked as quantities, and finally a bare number, which is not;
+   number ("x 2", "qte 2"), a number and a suffix ("2x", "2 pcs"), a minus
+   sign and a number ("x-1", "-2", a quantity below 1), all marked as
+   quantities, and finally a bare number, which is not;
 7. marks: the cart emoji is a buy signal, a question mark or an elided "n'" a
    doubt;
 8. words of the lexicon: buy verbs, doubts, numbers in words, the name of the
@@ -368,6 +369,10 @@ class _Grammar:
             ):
                 self._quantity(number.value, i, i + 1, marked=True)
                 i += 2
+            elif self._is_minus(i) and (number := self._free_number(i + 1)) is not None:
+                first = i - 1 if self._free_word(i - 1) in lexicon.QUANTITY_PREFIXES else i
+                self._quantity(-number.value, first, i + 1, marked=True)
+                i += 2
             elif (number := self._free_number(i)) is not None:
                 if self._free_word(i + 1) in lexicon.QUANTITY_SUFFIXES:
                     self._quantity(number.value, i, i + 1, marked=True)
@@ -377,6 +382,10 @@ class _Grammar:
                     i += 1
             else:
                 i += 1
+
+    def _is_minus(self, i: int) -> bool:
+        token = self._tokens[i]
+        return isinstance(token, Mark) and token.kind is MarkKind.MINUS
 
     def _is_unit(self, i: int) -> bool:
         """Token ``i`` makes the number next to it an amount, a decimal or a time."""
@@ -398,6 +407,8 @@ class _Grammar:
             MarkKind.NEGATION: Role.DOUBT,
             MarkKind.AMOUNT_UNIT: Role.NEUTRAL,
             MarkKind.DECIMAL: Role.NEUTRAL,
+            # Left over only before a number that is something else: "-50%".
+            MarkKind.MINUS: Role.NEUTRAL,
         }
         for i, token in enumerate(self._tokens):
             if isinstance(token, Mark) and self._roles[i] is None:

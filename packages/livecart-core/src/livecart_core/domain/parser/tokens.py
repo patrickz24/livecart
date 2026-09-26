@@ -39,6 +39,7 @@ from livecart_core.domain.parser.normalization import (
     AMOUNT_UNIT,
     CART,
     DECIMAL,
+    MINUS,
     NEGATION,
     QUESTION,
     NormalizedText,
@@ -51,6 +52,7 @@ class MarkKind(Enum):
     NEGATION = NEGATION
     AMOUNT_UNIT = AMOUNT_UNIT
     DECIMAL = DECIMAL
+    MINUS = MINUS
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +99,7 @@ type Token = Word | Number | GluedQuantity | Code | UnknownCode | Mark
 _TOKEN: Final = re.compile(rf"[^\W_]+|[{re.escape(''.join(kind.value for kind in MarkKind))}]")
 _SCRIPT_RUN: Final = re.compile(r"[a-z0-9]+|[^a-z0-9]+")
 _PIECE: Final = re.compile(r"[0-9]+|[a-z]+[0-9]*")
-_GLUED_QUANTITY: Final = re.compile(r"(?:x|qte|qty|qt|nb)([0-9]+)")
+_GLUED_QUANTITY: Final = re.compile(rf"(?:{'|'.join(lexicon.GLUED_QUANTITY_PREFIXES)})([0-9]+)")
 # "lx2" in "A12Lx2", "rougex2" in "C3rougex2": a size or colour, then "x2".
 _WORD_THEN_QUANTITY: Final = re.compile(r"([a-z]+?)(x[0-9]+)")
 # "2xl", "3xs": a size, not the quantity 2 of "xl".
