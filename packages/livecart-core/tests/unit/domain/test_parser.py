@@ -466,6 +466,9 @@ def test_the_confidence_scale_is_closed_and_ordered() -> None:
         f"je prends {SHOPPING_CART}",
         "sold",
         "la robe fleurie est trop belle",
+        "wasnt B07",
+        "it wasn't B07 i wanted",
+        "B07 hasn't arrived",
     ],
 )
 def test_no_intent(text: str) -> None:
