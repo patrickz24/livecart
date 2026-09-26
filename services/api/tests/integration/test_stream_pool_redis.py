@@ -80,6 +80,9 @@ async def api(
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
         allowed_hosts=(TEST_HOST,),
         sse_max_streams=STREAMS,
+        # One seller opens them all, as a script with its token would: its own
+        # cap is lifted here so that the streams reach the pool's size.
+        sse_max_streams_per_seller=STREAMS,
         metrics_port=None,
         _env_file=None,
     )

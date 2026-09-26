@@ -2569,7 +2569,7 @@
                 }
               }
             },
-            "description": "Too many requests: try again after Retry-After seconds"
+            "description": "Too many requests, or the seller holds its most streams on this instance: try again after Retry-After seconds"
           },
           "503": {
             "content": {

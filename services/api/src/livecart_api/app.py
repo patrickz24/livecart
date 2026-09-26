@@ -190,7 +190,7 @@ def create_app(
     )
     app.state.live_sessions = live_sessions
     app.include_router(build_live_session_router(live_sessions))
-    slots = StreamSlots(settings.sse_max_streams)
+    slots = StreamSlots(settings.sse_max_streams, per_seller=settings.sse_max_streams_per_seller)
     app.state.stream_slots = slots
     watch = WatchLiveSession(
         resources.live_sessions,

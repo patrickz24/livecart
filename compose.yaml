@@ -199,6 +199,8 @@ services:
       REDIS_MAXMEMORY_BYTES: ${REDIS_MAXMEMORY_BYTES:-268435456}
       # Streams of session events (SSE) served at once; the next one gets 503.
       SSE_MAX_STREAMS: ${SSE_MAX_STREAMS:-200}
+      # And of one seller at once on this instance; its next one gets 429.
+      SSE_MAX_STREAMS_PER_SELLER: ${SSE_MAX_STREAMS_PER_SELLER:-5}
     ports:
       - "127.0.0.1:8000:8000" # loopback only: other clients go through nginx
     # The Prometheus endpoint (METRICS_PORT, 9100), for a scraper on the compose

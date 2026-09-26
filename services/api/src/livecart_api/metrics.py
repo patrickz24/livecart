@@ -15,8 +15,9 @@ Two sources, both scraped from ``create_app``'s registry:
   the batches refused by backpressure, the backlog the webhook last saw
   (``livecart_queue_backlog``), the rate limiter's failures, the buyers'
   not-found lookups, the streams of session events open, opened and
-  refused (``livecart_sse_streams``), and the ``session.updated`` events of
-  a start or an end that failed to reach their stream.
+  refused by reason (``livecart_sse_streams``), and the
+  ``session.updated`` events of a start or an end that failed to reach
+  their stream.
 """
 
 import re
@@ -90,11 +91,15 @@ class UseCaseCollector(Collector):
             "Streams of session events opened.",
             value=self._slots.opened_total,
         )
-        yield CounterMetricFamily(
+        refused = CounterMetricFamily(
             "livecart_sse_streams_refused_total",
-            "Streams of session events refused with 503 at SSE_MAX_STREAMS.",
-            value=self._slots.refused_total,
+            "Streams of session events refused: seller_limit (429, SSE_MAX_STREAMS_PER_SELLER) "
+            "or instance_full (503, SSE_MAX_STREAMS).",
+            labels=["reason"],
         )
+        for reason, count in self._slots.refused_total.items():
+            refused.add_metric([reason.value], count)
+        yield refused
         yield CounterMetricFamily(
             "livecart_session_events_unpublished_total",
             "session.updated events of a start or an end that failed to reach the stream.",

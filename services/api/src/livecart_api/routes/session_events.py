@@ -25,12 +25,17 @@ Each instance serves at most ``SSE_MAX_STREAMS`` (200) streams at once, each
 holding one Redis connection in ``XREAD BLOCK``, from a pool of as many
 connections that only the streams use (``Resources.event_streams``), so that
 they never take the shared pool's from the webhook, the login or ``/ready``:
-the next one answers 503 with ``Retry-After``. A stream counts once against
-the seller's rate limit, when it opens.
+the next one answers 503 with ``Retry-After``. One seller holds at most
+``SSE_MAX_STREAMS_PER_SELLER`` (5) of them on an instance, its next one
+answering 429 with ``Retry-After``, so that no seller can take every slot
+from the others. A stream counts once against the seller's rate limit, when
+it opens.
 """
 
+from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from datetime import datetime
+from enum import StrEnum
 from typing import Annotated, Any, Final, Literal, Self
 from uuid import UUID
 
@@ -43,7 +48,6 @@ from pydantic.json_schema import models_json_schema
 
 from livecart_api.deps import CurrentSeller
 from livecart_api.errors import documented_json
-from livecart_api.rate_limits import TOO_MANY_REQUESTS
 from livecart_api.routes.live_sessions import PREFIX, LiveSessionResponse
 from livecart_api.routes.products import ProductResponse
 from livecart_core.application.dto import EVENT_ID_PATTERN, SessionEventType, StreamedEvent
@@ -72,6 +76,10 @@ SNAPSHOT_EVENT: Final = "snapshot"
 GAP_EVENT: Final = "stream.gap"
 CLOSE_EVENT: Final = "stream.close"
 STREAMS_FULL: Final = "This instance serves as many event streams as it may: try again later"
+SELLER_STREAMS_FULL: Final = (
+    "This seller holds as many event streams as it may on this instance: close one, "
+    "or try again later"
+)
 STREAMS_FULL_RETRY_AFTER_S: Final = 5
 # What a client waits before it reconnects after a close, in milliseconds (SSE retry).
 RECONNECT_AFTER_MS: Final = 1_000
@@ -87,27 +95,70 @@ LastEventId = Annotated[
 ]
 
 
-class StreamSlots:
-    """The streams one instance serves at once, at most ``limit``; the metrics read the counts."""
+class StreamRefusal(StrEnum):
+    """Why a stream got no slot: what its answer says, and the label of its metric."""
 
-    def __init__(self, limit: int) -> None:
-        if limit < 1:
-            raise ValueError("an instance serves one stream at least")
+    # The seller holds SSE_MAX_STREAMS_PER_SELLER streams on this instance: 429,
+    # its own excess, checked first so that it is told so even on a full instance.
+    SELLER_LIMIT = "seller_limit"
+    # The instance serves SSE_MAX_STREAMS streams: 503, its capacity.
+    INSTANCE_FULL = "instance_full"
+
+
+class StreamSlots:
+    """The streams one instance serves at once: ``limit`` in all, ``per_seller`` of one seller.
+
+    The metrics read the counts. A seller's streams are counted by its id
+    while they are open, so that one seller, whose dashboard needs one or
+    two, can never take every slot of the instance from the others.
+    """
+
+    def __init__(self, limit: int, *, per_seller: int) -> None:
+        if limit < 1 or per_seller < 1:
+            raise ValueError("an instance serves one stream at least, and one of each seller")
         self.limit = limit
+        self.per_seller = per_seller
         self.open = 0
         self.opened_total = 0
-        self.refused_total = 0
+        self.refused_total: Counter[StreamRefusal] = Counter(dict.fromkeys(StreamRefusal, 0))
+        self._by_seller: dict[UUID, int] = {}
 
-    def acquire(self) -> bool:
-        if self.open >= self.limit:
-            self.refused_total += 1
-            return False
-        self.open += 1
-        self.opened_total += 1
-        return True
+    def held_by(self, seller_id: UUID) -> int:
+        """The streams of the seller open on this instance."""
+        return self._by_seller.get(seller_id, 0)
 
-    def release(self) -> None:
+    def acquire(self, seller_id: UUID) -> StreamRefusal | None:
+        """Take a slot for one of the seller's streams: ``None`` once taken, or why it is not."""
+        held = self.held_by(seller_id)
+        if held >= self.per_seller:
+            refusal = StreamRefusal.SELLER_LIMIT
+        elif self.open >= self.limit:
+            refusal = StreamRefusal.INSTANCE_FULL
+        else:
+            self._by_seller[seller_id] = held + 1
+            self.open += 1
+            self.opened_total += 1
+            return None
+        self.refused_total[refusal] += 1
+        return refusal
+
+    def release(self, seller_id: UUID) -> None:
+        """Give back a slot the seller took."""
+        held = self.held_by(seller_id)
+        if held < 1:
+            raise RuntimeError("this seller holds no stream slot")
+        if held == 1:
+            del self._by_seller[seller_id]
+        else:
+            self._by_seller[seller_id] = held - 1
         self.open -= 1
+
+
+# The answer to each refusal: the seller's own excess is a 429, the instance's capacity a 503.
+REFUSALS: Final = {
+    StreamRefusal.SELLER_LIMIT: (status.HTTP_429_TOO_MANY_REQUESTS, SELLER_STREAMS_FULL),
+    StreamRefusal.INSTANCE_FULL: (status.HTTP_503_SERVICE_UNAVAILABLE, STREAMS_FULL),
+}
 
 
 class LiveSessionSnapshot(BaseModel):
@@ -325,19 +376,18 @@ NOT_FOUND: Final = "No session of this seller has this id"
 def build_session_event_router(
     watch: WatchLiveSession, slots: StreamSlots, clock: Clock, *, snapshot_limit: int
 ) -> APIRouter:
-    router = APIRouter(
-        prefix=PREFIX, tags=["live-sessions"], responses=documented_json({429: TOO_MANY_REQUESTS})
-    )
+    router = APIRouter(prefix=PREFIX, tags=["live-sessions"])
 
     async def open_feed(
         session_id: UUID, seller: CurrentSeller, last_event_id: LastEventId = None
     ) -> AsyncIterator[AsyncIterator[FeedMessage]]:
         """The stream's slot, held until the response ends, and its checked first messages."""
-        if not slots.acquire():
+        refusal = slots.acquire(seller.id)
+        if refusal is not None:
+            logger.info("session_stream_refused", reason=refusal.value)
+            code, detail = REFUSALS[refusal]
             raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=STREAMS_FULL,
-                headers={"Retry-After": str(STREAMS_FULL_RETRY_AFTER_S)},
+                code, detail=detail, headers={"Retry-After": str(STREAMS_FULL_RETRY_AFTER_S)}
             )
         try:
             yield await watch.open(
@@ -347,7 +397,7 @@ def build_session_event_router(
                 access_expires_at=seller.access_expires_at,
             )
         finally:
-            slots.release()
+            slots.release(seller.id)
 
     @router.get(
         "/{session_id}/events",
@@ -365,6 +415,10 @@ def build_session_event_router(
                 {
                     401: UNAUTHORIZED,
                     404: NOT_FOUND,
+                    429: (
+                        "Too many requests, or the seller holds its most streams on this "
+                        "instance: try again after Retry-After seconds"
+                    ),
                     503: "This instance serves its most streams, or the events are unavailable",
                 }
             ),

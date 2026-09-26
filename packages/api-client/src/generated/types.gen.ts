@@ -1445,7 +1445,7 @@ export type StreamLiveSessionEventsErrors = {
      */
     422: HttpValidationError;
     /**
-     * Too many requests: try again after Retry-After seconds
+     * Too many requests, or the seller holds its most streams on this instance: try again after Retry-After seconds
      */
     429: ErrorResponse;
     /**

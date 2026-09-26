@@ -476,6 +476,12 @@ class Settings(LlmSettings):
     # use, so that they never starve the shared pool's 100 (the webhook, the
     # login, /ready); the next one answers 503 with Retry-After.
     sse_max_streams: int = 200
+    # The streams one seller may hold open on an instance at once: a dashboard
+    # needs one or two, and a stream whose client vanished keeps its slot until
+    # the server notices, when a keep-alive fails to go out. The next one
+    # answers 429 with Retry-After, so that one seller never takes every slot
+    # of an instance.
+    sse_max_streams_per_seller: int = 5
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -686,7 +692,7 @@ class Settings(LlmSettings):
             raise ValueError(f"must be a TCP port from 1 to {MAX_PORT}, or empty to serve none")
         return value
 
-    @field_validator("sse_max_streams")
+    @field_validator("sse_max_streams", "sse_max_streams_per_seller")
     @classmethod
     def _check_sse_max_streams(cls, value: int) -> int:
         if not 1 <= value <= MAX_SSE_STREAMS:

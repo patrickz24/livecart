@@ -877,6 +877,20 @@ def test_the_metrics_port_is_a_tcp_port(value: str) -> None:
         load(**dev_env(), METRICS_PORT=value)
 
 
+def test_an_instance_serves_200_streams_and_5_of_one_seller_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert (settings.sse_max_streams, settings.sse_max_streams_per_seller) == (200, 5)
+    assert load(**dev_env(), SSE_MAX_STREAMS_PER_SELLER="2").sse_max_streams_per_seller == 2
+
+
+@pytest.mark.parametrize("name", ["SSE_MAX_STREAMS", "SSE_MAX_STREAMS_PER_SELLER"])
+@pytest.mark.parametrize("value", ["0", "5001"])
+def test_the_stream_caps_are_from_1_to_5000(name: str, value: str) -> None:
+    with pytest.raises(ValidationError, match="from 1 to 5000 streams"):
+        load(**dev_env(), **{name: value})
+
+
 def test_seed_settings_need_the_migrator_and_the_demo_password() -> None:
     settings = _seed_settings(**SEED_ENV)
 

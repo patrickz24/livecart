@@ -7,6 +7,7 @@ streams per instance, and the answers before any stream: 401, 404, 422.
 
 from dataclasses import dataclass
 from datetime import timedelta
+from uuid import uuid4
 
 import fastapi.routing
 import pytest
@@ -19,8 +20,10 @@ from livecart_api.routes.session_events import (
     CLOSE_EVENT,
     GAP_EVENT,
     RECONNECT_AFTER_MS,
+    SELLER_STREAMS_FULL,
     SNAPSHOT_EVENT,
     STREAMS_FULL,
+    StreamRefusal,
     StreamSlots,
 )
 from livecart_api.sse_testing import EventStream, StreamEnded, open_event_stream, parse_frame
@@ -75,7 +78,7 @@ class Live:
         return event
 
 
-def _live(*, clock: Clock | None = None, max_streams: int = 200) -> Live:
+def _live(*, clock: Clock | None = None, max_streams: int = 200, per_seller: int = 5) -> Live:
     clock = clock if clock is not None else current_time_clock()
     database = InMemoryDatabase()
     session = database.add_live_session()
@@ -85,7 +88,7 @@ def _live(*, clock: Clock | None = None, max_streams: int = 200) -> Live:
         database=database,
         clock=clock,
         session_events=events,
-        settings=make_settings(sse_max_streams=max_streams),
+        settings=make_settings(sse_max_streams=max_streams, sse_max_streams_per_seller=per_seller),
     )
     return Live(app, database, clock, events, session)
 
@@ -251,11 +254,44 @@ async def test_beyond_its_streams_an_instance_answers_503_until_one_closes() -> 
     await _until_released(live.app)
     async with open_event_stream(live.app, live.path, live.headers()) as again:
         await _snapshot(again)
-    assert _slots(live.app).refused_total == 1
+    assert _slots(live.app).refused_total[StreamRefusal.INSTANCE_FULL] == 1
 
 
 async def _until_released(app: FastAPI) -> None:
     await until(lambda: _slots(app).open == 0)
+
+
+async def test_beyond_its_own_streams_a_seller_gets_429_and_the_others_still_stream() -> None:
+    live = _live(max_streams=10, per_seller=2)
+    other_session = live.database.add_live_session(external_live_id="live-2")
+    other_path = f"/api/v1/live-sessions/{other_session.id}/events"
+    other_headers = seller_headers(live.app, other_session.seller_id)
+
+    async with open_event_stream(live.app, live.path, live.headers()) as first:
+        await _snapshot(first)
+        async with open_event_stream(live.app, live.path, live.headers()) as second:
+            await _snapshot(second)
+            async with open_event_stream(live.app, live.path, live.headers()) as refused:
+                body = await refused.body()
+            async with open_event_stream(live.app, other_path, other_headers) as other:
+                await _snapshot(other)
+                assert _slots(live.app).open == 3
+
+    assert refused.status == 429
+    assert refused.headers["retry-after"] == "5"
+    assert SELLER_STREAMS_FULL in body
+    await _until_released(live.app)
+    async with open_event_stream(live.app, live.path, live.headers()) as again:
+        await _snapshot(again)
+    registry = live.app.state.metrics_registry
+    assert isinstance(registry, CollectorRegistry)
+    refusals = {
+        reason: registry.get_sample_value(
+            "livecart_sse_streams_refused_total", {"reason": reason.value}
+        )
+        for reason in StreamRefusal
+    }
+    assert refusals == {StreamRefusal.SELLER_LIMIT: 1, StreamRefusal.INSTANCE_FULL: 0}
 
 
 async def test_a_closed_stream_releases_its_slot_and_is_left_out_of_the_latency() -> None:
@@ -291,7 +327,25 @@ def test_frames_are_parsed_with_their_fields_and_comments() -> None:
 
 def test_a_stream_slot_limit_is_positive() -> None:
     with pytest.raises(ValueError, match="one stream"):
-        StreamSlots(0)
+        StreamSlots(0, per_seller=1)
+    with pytest.raises(ValueError, match="one of each seller"):
+        StreamSlots(1, per_seller=0)
+
+
+def test_a_seller_releases_only_the_slots_it_holds() -> None:
+    slots = StreamSlots(2, per_seller=2)
+    seller, other = uuid4(), uuid4()
+
+    assert slots.acquire(seller) is None
+    assert slots.acquire(seller) is None
+    assert slots.acquire(other) is StreamRefusal.INSTANCE_FULL
+    slots.release(seller)
+
+    assert (slots.open, slots.held_by(seller), slots.held_by(other)) == (1, 1, 0)
+    with pytest.raises(RuntimeError, match="holds no stream slot"):
+        slots.release(other)
+    slots.release(seller)
+    assert (slots.open, slots.held_by(seller)) == (0, 0)
 
 
 def test_the_stream_is_documented_as_events_and_its_errors_as_json() -> None:
