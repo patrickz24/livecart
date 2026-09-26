@@ -41,8 +41,9 @@ read into the comment, so that ambiguities stay rare:
    through a swap, or several catalog codes through swaps;
 8. ``conflicting_signals`` (ambiguous): a buy signal with a question or a
    negation ("je prends C3 ?"), two different quantities, a bare number above
-   the bound, a number written in words (unless it repeats the quantity in
-   digits: "x2 (deux)"), or two different variants;
+   the bound, a number written in words or with look-alike letters ("1O")
+   (unless it repeats the quantity in digits: "x2 (deux)"), or two different
+   variants;
 9. ``unresolved_variant`` (ambiguous): the product has several variants and
    none is named (a product with a single variant takes it);
 10. ``Match``, with quantity 1 unless one is given.

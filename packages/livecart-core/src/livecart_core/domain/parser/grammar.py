@@ -26,7 +26,8 @@ gets, so that the catalog always wins over the generic vocabulary:
    quantities, and finally a bare number, which is not;
 7. marks: the cart emoji is a buy signal, a question mark or an elided "n'" a
    doubt;
-8. words of the lexicon: buy verbs, doubts, numbers in words, the name of the
+8. words of the lexicon: buy verbs, doubts, numbers in words or typed with
+   look-alike letters ("deux", "1O"), the name of the
    referenced product, sizes and colours, fillers, times and ordinals
    ("14h", "3e"); then the typos of buy verbs; every other word is content.
 
@@ -54,6 +55,7 @@ from livecart_core.domain.parser.tokens import (
     Token,
     UnknownCode,
     Word,
+    lookalike_number,
     tokenize,
 )
 
@@ -424,10 +426,11 @@ class _Grammar:
         for i in range(len(self._tokens)):
             if (word := self._free_word(i)) is None:
                 continue
-            self._roles[i] = _word_role(word, own_name)
-            if self._roles[i] is Role.NUMBER_WORD:
-                value = lexicon.NUMBER_WORD_VALUES[word]
+            if (value := _untrusted_number(word)) is not None:
+                self._roles[i] = Role.NUMBER_WORD
                 self._number_words.append(QuantityMention(value, self._mention(i, i), False))
+            else:
+                self._roles[i] = _word_role(word, own_name)
 
     def _references(self, codes: list[Code], unknown: list[UnknownCode]) -> tuple[Reference, ...]:
         by_key: dict[str, list[Code | UnknownCode]] = {}
@@ -474,13 +477,17 @@ def _has_numbered_sizes(product: CatalogProduct) -> bool:
     )
 
 
+def _untrusted_number(word: str) -> int | None:
+    """The value of a number the parser does not take as the quantity: "deux", "1O"."""
+    value = lexicon.NUMBER_WORD_VALUES.get(word)
+    return value if value is not None else lookalike_number(word)
+
+
 def _word_role(word: str, own_name: frozenset[str]) -> Role:
     if word in lexicon.BUY_VERBS or word in lexicon.BUY_SLANG:
         return Role.SIGNAL
     if word in lexicon.DOUBT_WORDS:
         return Role.DOUBT
-    if word in lexicon.NUMBER_WORDS:
-        return Role.NUMBER_WORD
     if not lexicon.word_forms(word).isdisjoint(own_name):
         return Role.NEUTRAL
     if lexicon.in_vocabulary(word, lexicon.SIZE_WORDS | lexicon.COLOUR_WORDS):

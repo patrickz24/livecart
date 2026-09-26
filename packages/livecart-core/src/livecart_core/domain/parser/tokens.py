@@ -16,7 +16,10 @@ because a buyer glues what belongs together ("A12M", "C3x2", "2xC3"):
    and so does a piece of letters + glued quantity (``lx2`` from ``A12Lx2``);
 5. if no piece is a catalog code but the whole word has the shape of a code,
    even through a swap (``A13``, ``A1O``), the word is one unknown code,
-   carrying the catalog codes it could be read as when there are several.
+   carrying the catalog codes it could be read as when there are several;
+   unless the swaps back to digits make it a number or a glued quantity
+   (``1O``, ``x1O``, ``xl0``): then it is a word, which the grammar reads as a
+   number it does not trust, rather than a second product.
 
 A numbered size (``2xl``), a time (``14h``, ``10h30``) or an ordinal (``3e``,
 ``2eme``) stays one word, so that its number never passes for a quantity.
@@ -111,6 +114,7 @@ _LETTERS_FOR_DIGIT: Final[dict[str, tuple[str, ...]]] = {"0": ("o",), "1": ("i",
 _DIGIT_FOR_LETTER: Final[dict[str, str]] = {"o": "0", "i": "1", "l": "1"}
 _LETTER_PART_CHARS: Final = frozenset("abcdefghijklmnopqrstuvwxyz01")
 _DIGIT_PART_CHARS: Final = frozenset("0123456789oil")
+_DIGITS_FOR_LETTERS: Final = str.maketrans(_DIGIT_FOR_LETTER)
 _MAX_LETTERS: Final = 3
 _MAX_DIGITS: Final = 4
 # A longer run of digits is out of every bound; reading it as this value
@@ -123,6 +127,24 @@ def number_value(digits: str) -> int:
     # Leading zeros count towards int()'s limit on digits too, so they go first.
     significant = digits.lstrip("0")
     return int(significant or "0") if len(significant) <= _MAX_NUMBER_DIGITS else TOO_LARGE
+
+
+def lookalike_number(word: str) -> int | None:
+    """The value of a number typed with look-alike letters: "1O", "x1O" and "xl0" are 10.
+
+    The word must start with a digit or be a glued quantity once swapped, so
+    that "lo1", which may be the code LO1, is not a number.
+    """
+    if not word.isascii() or not any(c.isdigit() for c in word):
+        return None
+    swapped = word.translate(_DIGITS_FOR_LETTERS)
+    if swapped == word:
+        return None
+    if swapped.isdigit() and word[0].isdigit():
+        return number_value(swapped)
+    if (glued := _GLUED_QUANTITY.fullmatch(swapped)) is not None:
+        return number_value(glued.group(1))
+    return None
 
 
 @lru_cache(maxsize=4096)
@@ -238,7 +260,7 @@ class _Reader:
         if (glued := _WORD_THEN_QUANTITY.fullmatch(piece)) is not None:
             head = glued.group(1)
             return [self._word(head, offset), *self._piece(glued.group(2), offset + len(head))]
-        if (unknown := self._unknown_code(piece, offset)) is not None:
+        if lookalike_number(piece) is None and (unknown := self._unknown_code(piece, offset)):
             return [unknown]
         return [self._word(piece, offset)]
 
@@ -256,9 +278,11 @@ class _Reader:
             for piece in pieces
             for token in self._piece(piece.group(), offset + piece.start())
         ]
-        if not any(isinstance(token, Code) for token in split) and (
-            unknown := self._unknown_code(word, offset)
-        ):
+        if any(isinstance(token, Code) for token in split):
+            return split
+        if lookalike_number(word) is not None:
+            return [self._word(word, offset)]
+        if unknown := self._unknown_code(word, offset):
             return [unknown]
         return split
 

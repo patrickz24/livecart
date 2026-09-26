@@ -14,6 +14,7 @@ from livecart_core.domain.parser.tokens import (
     UnknownCode,
     Word,
     code_readings,
+    lookalike_number,
     number_value,
     tokenize,
 )
@@ -182,6 +183,28 @@ def test_numbers_keep_their_value_up_to_six_significant_digits() -> None:
     assert number_value("0" * 5000 + "2") == 2
     [token] = tokens("0000000000002")
     assert token == Number("0000000000002", 0, 13, value=2)
+
+
+@pytest.mark.parametrize("typed", ["1O", "1o", "x1O", "xl0", "XI5", "qte1o"])
+def test_a_number_typed_with_look_alike_letters_is_a_word_not_a_code(typed: str) -> None:
+    assert shapes(typed) == [f"Word:{typed.lower()}"]
+
+
+def test_the_value_of_a_number_typed_with_look_alike_letters() -> None:
+    assert lookalike_number("1o") == 10
+    assert lookalike_number("x1o") == 10
+    assert lookalike_number("xl0") == 10
+    assert lookalike_number("qte1o") == 10
+    # Nothing to swap back, no digit at all, or the shape of a code.
+    assert lookalike_number("10") is None
+    assert lookalike_number("lol") is None
+    assert lookalike_number("lo1") is None
+    assert lookalike_number("a1o") is None
+    assert lookalike_number(chr(0x0663) + "o") is None
+
+
+def test_a_word_that_may_be_a_code_stays_an_unknown_code() -> None:
+    assert shapes("lo1") == ["UnknownCode:lo1"]
 
 
 def test_code_readings_cover_both_directions_of_the_swaps() -> None:

@@ -286,6 +286,33 @@ def test_an_idiom_with_a_negation_is_no_doubt(text: str) -> None:
     assert result.product_code == B07
 
 
+@pytest.mark.parametrize(
+    ("text", "number"),
+    [
+        ("je prends B07 x1O", "x1O"),
+        ("je prends B07 xl0", "xl0"),
+        ("je prends B07 1o", "1o"),
+        ("B07 x 1O", "1O"),
+        ("je prends B07 svp 1O", "1O"),
+    ],
+)
+def test_a_number_typed_with_look_alike_letters_is_left_to_the_fallback(
+    text: str, number: str
+) -> None:
+    # Not a second product: the fallback can read "1O" as 10.
+    assert ambiguous(text) == Ambiguous(
+        AmbiguityReason.CONFLICTING_SIGNALS,
+        (B07,),
+        tuple(quote for quote in ("prends", "B07", number) if quote in text),
+    )
+
+
+def test_a_look_alike_number_that_repeats_the_digits_agrees_with_them() -> None:
+    assert parse("je prends B07 x10 (1O)") == match(
+        B07, "", 10, Confidence.EXACT, "prends", "B07", "x10", "1O"
+    )
+
+
 def test_the_same_quantity_written_twice_is_one_quantity() -> None:
     result = parse("je prends 2 B07 x2")
 
