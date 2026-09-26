@@ -228,6 +228,9 @@ services:
       WORKER_BATCH: ${WORKER_BATCH:-32}
       MESSAGE_PROCESS_TIMEOUT_S: ${MESSAGE_PROCESS_TIMEOUT_S:-30}
       WORKER_DB_MAX_CONNECTIONS: ${WORKER_DB_MAX_CONNECTIONS:-22}
+      # Reclaim and dead letters; an empty idle time is derived from the window.
+      QUEUE_MAX_DELIVERIES: ${QUEUE_MAX_DELIVERIES:-3}
+      QUEUE_RECLAIM_MIN_IDLE_MS: ${QUEUE_RECLAIM_MIN_IDLE_MS:-}
     # On SIGTERM the worker stops reading and lets its handlers finish, each
     # within MESSAGE_PROCESS_TIMEOUT_S (30 s): Docker's default 10 s would kill
     # them midway, which only leaves their deliveries for a reclaim.

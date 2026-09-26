@@ -24,9 +24,13 @@ constructs, and every write that settles a comment carries the guard
 - ``record_llm_receipt``, unit 2: ``UPDATE ... WHERE id = :id AND
   llm_outcome IS NULL``, then the receipt stored is read back, whichever
   attempt wrote it;
-- ``reject`` and ``dead_letter``: compare-and-set from ``received``; no row
-  updated, the status read back decides between ``NOOP`` and
-  ``InvalidTransition``, as ``transition`` does for every machine.
+- ``reject``: a compare-and-set from ``received``; no row updated, the
+  status read back decides between ``NOOP`` and ``InvalidTransition``, as
+  ``transition`` does for every machine;
+- ``dead_letter``: the same compare-and-set, written ``INSERT ... ON
+  CONFLICT DO UPDATE SET status = 'dead_lettered' WHERE comments.status =
+  'received'``, so that a comment whose every delivery failed before unit 1
+  is recorded, dead-lettered, too.
 
 Every time comes from the caller's ``now`` (the ``Clock`` port).
 """
@@ -250,22 +254,34 @@ class SqlCommentInbox:
             raise RecordNotFound(f"no comment {comment_id}")
         return transition(COMMENT_TRANSITIONS, status, CommentStatus.REJECTED)
 
-    async def dead_letter(self, platform: Platform, external_comment_id: str) -> TransitionOutcome:
-        key = (comments.c.platform == platform.value) & (
-            comments.c.external_comment_id == external_comment_id
+    async def dead_letter(self, comment: QueuedComment, *, now: datetime) -> TransitionOutcome:
+        incoming = comment.comment
+        new = insert(comments).values(
+            id=new_id(),
+            platform=incoming.platform.value,
+            external_comment_id=incoming.external_comment_id,
+            author_platform_user_id=incoming.author_platform_user_id,
+            text=incoming.text,
+            correlation_id=comment.correlation_id,
+            status=CommentStatus.DEAD_LETTERED.value,
+            created_at=now,
+        )
+        statement = new.on_conflict_do_update(
+            constraint=DEDUPLICATION_CONSTRAINT,
+            set_={"status": new.excluded.status, "updated_at": func.now()},
+            where=comments.c.status == CommentStatus.RECEIVED.value,
+        ).returning(comments.c.id)
+        key = (comments.c.platform == incoming.platform.value) & (
+            comments.c.external_comment_id == incoming.external_comment_id
         )
         async with transaction(self._engine) as connection:
-            settled = await connection.scalar(
-                update(comments)
-                .where(key, comments.c.status == CommentStatus.RECEIVED.value)
-                .values(status=CommentStatus.DEAD_LETTERED.value)
-                .returning(comments.c.id)
-            )
+            settled = await connection.scalar(statement)
             if settled is not None:
                 return TransitionOutcome.APPLIED
             status = await self._status(connection, key)
         if status is None:
-            raise RecordNotFound(f"no comment {platform}/{external_comment_id}")
+            # A conflict without a row: only a reset of the session, as the migrator, deletes one.
+            raise RecordNotFound(f"no comment {incoming.platform}/{incoming.external_comment_id}")
         return transition(COMMENT_TRANSITIONS, status, CommentStatus.DEAD_LETTERED)
 
     @staticmethod

@@ -498,8 +498,14 @@ class CommentInbox(Protocol):
         ``parse``, when the parser read the comment, is recorded with it.
         """
 
-    async def dead_letter(self, platform: Platform, external_comment_id: str) -> TransitionOutcome:
-        """Settle a received comment as dead-lettered, once its last delivery failed."""
+    async def dead_letter(self, comment: QueuedComment, *, now: datetime) -> TransitionOutcome:
+        """Settle a comment as dead-lettered, once its last delivery failed.
+
+        A received comment becomes dead-lettered; a comment no delivery ever
+        recorded (each failed before unit 1 committed) is recorded
+        dead-lettered at ``now``, so that the inbox keeps the durable trace of
+        every dead letter, and a later delivery of it is a duplicate.
+        """
 
 
 class LiveSessionRepository(Protocol):

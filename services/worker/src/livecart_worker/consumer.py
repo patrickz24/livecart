@@ -78,8 +78,11 @@ class CommentConsumer:
     """One consumer of the group ``workers``; see the module docstring.
 
     ``run`` reads until its stop event is set, then waits for the handlers
-    in flight. ``submit`` also takes the deliveries the reclaim loop hands
-    out, which count in the same window.
+    in flight. The reclaim loop hands out its deliveries through the same
+    window: each loop reserves the room it asks the queue for before it
+    awaits the answer (``reserve_room``), gives back what did not come
+    (``release_room``), and submits what did into the room it reserved, so
+    that the two never fill the same room twice.
     """
 
     def __init__(
@@ -116,6 +119,7 @@ class CommentConsumer:
         # as one ends; the tasks are kept for drain, and against the garbage
         # collector, which may drop a task nothing references.
         self._in_flight = 0
+        self._reserved = 0
         self._handlers: set[asyncio.Task[None]] = set()
         self._room_freed = asyncio.Event()
         self._last_progress = monotonic()
@@ -127,16 +131,33 @@ class CommentConsumer:
 
     @property
     def room(self) -> int:
-        """How many more deliveries the window takes."""
-        return self._batch - self.in_flight
+        """How many more deliveries the window takes, besides the room reserved already."""
+        return self._batch - self._in_flight - self._reserved
+
+    def reserve_room(self) -> int:
+        """Set the room left aside for deliveries asked for and not come yet; return it."""
+        room = self.room
+        self._reserved += room
+        return room
+
+    def release_room(self, count: int) -> None:
+        """Give back ``count`` of the room reserved, for deliveries that did not come."""
+        if not 0 <= count <= self._reserved:
+            raise ValueError(f"{count} is not within the {self._reserved} deliveries reserved")
+        self._reserved -= count
+        self._room_freed.set()
 
     def progressed_within(self, seconds: float) -> bool:
         """Whether the read loop went round in the last ``seconds``: what the heartbeat checks."""
         return self._monotonic() - self._last_progress <= seconds
 
-    def submit(self, delivery: QueueDelivery) -> None:
-        """Hand one delivery to a handler, within the window."""
-        if self.room < 1:
+    def submit(self, delivery: QueueDelivery, *, reserved: bool = False) -> None:
+        """Hand one delivery to a handler, in the room reserved for it or in the room left."""
+        if reserved:
+            if self._reserved < 1:
+                raise RuntimeError("no room was reserved for this delivery")
+            self._reserved -= 1
+        elif self.room < 1:
             raise RuntimeError(f"the window of {self._batch} deliveries is full")
         self._in_flight += 1
         handler = asyncio.create_task(
@@ -151,19 +172,25 @@ class CommentConsumer:
         try:
             while not stop.is_set():
                 self._last_progress = self._monotonic()
-                if self.room < 1:
+                room = self.reserve_room()
+                if room < 1:
                     await self._wait_for_room()
                     continue
                 try:
                     deliveries = await self._queue.receive(
-                        self.name, max_messages=self.room, block_seconds=self._block_s
+                        self.name, max_messages=room, block_seconds=self._block_s
                     )
                 except ServiceUnavailable as error:
+                    self.release_room(room)
                     logger.warning("comment_queue_unavailable", error=str(error))
                     await _pause(stop, self._block_s)
                     continue
+                except BaseException:
+                    self.release_room(room)
+                    raise
+                self.release_room(room - len(deliveries))
                 for delivery in deliveries:
-                    self.submit(delivery)
+                    self.submit(delivery, reserved=True)
         finally:
             await self.drain()
             logger.info("comment_consumer_stopped", consumer=self.name)

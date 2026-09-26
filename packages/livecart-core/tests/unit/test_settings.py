@@ -19,7 +19,13 @@ from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 APP_URL = "postgresql+asyncpg://livecart_app:{password}@localhost:55432/livecart"
 REDIS_URL = "redis://:{password}@localhost:56379/0"
-WORKER_SETTINGS = ("WORKER_CONCURRENCY", "WORKER_BATCH", "MESSAGE_PROCESS_TIMEOUT_S")
+WORKER_SETTINGS = (
+    "WORKER_CONCURRENCY",
+    "WORKER_BATCH",
+    "MESSAGE_PROCESS_TIMEOUT_S",
+    "QUEUE_MAX_DELIVERIES",
+    "QUEUE_RECLAIM_MIN_IDLE_MS",
+)
 # Signing keys that pass every check, in production too.
 KEYS = {
     "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
@@ -560,6 +566,53 @@ def test_the_worker_pool_must_fit_its_connection_cap() -> None:
 
     assert wider.worker_pool.max_connections == 23
     assert fewer.worker_pool.size == 8
+
+
+def test_a_comment_is_reclaimed_after_120_s_and_dead_lettered_after_3_deliveries() -> None:
+    settings = load(**dev_env())
+
+    assert settings.queue_max_deliveries == 3
+    assert settings.longest_pending == timedelta(seconds=60)
+    assert settings.queue_reclaim_min_idle == timedelta(seconds=120)
+
+
+@pytest.mark.parametrize(
+    ("env", "idle"),
+    [
+        # A window of 16 for 16 handlers: one deadline, so 60 s.
+        ({"WORKER_BATCH": "16"}, timedelta(seconds=60)),
+        # Three rounds of 10 s deadlines.
+        ({"WORKER_BATCH": "40", "MESSAGE_PROCESS_TIMEOUT_S": "10"}, timedelta(seconds=60)),
+        ({"WORKER_BATCH": "8", "WORKER_CONCURRENCY": "4"}, timedelta(seconds=120)),
+        # Longer than derived is allowed, shorter is not.
+        ({"QUEUE_RECLAIM_MIN_IDLE_MS": "300000"}, timedelta(seconds=300)),
+        # Empty, as compose passes it when .env leaves it unset: derived.
+        ({"QUEUE_RECLAIM_MIN_IDLE_MS": ""}, timedelta(seconds=120)),
+        ({"QUEUE_RECLAIM_MIN_IDLE_MS": "120000"}, timedelta(seconds=120)),
+    ],
+)
+def test_the_reclaim_idle_time_derives_from_the_worker_window(
+    env: dict[str, str], idle: timedelta
+) -> None:
+    assert load(**env, **dev_env()).queue_reclaim_min_idle == idle
+
+
+@pytest.mark.parametrize(
+    ("env", "message"),
+    [
+        ({"QUEUE_RECLAIM_MIN_IDLE_MS": "119999"}, "from 120000"),
+        ({"QUEUE_RECLAIM_MIN_IDLE_MS": "3600001"}, "to 3600000 ms"),
+        # A wider window holds its deliveries longer: 2 x 4 x 30 s.
+        ({"QUEUE_RECLAIM_MIN_IDLE_MS": "200000", "WORKER_BATCH": "64"}, "from 240000"),
+        ({"QUEUE_MAX_DELIVERIES": "0"}, "from 1 to 10 deliveries"),
+        ({"QUEUE_MAX_DELIVERIES": "11"}, "from 1 to 10 deliveries"),
+    ],
+)
+def test_the_reclaim_settings_are_refused_outside_their_bounds(
+    env: dict[str, str], message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(**env, **dev_env())
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

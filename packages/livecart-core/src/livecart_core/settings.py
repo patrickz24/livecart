@@ -87,6 +87,15 @@ MIN_MESSAGE_PROCESS_TIMEOUT_S: Final = 5
 MAX_MESSAGE_PROCESS_TIMEOUT_S: Final = 300
 # PostgreSQL's 100 connections, less the 3 it keeps for superusers.
 MAX_DB_CONNECTIONS: Final = 97
+# The deliveries of one comment before it goes to the dead-letter queue.
+MAX_QUEUE_DELIVERIES: Final = 10
+# The longest idle time before a reclaim: past an hour, a crashed worker's
+# comments would wait longer than any live stream lasts.
+MAX_QUEUE_RECLAIM_MIN_IDLE_MS: Final = 3_600_000
+# How many times the longest a live worker may hold a delivery the idle time
+# before a reclaim is: the margin covers a loop late to go round, a slow read
+# and the clocks of Redis and of the worker.
+RECLAIM_IDLE_MARGIN: Final = 2
 
 
 class AppEnv(StrEnum):
@@ -262,6 +271,13 @@ class Settings(BaseAppSettings):
     # WORKER_CONCURRENCY whose pool (livecart_core.infrastructure.db.engine)
     # would open more.
     worker_db_max_connections: int = 22
+    # Deliveries of one comment: the next one goes to the dead-letter queue
+    # instead, and the comment is settled as dead_lettered.
+    queue_max_deliveries: int = 3
+    # How long a delivery stays pending, unacknowledged, before another
+    # consumer reclaims it (XAUTOCLAIM). None derives it from the worker's
+    # window (queue_reclaim_min_idle); a value set must not be shorter.
+    queue_reclaim_min_idle_ms: int | None = None
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -275,6 +291,30 @@ class Settings(BaseAppSettings):
     def worker_pool(self) -> PoolSize:
         """The worker's pool: a connection per comment handler and per database loop."""
         return worker_pool(self.worker_concurrency)
+
+    @property
+    def longest_pending(self) -> timedelta:
+        """The longest a live worker holds a delivery: ceil(batch / concurrency) deadlines.
+
+        A worker holds at most WORKER_BATCH deliveries and runs
+        WORKER_CONCURRENCY of them at once, each within its deadline: the last
+        one read waits for the others at most ceil(batch / concurrency) - 1
+        deadlines, then runs its own.
+        """
+        rounds = -(-self.worker_batch // self.worker_concurrency)
+        return rounds * self.message_process_timeout
+
+    @property
+    def queue_reclaim_min_idle(self) -> timedelta:
+        """QUEUE_RECLAIM_MIN_IDLE_MS, or twice the longest a live worker holds a delivery.
+
+        120 s by default: 2 x ceil(32 / 16) x 30 s. A shorter idle time would
+        reclaim deliveries a live worker still holds, and count deliveries
+        towards the dead-letter queue that never failed.
+        """
+        if self.queue_reclaim_min_idle_ms is not None:
+            return timedelta(milliseconds=self.queue_reclaim_min_idle_ms)
+        return RECLAIM_IDLE_MARGIN * self.longest_pending
 
     def comment_webhook_secret(self, platform: Platform) -> SecretStr | None:
         """``COMMENT_WEBHOOK_SECRET_<PLATFORM>``, or ``None`` when it is not set."""
@@ -387,6 +427,34 @@ class Settings(BaseAppSettings):
         if not 1 <= value <= MAX_DB_CONNECTIONS:
             raise ValueError(f"must be from 1 to {MAX_DB_CONNECTIONS} connections")
         return value
+
+    @field_validator("queue_reclaim_min_idle_ms", mode="before")
+    @classmethod
+    def _derive_an_empty_reclaim_idle_time(cls, value: object) -> object:
+        """``QUEUE_RECLAIM_MIN_IDLE_MS=`` derives it too: compose passes the variable unset so."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("queue_max_deliveries")
+    @classmethod
+    def _check_queue_max_deliveries(cls, value: int) -> int:
+        if not 1 <= value <= MAX_QUEUE_DELIVERIES:
+            raise ValueError(f"must be from 1 to {MAX_QUEUE_DELIVERIES} deliveries")
+        return value
+
+    @model_validator(mode="after")
+    def _a_reclaim_never_takes_a_live_delivery(self) -> Self:
+        """QUEUE_RECLAIM_MIN_IDLE_MS, if set, at least twice the longest a live worker holds one."""
+        if self.queue_reclaim_min_idle_ms is None:
+            return self
+        derived = RECLAIM_IDLE_MARGIN * self.longest_pending
+        shortest = int(derived.total_seconds() * 1000)
+        if not shortest <= self.queue_reclaim_min_idle_ms <= MAX_QUEUE_RECLAIM_MIN_IDLE_MS:
+            raise ValueError(
+                f"QUEUE_RECLAIM_MIN_IDLE_MS must be from {shortest} (twice "
+                "ceil(WORKER_BATCH / WORKER_CONCURRENCY) x MESSAGE_PROCESS_TIMEOUT_S) to "
+                f"{MAX_QUEUE_RECLAIM_MIN_IDLE_MS} ms, not {self.queue_reclaim_min_idle_ms}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _the_worker_pool_fits_its_cap(self) -> Self:

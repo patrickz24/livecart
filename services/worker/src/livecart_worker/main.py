@@ -5,6 +5,8 @@
 then runs the worker's loops in one TaskGroup:
 
 - the comment consumer (``consumer.CommentConsumer`` over ``ProcessComment``);
+- the reclaim loop, every 30 s (``reclaim``): deliveries left idle by another
+  consumer redelivered or dead-lettered, then the safe trim of the stream;
 - the heartbeat, which also checks that the consumer keeps going round.
 
 SIGTERM (``docker stop``) and SIGINT (Ctrl+C) set a stop event that every
@@ -23,6 +25,7 @@ import structlog
 
 from livecart_core.application.ports import Clock
 from livecart_core.application.process_comment import ProcessComment
+from livecart_core.application.reclaim_comments import ReclaimComments
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.comments import SqlCommentInbox
@@ -36,6 +39,7 @@ from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
 from livecart_worker.consumer import CommentConsumer, default_consumer_name
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
+from livecart_worker.reclaim import RECLAIM_INTERVAL_S, run_reclaim
 
 logger = structlog.get_logger(__name__)
 
@@ -80,11 +84,12 @@ async def serve(
     heartbeat_interval_s: float = HEARTBEAT_INTERVAL_S,
     clock: Clock | None = None,
     consumer_name: str | None = None,
+    reclaim_interval_s: float = RECLAIM_INTERVAL_S,
 ) -> None:
     """Run every worker loop until ``stop`` is set.
 
     ``clock`` and ``consumer_name`` default to the system clock and to
-    ``<host>-<pid>``; the tests fix them.
+    ``<host>-<pid>``; the tests fix them, and the reclaim interval.
     """
     clock = clock if clock is not None else SystemClock()
     redis = create_redis_client(settings.redis_url)
@@ -96,8 +101,9 @@ async def serve(
     )
     try:
         queue = RedisCommentQueue(redis, prefix=settings.redis_key_prefix)
+        inbox = SqlCommentInbox(engine)
         process = ProcessComment(
-            inbox=SqlCommentInbox(engine),
+            inbox=inbox,
             sessions=SqlLiveSessionRepository(engine),
             orders=SqlOrderRepository(
                 engine,
@@ -119,8 +125,16 @@ async def serve(
             concurrency=settings.worker_concurrency,
             deadline_s=settings.message_process_timeout_s,
         )
+        reclaim = ReclaimComments(
+            queue,
+            inbox,
+            clock,
+            min_idle=settings.queue_reclaim_min_idle,
+            max_deliveries=settings.queue_max_deliveries,
+        )
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
+            loops.create_task(run_reclaim(reclaim, consumer, stop, interval_s=reclaim_interval_s))
             loops.create_task(
                 run_heartbeat(
                     ping=partial(ping_redis, redis),

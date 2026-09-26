@@ -230,20 +230,39 @@ async def test_a_rejection_records_what_the_parser_said_if_it_ran(
 async def test_a_dead_letter_settles_a_received_comment_once(backend: ReservationBackend) -> None:
     claim = await backend.comments.claim(COMMENT, holder="worker-1/1-0", now=NOW, lease=LEASE)
 
-    first = await backend.comments.dead_letter(Platform.SIMULATOR, "comment-1")
-    second = await backend.comments.dead_letter(Platform.SIMULATOR, "comment-1")
+    first = await backend.comments.dead_letter(COMMENT, now=NOW + LEASE)
+    second = await backend.comments.dead_letter(COMMENT, now=NOW + 2 * LEASE)
 
     row = await backend.comments.get(claim.comment.id)
     assert (first, second) == (TransitionOutcome.APPLIED, TransitionOutcome.NOOP)
     assert row is not None
     assert row.status is CommentStatus.DEAD_LETTERED
+    assert row.created_at == NOW
+
+
+async def test_a_comment_never_recorded_is_recorded_dead_lettered(
+    backend: ReservationBackend,
+) -> None:
+    later = NOW + timedelta(minutes=6)
+
+    outcome = await backend.comments.dead_letter(COMMENT, now=later)
+    again = await backend.comments.claim(COMMENT, holder="worker-1/9-0", now=later, lease=LEASE)
+
+    assert outcome is TransitionOutcome.APPLIED
+    row = again.comment
+    assert not again.acquired
+    assert row.status is CommentStatus.DEAD_LETTERED
+    assert (row.platform, row.external_comment_id) == (Platform.SIMULATOR, "comment-1")
+    assert (row.author_platform_user_id, row.text) == ("buyer-1", "je prends A12 M")
+    assert row.correlation_id == COMMENT.correlation_id
+    assert (row.created_at, row.claimed_by, row.session_id) == (later, None, None)
 
 
 async def test_a_settled_comment_takes_no_other_terminal_status(
     backend: ReservationBackend,
 ) -> None:
     claim = await backend.comments.claim(COMMENT, holder="worker-1/1-0", now=NOW, lease=LEASE)
-    await backend.comments.dead_letter(Platform.SIMULATOR, "comment-1")
+    await backend.comments.dead_letter(COMMENT, now=NOW)
 
     with pytest.raises(InvalidTransition):
         await backend.comments.reject(claim.comment.id, RejectionReason.NO_INTENT, session_id=None)
@@ -252,7 +271,7 @@ async def test_a_settled_comment_takes_no_other_terminal_status(
     other = await backend.comments.claim(rejected, holder="worker-1/2-0", now=NOW, lease=LEASE)
     await backend.comments.reject(other.comment.id, RejectionReason.NO_INTENT, session_id=None)
     with pytest.raises(InvalidTransition):
-        await backend.comments.dead_letter(Platform.SIMULATOR, "comment-2")
+        await backend.comments.dead_letter(rejected, now=NOW)
 
 
 async def test_unknown_comments_are_not_found(backend: ReservationBackend) -> None:
@@ -261,8 +280,6 @@ async def test_unknown_comments_are_not_found(backend: ReservationBackend) -> No
         await backend.comments.record_llm_receipt(UNKNOWN, FallbackReceipt(LlmOutcome.DISABLED))
     with pytest.raises(RecordNotFound):
         await backend.comments.reject(UNKNOWN, RejectionReason.NO_INTENT, session_id=None)
-    with pytest.raises(RecordNotFound):
-        await backend.comments.dead_letter(Platform.SIMULATOR, "comment-404")
 
 
 async def test_a_claim_needs_a_lease(backend: ReservationBackend) -> None:

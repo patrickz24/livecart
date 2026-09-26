@@ -402,3 +402,21 @@ def test_the_jitter_stays_between_zero_and_its_cap() -> None:
 
     assert all(0 <= draw <= 0.2 for draw in draws)
     assert len(set(draws)) > 1
+
+
+async def test_room_is_reserved_before_a_read_and_given_back_after() -> None:
+    queue = BlockingQueue()
+    consumer = _consumer(queue, Handler(queue), batch=4)
+
+    assert consumer.reserve_room() == 4
+    assert (consumer.room, consumer.reserve_room()) == (0, 0)
+    consumer.release_room(3)
+    assert consumer.room == 3
+    with pytest.raises(ValueError, match="not within the 1 deliveries reserved"):
+        consumer.release_room(2)
+    with pytest.raises(ValueError, match="not within"):
+        consumer.release_room(-1)
+    consumer.release_room(1)
+
+    with pytest.raises(RuntimeError, match="no room was reserved"):
+        consumer.submit(QueueDelivery("1-0", queued_comment(), 1), reserved=True)

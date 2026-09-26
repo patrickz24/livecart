@@ -1004,10 +1004,23 @@ class InMemoryCommentInbox(_Repository):
             )
         return outcome
 
-    async def dead_letter(self, platform: Platform, external_comment_id: str) -> TransitionOutcome:
-        row = self._find(platform, external_comment_id)
+    async def dead_letter(self, comment: QueuedComment, *, now: datetime) -> TransitionOutcome:
+        _require_aware(now)
+        incoming = comment.comment
+        row = self._find(incoming.platform, incoming.external_comment_id)
         if row is None:
-            raise RecordNotFound(f"no comment {platform}/{external_comment_id}")
+            row = InboxComment(
+                id=self._db.new_id(),
+                platform=incoming.platform,
+                external_comment_id=incoming.external_comment_id,
+                author_platform_user_id=incoming.author_platform_user_id,
+                text=incoming.text,
+                correlation_id=comment.correlation_id,
+                status=CommentStatus.DEAD_LETTERED,
+                created_at=now,
+            )
+            self._tables.comments[row.id] = row
+            return TransitionOutcome.APPLIED
         outcome = transition(COMMENT_TRANSITIONS, row.status, CommentStatus.DEAD_LETTERED)
         if outcome is TransitionOutcome.APPLIED:
             self._tables.comments[row.id] = replace(row, status=CommentStatus.DEAD_LETTERED)

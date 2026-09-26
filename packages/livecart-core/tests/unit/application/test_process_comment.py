@@ -288,7 +288,7 @@ async def test_a_redelivery_of_a_comment_without_session_or_outcome_publishes_no
     dead = queued_comment(external_comment_id="dead")
     [dead_delivery] = await world.deliver(dead)
     await world.database.comments.claim(dead, holder="w/1-0", now=world.clock.now(), lease=LEASE)
-    await world.database.comments.dead_letter(Platform.SIMULATOR, "dead")
+    await world.database.comments.dead_letter(dead, now=world.clock.now())
 
     stray_again = await world.process(again, consumer=CONSUMER)
     dead_again = await world.process(dead_delivery, consumer=CONSUMER)
@@ -444,7 +444,8 @@ class _DeadLetteredFirst(_OvertakenInbox):
 
     async def _settle_first(self, comment_id: UUID, session_id: UUID | None) -> None:
         row = self._tables.comments[comment_id]
-        await self.dead_letter(row.platform, row.external_comment_id)
+        comment = queued_comment(row.text, external_comment_id=row.external_comment_id)
+        await self.dead_letter(comment, now=row.created_at)
 
 
 @pytest.mark.parametrize(
