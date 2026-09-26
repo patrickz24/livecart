@@ -13,9 +13,9 @@ The pools follow the plan's connection budget (97 connections available):
 
 - the API holds 5 connections plus 10 on overflow;
 - the worker holds one connection per comment handler (``WORKER_CONCURRENCY``,
-  16) and one per background loop that uses the database (4: the reclaim and
-  dead-letter loop, the expiry sweep, and from milestones 5 and 6 the payment
-  registry and the shipments), so 20, plus 2 on overflow: 22 at most, which
+  16) and one per background loop that uses the database (4: the consumer's
+  reclaim and its dead letters, the expiry sweep, and from milestones 5 and 6
+  the payment registry and the shipments), so 20, plus 2 on overflow: 22 at most, which
   ``WORKER_DB_MAX_CONNECTIONS`` caps at startup (``worker_pool``).
 
 That is 37 connections for one API and one worker, 81 with three workers.

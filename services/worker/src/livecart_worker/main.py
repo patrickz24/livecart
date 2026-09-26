@@ -4,9 +4,10 @@
 ``WORKER_DB_MAX_CONNECTIONS``, one Redis client) and the use cases over them,
 then runs the worker's loops in one TaskGroup:
 
-- the comment consumer (``consumer.CommentConsumer`` over ``ProcessComment``);
-- the reclaim loop, every 30 s (``reclaim``): deliveries left idle by another
-  consumer redelivered or dead-lettered, then the safe trim of the stream;
+- the comment consumer (``consumer.CommentConsumer`` over ``ProcessComment``),
+  whose loop also reclaims every 30 s (``ReclaimComments``): deliveries left
+  idle by another consumer redelivered or dead-lettered, then the safe trim of
+  the stream;
 - the expiry sweep, every 5 s (``sweeps``): the reservations nobody paid in
   time expired, and their stock released;
 - the heartbeat, which also checks that the consumer keeps going round.
@@ -41,9 +42,12 @@ from livecart_core.infrastructure.redis_client import create_redis_client, ping_
 from livecart_core.logging import configure_logging
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
-from livecart_worker.consumer import CommentConsumer, default_consumer_name
+from livecart_worker.consumer import (
+    RECLAIM_INTERVAL_S,
+    CommentConsumer,
+    default_consumer_name,
+)
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
-from livecart_worker.reclaim import RECLAIM_INTERVAL_S, run_reclaim
 from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
 logger = structlog.get_logger(__name__)
@@ -139,18 +143,18 @@ async def serve(
             batch=settings.worker_batch,
             concurrency=settings.worker_concurrency,
             deadline_s=settings.message_process_timeout_s,
-        )
-        reclaim = ReclaimComments(
-            queue,
-            inbox,
-            clock,
-            min_idle=settings.queue_reclaim_min_idle,
-            max_deliveries=settings.queue_max_deliveries,
+            reclaim=ReclaimComments(
+                queue,
+                inbox,
+                clock,
+                min_idle=settings.queue_reclaim_min_idle,
+                max_deliveries=settings.queue_max_deliveries,
+            ),
+            reclaim_interval_s=reclaim_interval_s,
         )
         expire = ExpireReservations(orders, events, clock, budget=EXPIRY_BUDGET)
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
-            loops.create_task(run_reclaim(reclaim, consumer, stop, interval_s=reclaim_interval_s))
             loops.create_task(run_expiry_sweep(expire, stop, interval_s=expiry_interval_s))
             loops.create_task(
                 run_heartbeat(

@@ -303,7 +303,6 @@ def test_the_entry_points_are_among_the_modules_checked_for_raw_sql() -> None:
     assert "livecart_worker.main" in checked
     assert "livecart_worker.heartbeat" in checked
     assert "livecart_worker.consumer" in checked
-    assert "livecart_worker.reclaim" in checked
     assert "livecart_worker.sweeps" in checked
     assert "livecart_api.testing" not in checked
 

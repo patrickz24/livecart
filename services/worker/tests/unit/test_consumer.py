@@ -369,13 +369,20 @@ async def test_the_heartbeat_sees_whether_the_loop_goes_round() -> None:
 
 
 @pytest.mark.parametrize(
-    "overrides",
-    [{"batch": 0}, {"concurrency": 0}, {"deadline_s": 0}, {"block_s": 0}, {"retries": -1}],
+    ("overrides", "message"),
+    [
+        ({"batch": 0}, "needs a window"),
+        ({"concurrency": 0}, "needs a window"),
+        ({"deadline_s": 0}, "needs a window"),
+        ({"block_s": 0}, "needs a window"),
+        ({"reclaim_interval_s": 0}, "needs a window"),
+        ({"retries": -1}, "retries cannot be negative"),
+    ],
 )
-def test_a_consumer_needs_its_bounds(overrides: dict[str, float]) -> None:
+def test_a_consumer_needs_its_bounds(overrides: dict[str, float], message: str) -> None:
     queue = BlockingQueue()
     options: dict[str, float] = {"batch": 1, "concurrency": 1, "deadline_s": 1, **overrides}
-    with pytest.raises(ValueError, match="needs a window"):
+    with pytest.raises(ValueError, match=message):
         CommentConsumer(
             queue,
             Handler(queue),
@@ -384,6 +391,7 @@ def test_a_consumer_needs_its_bounds(overrides: dict[str, float]) -> None:
             concurrency=int(options["concurrency"]),
             deadline_s=options["deadline_s"],
             block_s=options.get("block_s", 1),
+            reclaim_interval_s=options.get("reclaim_interval_s", 30),
             retries=int(options.get("retries", 2)),
         )
 
@@ -402,21 +410,3 @@ def test_the_jitter_stays_between_zero_and_its_cap() -> None:
 
     assert all(0 <= draw <= 0.2 for draw in draws)
     assert len(set(draws)) > 1
-
-
-async def test_room_is_reserved_before_a_read_and_given_back_after() -> None:
-    queue = BlockingQueue()
-    consumer = _consumer(queue, Handler(queue), batch=4)
-
-    assert consumer.reserve_room() == 4
-    assert (consumer.room, consumer.reserve_room()) == (0, 0)
-    consumer.release_room(3)
-    assert consumer.room == 3
-    with pytest.raises(ValueError, match="not within the 1 deliveries reserved"):
-        consumer.release_room(2)
-    with pytest.raises(ValueError, match="not within"):
-        consumer.release_room(-1)
-    consumer.release_room(1)
-
-    with pytest.raises(RuntimeError, match="no room was reserved"):
-        consumer.submit(QueueDelivery("1-0", queued_comment(), 1), reserved=True)

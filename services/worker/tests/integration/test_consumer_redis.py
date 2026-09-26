@@ -70,13 +70,13 @@ async def worker(settings: Settings, postgres_backend: PostgresBackend) -> Async
         await asyncio.wait_for(task, timeout=35)
 
 
-async def _settled(queue: RedisCommentQueue) -> None:
+async def _settled(queue: RedisCommentQueue, *, within_s: float = 15) -> None:
     """Until the group's backlog (new and pending entries) is empty."""
 
     async def empty() -> bool:
         return await queue.backlog() == 0
 
-    await until(empty, within_s=15, every_s=0.05)
+    await until(empty, within_s=within_s, every_s=0.05)
 
 
 async def _statuses(engine: AsyncEngine) -> dict[str, CommentStatus]:
@@ -197,3 +197,45 @@ async def test_the_worker_expires_the_reservations_nobody_paid(
     stored = await postgres_backend.products.get(product.id)
     assert stored is not None
     assert stored.stock.reserved == 0
+
+
+async def test_the_worker_takes_back_what_a_crashed_consumer_left(
+    integration_settings: IntegrationSettings,
+    postgres_backend: PostgresBackend,
+    migrator_engine: AsyncEngine,
+    queue: RedisCommentQueue,
+    redis_client: Redis,
+    redis_key_prefix: str,
+    tmp_path: Path,
+) -> None:
+    session = await postgres_backend.add_live_session()
+    await postgres_backend.add_product(session.id, "B07", stock_total=10)
+    await queue.enqueue([queued_comment("je prends B07")])
+    await queue.receive("worker-crashed", max_messages=1, block_seconds=0)
+    # The shortest idle time the settings take: 2 x ceil(16 / 16) x 5 s.
+    settings = Settings(
+        database_url=integration_settings.database_url,
+        redis_url=integration_settings.redis_url,
+        redis_key_prefix=redis_key_prefix,
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
+        worker_heartbeat_file=tmp_path / "worker.heartbeat",
+        worker_batch=16,
+        message_process_timeout_s=5,
+        _env_file=None,
+    )
+    assert settings.queue_reclaim_min_idle == timedelta(seconds=10)
+    stop = asyncio.Event()
+    task = asyncio.create_task(
+        serve(settings, stop, consumer_name="worker-it", reclaim_interval_s=0.5)
+    )
+
+    try:
+        await _settled(queue, within_s=20)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=35)
+
+    assert (await _statuses(migrator_engine))["comment-1"] is CommentStatus.PROCESSED
+    pending: Any = await redis_client.xpending(queue.stream_key, GROUP)
+    assert pending["pending"] == 0

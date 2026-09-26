@@ -30,8 +30,8 @@ from livecart_core.infrastructure.events import NullEventPublisher
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.testing.backends import ORDER_TOKENS, PostgresBackend
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, queued_comment
+from livecart_core.testing.polling import until
 from livecart_worker.consumer import CommentConsumer
-from livecart_worker.reclaim import reclaim_once
 
 pytestmark = pytest.mark.integration
 
@@ -43,7 +43,6 @@ MAX_DELIVERIES = 3
 class Worker:
     queue: RedisCommentQueue
     consumer: CommentConsumer
-    reclaim: ReclaimComments
 
 
 @pytest.fixture
@@ -70,12 +69,18 @@ async def worker(
         max_quantity=DEMO_MAX_QUANTITY,
     )
     consumer = CommentConsumer(
-        queue, process, name="worker-live", batch=32, concurrency=16, deadline_s=30
+        queue,
+        process,
+        name="worker-live",
+        batch=32,
+        concurrency=16,
+        deadline_s=30,
+        reclaim=ReclaimComments(
+            queue, postgres_backend.comments, clock, min_idle=IDLE, max_deliveries=MAX_DELIVERIES
+        ),
+        reclaim_interval_s=0.1,
     )
-    reclaim = ReclaimComments(
-        queue, postgres_backend.comments, clock, min_idle=IDLE, max_deliveries=MAX_DELIVERIES
-    )
-    yield Worker(queue, consumer, reclaim)
+    yield Worker(queue, consumer)
     await consumer.drain()
 
 
@@ -116,12 +121,45 @@ async def test_what_a_crashed_consumer_left_is_reclaimed_and_processed(
     assert (owner, deliveries) == ("worker-crashed", 1)
 
     await asyncio.sleep(IDLE.total_seconds() * 2)
-    await reclaim_once(worker.reclaim, worker.consumer)
+    await worker.consumer.reclaim_once()
     await worker.consumer.drain()
 
     assert await _status(migrator_engine, "comment-1") is CommentStatus.PROCESSED
     assert await postgres_backend.count("orders") == 1
     assert await _pending(redis_client, worker.queue) == []
+    assert await worker.queue.backlog() == 0
+
+
+async def test_the_running_consumer_takes_back_what_a_crashed_one_left(
+    worker: Worker,
+    postgres_backend: PostgresBackend,
+    migrator_engine: AsyncEngine,
+    redis_client: Redis,
+) -> None:
+    # A regression, found by killing a worker of the compose stack: a reclaim
+    # loop of its own never found room in the window, which the read loop kept
+    # set aside while it blocked on XREADGROUP.
+    session = await postgres_backend.add_live_session()
+    await postgres_backend.add_product(session.id, "B07", stock_total=10)
+    left = [
+        queued_comment("je prends B07", external_comment_id=f"c-{n}", author=f"buyer-{n}")
+        for n in range(3)
+    ]
+    await _crashed_with(worker.queue, *left)
+    stop = asyncio.Event()
+
+    task = asyncio.create_task(worker.consumer.run(stop))
+
+    async def settled() -> bool:
+        return not await _pending(redis_client, worker.queue)
+
+    try:
+        await until(settled, within_s=10, every_s=0.05)
+    finally:
+        stop.set()
+        await asyncio.wait_for(task, timeout=10)
+    for n in range(3):
+        assert await _status(migrator_engine, f"c-{n}") is CommentStatus.PROCESSED
     assert await worker.queue.backlog() == 0
 
 
@@ -143,7 +181,7 @@ async def test_a_comment_past_its_last_delivery_is_dead_lettered(
     assert {row[2] for row in await _pending(redis_client, worker.queue)} == {MAX_DELIVERIES}
 
     await asyncio.sleep(IDLE.total_seconds() * 2)
-    await reclaim_once(worker.reclaim, worker.consumer)
+    await worker.consumer.reclaim_once()
 
     assert await _status(migrator_engine, "c-claimed") is CommentStatus.DEAD_LETTERED
     assert await _status(migrator_engine, "c-never") is CommentStatus.DEAD_LETTERED
@@ -179,7 +217,7 @@ async def test_a_tick_trims_the_settled_history_and_never_a_pending_or_unread_en
     await _crashed_with(worker.queue, pending)
     await worker.queue.enqueue([unread])
 
-    await reclaim_once(worker.reclaim, worker.consumer)
+    await worker.consumer.reclaim_once()
 
     entries: Any = await redis_client.xrange(worker.queue.stream_key)
     kept = [QueuedComment.model_validate_json(fields[b"envelope"]) for _, fields in entries]

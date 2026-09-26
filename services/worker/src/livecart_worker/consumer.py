@@ -19,8 +19,18 @@
   (a lock or statement timeout, a lost connection) or of Redis, is retried
   twice in the process after a jittered delay: another attempt of the same
   delivery takes its lease again (``lease_holder``). After that, or at the
-  deadline, the delivery is left pending: the reclaim loop hands it out
-  again once idle, and dead-letters it after ``QUEUE_MAX_DELIVERIES``.
+  deadline, the delivery is left pending: a reclaim hands it out again once
+  idle, and dead-letters it after ``QUEUE_MAX_DELIVERIES``.
+
+**The reclaim** (``ReclaimComments``) runs in the same loop, at startup and
+then every 30 s, between two reads: ``XAUTOCLAIM`` of what other consumers
+left idle, as many as the window has room for, the dead letters, then the
+safe trim. The loop being the only one to fill the window, the room it
+offers the reclaim is the window's own, and the reclaimed deliveries count in
+it like the others. A reclaim loop of its own found the window taken
+whenever it looked: the read loop spends its time in ``XREADGROUP BLOCK``,
+with the room it asked for set aside, so a worker left idle never took back
+what a crashed one had left.
 
 A handler never raises into the loop: whatever it does is logged, with the
 comment's correlation and request ids bound to every line. The token of an
@@ -41,12 +51,15 @@ import structlog
 from livecart_core.application.dto import QueueDelivery
 from livecart_core.application.ports import CommentQueue, ServiceUnavailable
 from livecart_core.application.process_comment import HandledComment
+from livecart_core.application.reclaim_comments import Reclaimed
 
 logger = structlog.get_logger(__name__)
 
 # XREADGROUP BLOCK: how long a read waits for a first comment. The loop also
 # looks at its stop event and marks its progress at least this often.
 RECEIVE_BLOCK_S: Final = 2.0
+# How often the loop reclaims what other consumers left idle, at startup first.
+RECLAIM_INTERVAL_S: Final = 30.0
 # Retries of a transient failure in the process, and the base of their
 # exponential delays: each delay is drawn from 0 to base x 2 ** (retry - 1)
 # ("full jitter"), so that handlers failing together do not retry together.
@@ -74,15 +87,17 @@ class CommentHandler(Protocol):
     async def __call__(self, delivery: QueueDelivery, *, consumer: str) -> HandledComment: ...
 
 
+class Reclaimer(Protocol):
+    """One reclaim for a consumer, within the room it offers: ``ReclaimComments`` in the worker."""
+
+    async def __call__(self, consumer: str, *, room: int) -> Reclaimed: ...
+
+
 class CommentConsumer:
     """One consumer of the group ``workers``; see the module docstring.
 
-    ``run`` reads until its stop event is set, then waits for the handlers
-    in flight. The reclaim loop hands out its deliveries through the same
-    window: each loop reserves the room it asks the queue for before it
-    awaits the answer (``reserve_room``), gives back what did not come
-    (``release_room``), and submits what did into the room it reserved, so
-    that the two never fill the same room twice.
+    ``run`` reads, and reclaims when a ``reclaim`` is given, until its stop
+    event is set, then waits for the handlers in flight.
     """
 
     def __init__(
@@ -94,6 +109,8 @@ class CommentConsumer:
         batch: int,
         concurrency: int,
         deadline_s: float,
+        reclaim: Reclaimer | None = None,
+        reclaim_interval_s: float = RECLAIM_INTERVAL_S,
         retries: int = TRANSIENT_RETRIES,
         retry_base_delay_s: float = RETRY_BASE_DELAY_S,
         block_s: float = RECEIVE_BLOCK_S,
@@ -101,14 +118,18 @@ class CommentConsumer:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
-        if min(batch, concurrency) < 1 or deadline_s <= 0 or block_s <= 0 or retries < 0:
+        if min(batch, concurrency) < 1 or min(deadline_s, block_s, reclaim_interval_s) <= 0:
             raise ValueError("a consumer needs a window, handlers, a deadline and a block time")
+        if retries < 0:
+            raise ValueError(f"retries cannot be negative, not {retries}")
         self.name = name
         self._queue = queue
         self._handler = handler
         self._batch = batch
         self._slots = asyncio.Semaphore(concurrency)
         self._deadline_s = deadline_s
+        self._reclaim = reclaim
+        self._reclaim_interval_s = reclaim_interval_s
         self._retries = retries
         self._retry_base_delay_s = retry_base_delay_s
         self._block_s = block_s
@@ -119,7 +140,6 @@ class CommentConsumer:
         # as one ends; the tasks are kept for drain, and against the garbage
         # collector, which may drop a task nothing references.
         self._in_flight = 0
-        self._reserved = 0
         self._handlers: set[asyncio.Task[None]] = set()
         self._room_freed = asyncio.Event()
         self._last_progress = monotonic()
@@ -131,33 +151,16 @@ class CommentConsumer:
 
     @property
     def room(self) -> int:
-        """How many more deliveries the window takes, besides the room reserved already."""
-        return self._batch - self._in_flight - self._reserved
-
-    def reserve_room(self) -> int:
-        """Set the room left aside for deliveries asked for and not come yet; return it."""
-        room = self.room
-        self._reserved += room
-        return room
-
-    def release_room(self, count: int) -> None:
-        """Give back ``count`` of the room reserved, for deliveries that did not come."""
-        if not 0 <= count <= self._reserved:
-            raise ValueError(f"{count} is not within the {self._reserved} deliveries reserved")
-        self._reserved -= count
-        self._room_freed.set()
+        """How many more deliveries the window takes."""
+        return self._batch - self._in_flight
 
     def progressed_within(self, seconds: float) -> bool:
         """Whether the read loop went round in the last ``seconds``: what the heartbeat checks."""
         return self._monotonic() - self._last_progress <= seconds
 
-    def submit(self, delivery: QueueDelivery, *, reserved: bool = False) -> None:
-        """Hand one delivery to a handler, in the room reserved for it or in the room left."""
-        if reserved:
-            if self._reserved < 1:
-                raise RuntimeError("no room was reserved for this delivery")
-            self._reserved -= 1
-        elif self.room < 1:
+    def submit(self, delivery: QueueDelivery) -> None:
+        """Hand one delivery to a handler, within the window."""
+        if self.room < 1:
             raise RuntimeError(f"the window of {self._batch} deliveries is full")
         self._in_flight += 1
         handler = asyncio.create_task(
@@ -167,33 +170,64 @@ class CommentConsumer:
         handler.add_done_callback(self._handlers.discard)
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Read and hand out deliveries until ``stop`` is set, then wait for the handlers."""
+        """Read, and reclaim, until ``stop`` is set, then wait for the handlers."""
         logger.info("comment_consumer_started", consumer=self.name)
+        next_reclaim = self._monotonic()
         try:
             while not stop.is_set():
                 self._last_progress = self._monotonic()
-                room = self.reserve_room()
-                if room < 1:
+                if self._reclaim is not None and self._last_progress >= next_reclaim:
+                    await self.reclaim_once()
+                    next_reclaim = self._monotonic() + self._reclaim_interval_s
+                    continue
+                if self.room < 1:
                     await self._wait_for_room()
                     continue
                 try:
                     deliveries = await self._queue.receive(
-                        self.name, max_messages=room, block_seconds=self._block_s
+                        self.name, max_messages=self.room, block_seconds=self._block_s
                     )
                 except ServiceUnavailable as error:
-                    self.release_room(room)
                     logger.warning("comment_queue_unavailable", error=str(error))
                     await _pause(stop, self._block_s)
                     continue
-                except BaseException:
-                    self.release_room(room)
-                    raise
-                self.release_room(room - len(deliveries))
                 for delivery in deliveries:
-                    self.submit(delivery, reserved=True)
+                    self.submit(delivery)
         finally:
             await self.drain()
             logger.info("comment_consumer_stopped", consumer=self.name)
+
+    async def reclaim_once(self) -> None:
+        """One reclaim, within the room the window has left; a failure is logged, never raised."""
+        if self._reclaim is None:
+            raise RuntimeError("this consumer was given no reclaim")
+        try:
+            reclaimed = await self._reclaim(self.name, room=self.room)
+        except ServiceUnavailable as error:
+            logger.warning("queue_reclaim_unavailable", error=str(error))
+            return
+        except Exception:
+            logger.exception("queue_reclaim_failed")
+            return
+        for delivery in reclaimed.redelivered:
+            self.submit(delivery)
+        for dead in reclaimed.dead_letters:
+            envelope = dead.delivery.comment
+            logger.error(
+                "comment_dead_lettered",
+                delivery_id=dead.delivery.delivery_id,
+                delivery_count=dead.delivery.delivery_count,
+                correlation_id=envelope.correlation_id,
+                request_id=envelope.request_id,
+                inbox=None if dead.inbox is None else dead.inbox.value,
+            )
+        if reclaimed.redelivered or reclaimed.dead_letters or reclaimed.trimmed:
+            logger.info(
+                "queue_reclaimed",
+                redelivered=len(reclaimed.redelivered),
+                dead_lettered=len(reclaimed.dead_letters),
+                trimmed=reclaimed.trimmed,
+            )
 
     async def drain(self) -> None:
         """Wait for every handler in flight; each ends by its deadline at the latest."""
