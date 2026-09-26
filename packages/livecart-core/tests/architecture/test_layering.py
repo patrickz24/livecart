@@ -116,6 +116,8 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.buyer_orders" in application
     assert "livecart_core.application.demo_seed" in application
     assert "livecart_core.application.ingest_comments" in application
+    assert "livecart_core.application.process_comment" in application
+    assert "livecart_core.application.session_events" in application
     assert "livecart_core.domain.sellers" in domain
     assert "livecart_core.domain.live_sessions" in domain
 

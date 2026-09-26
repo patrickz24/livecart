@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from livecart_core.application.ports import CommentQueue, IdempotencyStore, RateLimiter
 from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
-from livecart_core.infrastructure.db.engine import create_db_engine
+from livecart_core.infrastructure.db.engine import WORKER_POOL, create_db_engine
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
@@ -94,6 +94,27 @@ async def migrator_engine(integration_settings: IntegrationSettings) -> AsyncIte
         await engine.dispose()
 
 
+@pytest.fixture
+async def worker_engine(integration_settings: IntegrationSettings) -> AsyncIterator[AsyncEngine]:
+    """livecart_app through the worker's pool: 20 connections and no overflow, an exact bound.
+
+    For the concurrency tests, whose probe (``testing.pools``) checks that
+    every connection was in use at once.
+    """
+    engine = create_db_engine(
+        integration_settings.database_url,
+        application_name="livecart-tests-concurrency",
+        pool_size=WORKER_POOL.size,
+        max_overflow=0,
+        # A thousand callers queue for twenty connections; none may give up.
+        pool_timeout_s=120,
+    )
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
+
+
 @pytest.fixture(scope="session")
 def database_schema(integration_settings: IntegrationSettings) -> None:
     """livecart_test at the head revision, migrated once per session.
@@ -109,6 +130,14 @@ def database_schema(integration_settings: IntegrationSettings) -> None:
 async def clean_database(database_schema: None, migrator_engine: AsyncEngine) -> None:
     """Every table of the schema, empty: earlier tests' rows are truncated as the migrator."""
     await truncate_all(migrator_engine)
+
+
+@pytest.fixture
+def postgres_backend(
+    clean_database: None, worker_engine: AsyncEngine, migrator_engine: AsyncEngine
+) -> PostgresBackend:
+    """The SQL adapters on empty tables, through the worker's pool."""
+    return PostgresBackend(worker_engine, migrator_engine)
 
 
 @pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.integration)])

@@ -10,15 +10,13 @@ since a run without contention would prove nothing.
 """
 
 import asyncio
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
-from typing import Any
 from uuid import UUID
 
 import pytest
-from sqlalchemy import event, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import IntentSource, ReservationResult, ResolvedIntent
@@ -28,11 +26,11 @@ from livecart_core.domain.outcomes import IntentOutcome
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import CommentStatus, OrderStatus
 from livecart_core.infrastructure.db import tables
-from livecart_core.infrastructure.db.engine import WORKER_POOL, create_db_engine
+from livecart_core.infrastructure.db.engine import WORKER_POOL
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.testing.backends import PostgresBackend
-from livecart_core.testing.database import IntegrationSettings
 from livecart_core.testing.fakes import FakeClock
+from livecart_core.testing.pools import PoolProbe
 
 pytestmark = pytest.mark.integration
 
@@ -50,33 +48,6 @@ INTENT = ResolvedIntent(
 )
 
 
-class PoolProbe:
-    """Counts the connections checked out of an engine's pool: in all, and at most at once."""
-
-    def __init__(self, engine: AsyncEngine) -> None:
-        self._engine = engine
-        self.checked_out = 0
-        self.peak = 0
-        self.checkouts = 0
-
-    def __enter__(self) -> "PoolProbe":
-        event.listen(self._engine.sync_engine, "checkout", self._on_checkout)
-        event.listen(self._engine.sync_engine, "checkin", self._on_checkin)
-        return self
-
-    def __exit__(self, *_: object) -> None:
-        event.remove(self._engine.sync_engine, "checkout", self._on_checkout)
-        event.remove(self._engine.sync_engine, "checkin", self._on_checkin)
-
-    def _on_checkout(self, *_: Any) -> None:
-        self.checked_out += 1
-        self.checkouts += 1
-        self.peak = max(self.peak, self.checked_out)
-
-    def _on_checkin(self, *_: Any) -> None:
-        self.checked_out -= 1
-
-
 @dataclass(frozen=True)
 class Stored:
     """What the database holds for one product and its session after a round."""
@@ -90,30 +61,6 @@ class Stored:
     distinct_references: int
     intents: dict[IntentOutcome, int]
     processed_comments: int
-
-
-@pytest.fixture
-async def worker_engine(integration_settings: IntegrationSettings) -> AsyncIterator[AsyncEngine]:
-    """livecart_app through the worker's pool: 20 connections and no overflow, an exact bound."""
-    engine = create_db_engine(
-        integration_settings.database_url,
-        application_name="livecart-tests-concurrency",
-        pool_size=WORKER_POOL.size,
-        max_overflow=0,
-        # A thousand callers queue for twenty connections; none may give up.
-        pool_timeout_s=120,
-    )
-    try:
-        yield engine
-    finally:
-        await engine.dispose()
-
-
-@pytest.fixture
-def postgres_backend(
-    clean_database: None, worker_engine: AsyncEngine, migrator_engine: AsyncEngine
-) -> PostgresBackend:
-    return PostgresBackend(worker_engine, migrator_engine)
 
 
 async def _race(
