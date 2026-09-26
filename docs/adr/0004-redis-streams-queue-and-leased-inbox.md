@@ -6,7 +6,7 @@ Accepted, 2026-09-26. Milestone 4a implemented both sides: the signed webhook th
 
 ## Context
 
-During a live, comments arrive in bursts, and a platform expects its webhook answered at once. Each comment may then reserve stock, and from milestone 4c call an LLM: work that must happen once, whereas every link of the chain may deliver twice (a platform retrying a webhook, a queue handing a comment out again after a crash). A worker may die anywhere, between two statements or between a commit and its acknowledgment, and a deployment runs several workers. Redis has a bounded memory, which the queue shares with the rate limits and, from milestone 4b, the session streams. The mechanism has to be explained command by command in an interview.
+During a live, comments arrive in bursts, and a platform expects its webhook answered at once. Each comment may then reserve stock, or call an LLM: work that must happen once, whereas every link of the chain may deliver twice (a platform retrying a webhook, a queue handing a comment out again after a crash). A worker may die anywhere, between two statements or between a commit and its acknowledgment, and a deployment runs several workers. Redis has a bounded memory, which the queue shares with the rate limits and, from milestone 4b, the session streams. The mechanism has to be explained command by command in an interview.
 
 ## Decision
 
@@ -31,7 +31,7 @@ During a live, comments arrive in bursts, and a platform expects its webhook ans
 
 ### The consumer
 
-- Each worker runs one `CommentConsumer`: `XREADGROUP GROUP workers <host>-<pid> COUNT <room left> BLOCK 2000`, within a window of `WORKER_BATCH` (32) deliveries held at once, by at most `WORKER_CONCURRENCY` (16) handlers (`asyncio.Semaphore`), each within `asyncio.timeout(MESSAGE_PROCESS_TIMEOUT_S)`.
+- Each worker runs one `CommentConsumer`: `XREADGROUP GROUP workers <host>-<pid> COUNT <room left> BLOCK 2000`, within a window of `WORKER_BATCH` (32) deliveries held at once, by at most `WORKER_CONCURRENCY` (16) handlers (`asyncio.Semaphore`), each within `asyncio.timeout_at` its start plus `MESSAGE_PROCESS_TIMEOUT_S`, a deadline handed to the handler, so that the LLM fallback gets what is left of it (ADR 0006).
 - `ServiceUnavailable`, a transient failure of PostgreSQL (lock or statement timeout, lost connection) or of Redis, is retried twice in the process, after delays drawn from 0 to 0.1 s, then 0 to 0.2 s (full jitter). After that, or at the deadline, the delivery is left pending.
 - The pool holds a connection per handler and one per database loop (4), plus 2 on overflow: 22, which `WORKER_DB_MAX_CONNECTIONS` caps at startup, so that one API and three workers stay within PostgreSQL's 97 connections.
 
@@ -51,7 +51,7 @@ During a live, comments arrive in bursts, and a platform expects its webhook ans
 
 ## Consequences
 
-- An effect happens once per comment, and at most one delivery works on a comment at a time, which is what bounds the LLM calls of milestone 4c to one per comment.
+- An effect happens once per comment, and at most one delivery works on a comment at a time, which, with the receipt stored once in the inbox, bounds the LLM calls to one per comment (ADR 0006).
 - The order is first come, first served at best: a reclaimed comment comes back after newer ones.
 - After a worker dies, its deliveries wait for the idle time before another worker takes them: about two minutes with the defaults, about one with a window of 16.
 - Every comment leaves a row in the inbox, and nothing purges them yet (a purge job is on the roadmap).
