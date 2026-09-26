@@ -1042,7 +1042,7 @@ class InMemoryPaymentRepository(_Repository):
 class InMemoryShipmentRepository(_Repository):
     async def add(self, order_id: UUID, ref: ShipmentRef) -> ShipmentRecord:
         _row(self._tables.orders, order_id, "order")
-        known = await self.get_by_order(order_id)
+        known = self._find_by_order(order_id)
         if known is not None:
             return known
         shipment = ShipmentRecord(self._db.new_id(), order_id, ref, ShipmentStatus.CREATED)
@@ -1050,6 +1050,10 @@ class InMemoryShipmentRepository(_Repository):
         return shipment
 
     async def get_by_order(self, order_id: UUID) -> ShipmentRecord | None:
+        return self._find_by_order(order_id)
+
+    def _find_by_order(self, order_id: UUID) -> ShipmentRecord | None:
+        # Synchronous, so that add() checks and inserts without an await between.
         return next(
             (row for row in self._tables.shipments.values() if row.order_id == order_id), None
         )
