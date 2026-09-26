@@ -14,7 +14,7 @@ def test_the_packaged_migrations_form_one_line_from_the_baseline() -> None:
     scripts = ScriptDirectory.from_config(build_config(MIGRATOR_URL))
 
     assert Path(scripts.dir).name == "migrations"
-    assert scripts.get_heads() == ["0003"]
+    assert scripts.get_heads() == ["0004"]
     baseline = scripts.get_revision("0001")
     assert baseline is not None
     assert baseline.down_revision is None
@@ -24,6 +24,9 @@ def test_the_packaged_migrations_form_one_line_from_the_baseline() -> None:
     comments_index = scripts.get_revision("0003")
     assert comments_index is not None
     assert comments_index.down_revision == "0002"
+    llm_reason = scripts.get_revision("0004")
+    assert llm_reason is not None
+    assert llm_reason.down_revision == "0003"
 
 
 def test_without_arguments_the_command_upgrades_to_head() -> None:
@@ -58,14 +61,21 @@ def test_offline_upgrade_renders_the_baseline_sql(capsys: pytest.CaptureFixture[
         "UPDATE alembic_version SET version_num='0003' WHERE alembic_version.version_num = '0002'"
         in sql
     )
+    assert "ALTER TABLE comments ADD COLUMN llm_reason VARCHAR(32)" in sql
+    assert "ADD CONSTRAINT ck_comments_llm_reason_when_ok CHECK" in sql
+    assert (
+        "UPDATE alembic_version SET version_num='0004' WHERE alembic_version.version_num = '0003'"
+        in sql
+    )
 
 
 def test_offline_downgrade_renders_the_reverse_sql(capsys: pytest.CaptureFixture[str]) -> None:
-    cli, options = parse_args(["downgrade", "0003:base", "--sql"])
+    cli, options = parse_args(["downgrade", "0004:base", "--sql"])
 
     execute(cli, options, MIGRATOR_URL)
 
     sql = capsys.readouterr().out
+    assert sql.index("DROP COLUMN llm_reason;") < sql.index("DROP INDEX ix_comments_session_id;")
     assert sql.index("DROP INDEX ix_comments_session_id;") < sql.index("DROP TABLE comments;")
     for table in metadata.tables:
         assert f"DROP TABLE {table};" in sql

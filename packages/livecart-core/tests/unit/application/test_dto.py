@@ -30,7 +30,6 @@ from livecart_core.application.dto import (
     IssuedRefreshToken,
     LiveSessionChanges,
     LiveSessionRecord,
-    LlmProposal,
     NewLiveSession,
     NewProduct,
     OrderRecord,
@@ -52,6 +51,7 @@ from livecart_core.application.dto import (
     RegisteredEvent,
     ReservationRequest,
     ReservationResult,
+    ResolvedIntent,
     SellerRecord,
     SessionEvent,
     SessionEventType,
@@ -62,11 +62,13 @@ from livecart_core.application.dto import (
     page_of,
 )
 from livecart_core.domain.codes import NO_VARIANT, ProductCode, Variant
+from livecart_core.domain.llm_decision import LlmChoice, LlmProposal
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import (
     AmbiguityReason,
     IntentOutcome,
     LlmOutcome,
+    LlmReason,
     RejectionReason,
 )
 from livecart_core.domain.parser import Ambiguous, parse_comment
@@ -332,8 +334,23 @@ def test_a_fallback_request_holds_the_text_ambiguity_and_catalog() -> None:
     assert request.timeout_seconds == 7.5
 
 
+def test_an_intent_of_the_llm_rests_on_the_words_the_parser_found() -> None:
+    choice = LlmChoice(ProductCode("B07"), NO_VARIANT, Quantity(2), Decimal("0.93"))
+
+    intent = ResolvedIntent.from_llm(choice, evidence=("prends", "deux", "B07"))
+
+    assert intent == ResolvedIntent(
+        product_code=ProductCode("B07"),
+        variant=NO_VARIANT,
+        quantity=Quantity(2),
+        source=IntentSource.LLM,
+        confidence=Decimal("0.93"),
+        evidence=("prends", "deux", "B07"),
+    )
+
+
 def test_only_an_ok_receipt_carries_a_proposal() -> None:
-    proposal = LlmProposal("A12", "M", 1, Decimal("0.9"))
+    proposal = LlmProposal(LlmReason.ORDER, "A12", "M", 1, Decimal("0.9"))
 
     assert FallbackReceipt(LlmOutcome.OK, proposal).proposal == proposal
     assert FallbackReceipt(LlmOutcome.DISABLED).proposal is None

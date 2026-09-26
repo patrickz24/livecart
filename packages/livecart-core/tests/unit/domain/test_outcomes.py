@@ -6,6 +6,7 @@ from livecart_core.domain.outcomes import (
     AmbiguityReason,
     IntentOutcome,
     LlmOutcome,
+    LlmReason,
     RejectionReason,
 )
 
@@ -53,7 +54,20 @@ def test_llm_outcomes_match_the_plan_exactly() -> None:
     ]
 
 
-@pytest.mark.parametrize("enum", [RejectionReason, AmbiguityReason, IntentOutcome, LlmOutcome])
+def test_the_reasons_the_model_gives_are_a_closed_list() -> None:
+    assert [reason.value for reason in LlmReason] == [
+        "order",
+        "no_order",
+        "unknown_product",
+        "unclear_variant",
+        "unclear_quantity",
+        "several_products",
+    ]
+
+
+@pytest.mark.parametrize(
+    "enum", [RejectionReason, AmbiguityReason, IntentOutcome, LlmOutcome, LlmReason]
+)
 def test_the_lists_are_string_enums_that_render_as_their_value(enum: type[StrEnum]) -> None:
     assert issubclass(enum, StrEnum)
     for member in enum:

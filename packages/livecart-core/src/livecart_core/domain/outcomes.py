@@ -3,8 +3,9 @@
 The database ``CHECK`` constraints, the metrics labels and the dashboard's
 badges use these exact strings, so a new value is added here first and then
 to each of them. The parser yields a rejection or an ambiguity reason, the
-LLM fallback records an outcome on every attempt, and the stock reservation
-records what became of a resolved intent.
+LLM fallback records an outcome on every attempt and, when the model
+answered, the reason it gave, and the stock reservation records what became
+of a resolved intent.
 """
 
 from enum import StrEnum
@@ -19,7 +20,8 @@ class RejectionReason(StrEnum):
     MULTIPLE_PRODUCTS = "multiple_products"
     QUANTITY_OUT_OF_BOUNDS = "quantity_out_of_bounds"
     VARIANT_NOT_FOUND = "variant_not_found"
-    # An ambiguity the LLM fallback could not settle: disabled, failed, busy or over budget.
+    # An ambiguity the LLM fallback did not settle: disabled, failed, busy, over
+    # budget, or read by the model as no order the catalog can take.
     AMBIGUOUS_UNRESOLVED = "ambiguous_unresolved"
     # Decided by session resolution, before the parser runs.
     SESSION_NOT_FOUND = "session_not_found"
@@ -66,3 +68,20 @@ class LlmOutcome(StrEnum):
     REFUSED = "refused"
     TRUNCATED = "truncated"
     INVALID = "invalid"
+
+
+class LlmReason(StrEnum):
+    """The reason the model gives for its reading of a comment: ``comments.llm_reason``.
+
+    Part of its structured answer, so that the model says why a comment
+    orders nothing without a word of free text. Only ``order`` names a
+    product, and even then the domain checks it (``decide_from_llm``).
+    """
+
+    ORDER = "order"
+    # A question, a negation, a purchase already made, a remark.
+    NO_ORDER = "no_order"
+    UNKNOWN_PRODUCT = "unknown_product"
+    UNCLEAR_VARIANT = "unclear_variant"
+    UNCLEAR_QUANTITY = "unclear_quantity"
+    SEVERAL_PRODUCTS = "several_products"

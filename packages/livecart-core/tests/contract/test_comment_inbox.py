@@ -14,14 +14,14 @@ import pytest
 
 from livecart_core.application.dto import (
     FallbackReceipt,
-    LlmProposal,
     ParseKind,
     ParseSummary,
     Platform,
 )
 from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.errors import InvalidTransition
-from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome, RejectionReason
+from livecart_core.domain.llm_decision import LlmProposal
+from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome, LlmReason, RejectionReason
 from livecart_core.domain.state_machines import CommentStatus, TransitionOutcome
 from livecart_core.testing.backends import ReservationBackend
 from livecart_core.testing.builders import queued_comment
@@ -147,7 +147,7 @@ async def test_the_first_receipt_is_the_one_kept(backend: ReservationBackend) ->
     claim = await backend.comments.claim(COMMENT, holder="worker-1/1-0", now=NOW, lease=LEASE)
     ok = FallbackReceipt(
         LlmOutcome.OK,
-        LlmProposal("A12", "M", 2, Decimal("0.85")),
+        LlmProposal(LlmReason.ORDER, "A12", "M", 2, Decimal("0.85")),
         request_id="req_1",
         model="claude-test",
         input_tokens=210,
@@ -165,6 +165,23 @@ async def test_the_first_receipt_is_the_one_kept(backend: ReservationBackend) ->
     row = await backend.comments.get(claim.comment.id)
     assert row is not None
     assert row.llm_receipt == ok
+
+
+async def test_a_reading_of_no_order_is_kept_with_its_reason(
+    backend: ReservationBackend,
+) -> None:
+    claim = await backend.comments.claim(COMMENT, holder="worker-1/1-0", now=NOW, lease=LEASE)
+    no_order = FallbackReceipt(
+        LlmOutcome.OK,
+        LlmProposal(LlmReason.UNCLEAR_VARIANT, None, None, None, Decimal("0.70")),
+        request_id="req_2",
+        model="claude-test",
+    )
+
+    assert await backend.comments.record_llm_receipt(claim.comment.id, no_order) == no_order
+    row = await backend.comments.get(claim.comment.id)
+    assert row is not None
+    assert row.llm_receipt == no_order
 
 
 async def test_a_receipt_without_a_proposal_is_kept_as_it_came(

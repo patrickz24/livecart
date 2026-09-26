@@ -49,7 +49,6 @@ from livecart_core.application.dto import (
     LiveSessionChanges,
     LiveSessionRecord,
     LiveSessionTransition,
-    LlmProposal,
     NewLiveSession,
     NewProduct,
     OrderRecord,
@@ -108,8 +107,9 @@ from livecart_core.domain.live_sessions import (
     check_session_edit,
     variant_conflict,
 )
+from livecart_core.domain.llm_decision import LlmProposal
 from livecart_core.domain.money import Money
-from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome, RejectionReason
+from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome, LlmReason, RejectionReason
 from livecart_core.domain.reference import (
     OrderReference,
     RandomSource,
@@ -371,15 +371,21 @@ class FakeCommentQueue(_ScriptedFailures):
 
 
 def ok_receipt(
-    product_code: str,
-    variant: str = "",
-    quantity: int = 1,
+    product_code: str | None,
+    variant: str | None = None,
+    quantity: int | None = 1,
     confidence: Decimal = Decimal("0.90"),
+    *,
+    reason: LlmReason = LlmReason.ORDER,
 ) -> FallbackReceipt:
-    """An ``ok`` receipt proposing one product, for ``FakeIntentFallback``."""
+    """An ``ok`` receipt, for ``FakeIntentFallback``: an order of one product by default.
+
+    ``ok_receipt(None, quantity=None, reason=LlmReason.NO_ORDER)`` is a model
+    that read no order.
+    """
     return FallbackReceipt(
         LlmOutcome.OK,
-        LlmProposal(product_code, variant, quantity, confidence),
+        LlmProposal(reason, product_code, variant, quantity, confidence),
         request_id="fake-request",
         model="fake-model",
     )

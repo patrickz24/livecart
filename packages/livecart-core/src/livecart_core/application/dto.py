@@ -31,6 +31,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, JsonValue, mod
 
 from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.domain.llm_decision import LlmChoice, LlmProposal
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import (
     PARSER_REJECTIONS,
@@ -501,28 +502,21 @@ class FallbackRequest:
             raise ValueError(f"timeout_seconds must be positive, not {self.timeout_seconds}")
 
 
-@dataclass(frozen=True, slots=True)
-class LlmProposal:
-    """What the model read into an ambiguous comment, as it said it: not trusted yet.
-
-    The domain (``decide_from_llm``, milestone 4c) checks it against the
-    catalog before anything is reserved, so a code or a variant here may name
-    nothing at all.
-    """
-
-    product_code: str
-    variant: str
-    quantity: int
-    confidence: Decimal
+# The widths of comments.llm_product_code and comments.llm_variant: wider than a
+# product code and a variant, since they hold the model's word before any check.
+MAX_LLM_CODE_LENGTH: Final = 32
+MAX_LLM_VARIANT_LENGTH: Final = 64
 
 
 @dataclass(frozen=True, slots=True)
 class FallbackReceipt:
     """The receipt of one fallback attempt, stored once in the ``comments.llm_*`` columns.
 
-    Only an ``ok`` outcome carries a proposal. The metering fields are what the
-    provider reported, ``None`` when no call reached it (disabled, over
-    budget, busy).
+    Only an ``ok`` outcome carries a proposal (``LlmProposal``, the model's
+    reading, which the domain checks before anything is reserved). The
+    metering fields are what the provider reported, ``None`` when no call
+    reached it (disabled, over budget, busy); a call that failed keeps the
+    model it asked and the time it took.
     """
 
     outcome: LlmOutcome
@@ -631,7 +625,7 @@ class ResolvedIntent:
     """A purchase intent settled on one product of the session: by the parser, or by the LLM.
 
     The LLM's proposal becomes one only once the domain has checked it
-    against the catalog (milestone 4c).
+    against the catalog (``decide_from_llm``).
     """
 
     product_code: ProductCode
@@ -656,6 +650,22 @@ class ResolvedIntent:
             source=IntentSource.PARSER,
             confidence=match.confidence.value,
             evidence=match.evidence,
+        )
+
+    @classmethod
+    def from_llm(cls, choice: LlmChoice, *, evidence: tuple[str, ...]) -> Self:
+        """The intent of a proposal the domain accepted.
+
+        The model answers no free text, so the evidence is what the parser
+        found in the comment before it gave up: the words the ambiguity rests on.
+        """
+        return cls(
+            product_code=choice.product_code,
+            variant=choice.variant,
+            quantity=choice.quantity,
+            source=IntentSource.LLM,
+            confidence=choice.confidence,
+            evidence=evidence,
         )
 
 

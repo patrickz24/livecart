@@ -10,13 +10,13 @@ from livecart_core.application.dto import (
     CommentBatch,
     FallbackReceipt,
     FallbackRequest,
-    LlmProposal,
     Platform,
     SessionEvent,
     SessionEventType,
 )
 from livecart_core.application.ports import InvalidSignature, ServiceUnavailable
-from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome
+from livecart_core.domain.llm_decision import LlmProposal
+from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome, LlmReason
 from livecart_core.domain.parser import Ambiguous
 from livecart_core.domain.reference import OrderReference
 from livecart_core.testing.builders import demo_catalog, incoming_comment
@@ -95,7 +95,7 @@ def test_an_ok_receipt_proposes_one_product() -> None:
     receipt = ok_receipt("A12", "M", 2)
 
     assert receipt.outcome is LlmOutcome.OK
-    assert receipt.proposal == LlmProposal("A12", "M", 2, Decimal("0.90"))
+    assert receipt.proposal == LlmProposal(LlmReason.ORDER, "A12", "M", 2, Decimal("0.90"))
     assert receipt.model == "fake-model"
 
 

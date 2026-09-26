@@ -38,6 +38,8 @@ from sqlalchemy.dialects import postgresql
 from livecart_core.application.dto import (
     MAX_COMMENT_LENGTH,
     MAX_IDENTIFIER_LENGTH,
+    MAX_LLM_CODE_LENGTH,
+    MAX_LLM_VARIANT_LENGTH,
     MAX_PRODUCT_NAME_LENGTH,
     MAX_TITLE_LENGTH,
     CarrierName,
@@ -53,6 +55,7 @@ from livecart_core.domain.outcomes import (
     AmbiguityReason,
     IntentOutcome,
     LlmOutcome,
+    LlmReason,
     RejectionReason,
 )
 from livecart_core.domain.quantity import QUANTITY_CEILING
@@ -300,8 +303,10 @@ comments: Final = sa.Table(
     # The receipt of the LLM fallback, written once (milestone 4c). The
     # proposal is the model's word, not trusted: the domain checks it again.
     sa.Column("llm_outcome", sa.String(16), nullable=True),
-    sa.Column("llm_product_code", sa.String(32), nullable=True),
-    sa.Column("llm_variant", sa.String(64), nullable=True),
+    # The reason of the model's answer, for an ok receipt only.
+    sa.Column("llm_reason", sa.String(32), nullable=True),
+    sa.Column("llm_product_code", sa.String(MAX_LLM_CODE_LENGTH), nullable=True),
+    sa.Column("llm_variant", sa.String(MAX_LLM_VARIANT_LENGTH), nullable=True),
     sa.Column("llm_quantity", sa.Integer, nullable=True),
     sa.Column("llm_confidence", sa.Numeric(3, 2), nullable=True),
     sa.Column("llm_request_id", sa.String(128), nullable=True),
@@ -328,6 +333,12 @@ comments: Final = sa.Table(
         "parse_reason", (*PARSER_REJECTIONS, *AmbiguityReason), name="ck_comments_parse_reason"
     ),
     _one_of("llm_outcome", LlmOutcome, name="ck_comments_llm_outcome"),
+    _one_of("llm_reason", LlmReason, name="ck_comments_llm_reason"),
+    sa.CheckConstraint(
+        (sa.column("llm_outcome", sa.String) == LlmOutcome.OK.value)
+        == sa.column("llm_reason", sa.String).is_not(None),
+        name="ck_comments_llm_reason_when_ok",
+    ),
     # The dashboard's rejections of a session, grouped by reason.
     sa.Index(
         "ix_comments_rejected_session_id_rejection_reason",

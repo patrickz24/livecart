@@ -122,6 +122,7 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.expire_reservations" in application
     assert "livecart_core.domain.sellers" in domain
     assert "livecart_core.domain.live_sessions" in domain
+    assert "livecart_core.domain.llm_decision" in domain
 
 
 # A module that mixes allowed and forbidden imports, at the top level, relative,

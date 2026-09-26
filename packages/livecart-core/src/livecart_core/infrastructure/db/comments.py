@@ -47,14 +47,14 @@ from livecart_core.application.dto import (
     CommentClaim,
     FallbackReceipt,
     InboxComment,
-    LlmProposal,
     ParseKind,
     ParseSummary,
     Platform,
     QueuedComment,
 )
 from livecart_core.application.ports import RecordNotFound
-from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome, RejectionReason
+from livecart_core.domain.llm_decision import LlmProposal
+from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome, LlmReason, RejectionReason
 from livecart_core.domain.state_machines import (
     COMMENT_TRANSITIONS,
     CommentStatus,
@@ -94,6 +94,7 @@ def _llm_receipt(row: Row[Any]) -> FallbackReceipt:
     proposal = None
     if outcome is LlmOutcome.OK:
         proposal = LlmProposal(
+            reason=LlmReason(row.llm_reason),
             product_code=row.llm_product_code,
             variant=row.llm_variant,
             quantity=row.llm_quantity,
@@ -135,6 +136,7 @@ def _receipt_values(receipt: FallbackReceipt) -> dict[str, Any]:
     proposal = receipt.proposal
     return {
         "llm_outcome": receipt.outcome.value,
+        "llm_reason": None if proposal is None else proposal.reason.value,
         "llm_product_code": None if proposal is None else proposal.product_code,
         "llm_variant": None if proposal is None else proposal.variant,
         "llm_quantity": None if proposal is None else proposal.quantity,

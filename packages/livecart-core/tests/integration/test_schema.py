@@ -323,3 +323,33 @@ async def test_a_rejected_comment_carries_its_reason_and_only_it_does(
             CHECK_VIOLATION,
             "ck_comments_rejection_reason_when_rejected",
         )
+
+
+async def test_an_ok_receipt_carries_the_models_reason_and_only_it_does(
+    clean_database: None, app_engine: AsyncEngine
+) -> None:
+    comment_id = uuid4()
+    async with app_engine.begin() as connection:
+        await connection.execute(
+            insert(tables.comments).values(
+                id=comment_id,
+                platform="simulator",
+                external_comment_id="comment-1",
+                author_platform_user_id="buyer-1",
+                text="je prends deux B07",
+                correlation_id="correlation-1",
+                created_at=datetime(2026, 9, 26, 12, 0, tzinfo=UTC),
+            )
+        )
+
+    for values, constraint in (
+        ({"llm_outcome": "ok"}, "ck_comments_llm_reason_when_ok"),
+        ({"llm_outcome": "llm_busy", "llm_reason": "order"}, "ck_comments_llm_reason_when_ok"),
+        ({"llm_outcome": "ok", "llm_reason": "maybe"}, "ck_comments_llm_reason"),
+    ):
+        with pytest.raises(DBAPIError) as excinfo:
+            async with app_engine.begin() as connection:
+                await connection.execute(
+                    update(tables.comments).where(tables.comments.c.id == comment_id).values(values)
+                )
+        assert _sqlstate_and_constraint(excinfo.value) == (CHECK_VIOLATION, constraint)
