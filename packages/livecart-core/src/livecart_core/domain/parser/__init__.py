@@ -11,12 +11,14 @@ Pipeline, one module per step:
 1. ``normalization``: NFKC, case folding and accent stripping on a copy of
    the text, keeping a map to the original characters for the evidence;
    keycap digits read as digits, the multiplication signs as ``x``, the cart
-   emoji as a buy signal, meaningless punctuation as spaces;
+   emoji as a buy signal, decimal separators and minus signs as marks,
+   meaningless punctuation as spaces;
 2. ``tokens``: words, numbers, glued quantities, catalog codes (as typed, or
    through exactly one O/0 or I/1 swap reading) and code-shaped unknown tokens;
 3. ``grammar``: one role per token: product reference, variant, buy signal
-   (a verb, possibly with one typo), doubt (question, negation), quantity,
-   filler or content;
+   (a verb or a phrase, possibly with one typo, or slang as typed), doubt
+   (question, negation, a purchase already made), quantity, filler or
+   content;
 4. ``decision``: the first rule that applies, below.
 
 Decision order. Rejections come first when they hold whatever an LLM could
@@ -60,7 +62,10 @@ Known limits, by design: quantities are read in digits and keycaps only, a
 number written in words is left to the fallback; names are only looked at
 when no code is given, and a size or colour alone ("je prends la bleue")
 never identifies a product; comments about several products are rejected,
-as the MVP reserves one product per comment.
+as the MVP reserves one product per comment. A bare number within the bound
+is the quantity even when it is a date ("je prends B07 le 3"); a size S
+right before "il" reads as the elision of "s'il"; a catalog code typed like a
+glued quantity ("X2") is that product only when the comment names no other.
 """
 
 from livecart_core.domain.catalog import Catalog
