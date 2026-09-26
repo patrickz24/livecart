@@ -21,8 +21,10 @@ Per character, in this order:
    variation selectors, joiners and other format characters;
 4. letters and digits stay; ``?``, ``'``, ``@`` and dashes stay for the rules
    below; a currency symbol or ``%`` becomes the ``AMOUNT_UNIT`` mark, since
-   the number next to it is a price or a discount, never a quantity; every
-   other character (punctuation, emojis, spaces, controls) becomes a space.
+   the number next to it is a price or a discount, never a quantity; a comma
+   or a full stop between two digits becomes the ``DECIMAL`` mark, as in
+   ``15,90`` (a quantity is never a decimal); every other character
+   (punctuation, emojis, spaces, controls) becomes a space.
 
 Then, on the folded string: an ``@mention`` is dropped, as it names another
 viewer; a French elision (``l'``, ``j'``, ``qu'``...) is dropped, except
@@ -47,6 +49,8 @@ QUESTION: Final = "?"
 CART: Final = "\U0001f6d2"
 NEGATION: Final = "\u00ac"
 AMOUNT_UNIT: Final = "$"
+# A typed "." folds to a space: only a decimal separator is written as this mark.
+DECIMAL: Final = "."
 
 _EXPLICIT: Final[dict[str, str]] = {
     "\u00d7": "x",  # MULTIPLICATION SIGN
@@ -67,6 +71,8 @@ _EXPLICIT: Final[dict[str, str]] = {
     "\u2212": "-",  # MINUS SIGN
 }
 _KEPT_PUNCTUATION: Final = frozenset({"?", "'", "@"})
+# ASCII and fullwidth, since fullwidth digits fold to digits too.
+_DECIMAL_SEPARATORS: Final = frozenset({",", ".", "\uff0c", "\uff0e"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +163,10 @@ _CODE_HYPHEN: Final = re.compile(rf"(?<!{_WORD_CHAR})([a-z]{{1,3}})-(?=[0-9])")
 _LEFTOVER: Final = re.compile(r"['-]")
 
 
+def _between_digits(text: str, index: int) -> bool:
+    return 0 < index < len(text) - 1 and text[index - 1].isdecimal() and text[index + 1].isdecimal()
+
+
 def normalize_comment(text: str) -> NormalizedText:
     """Fold a comment for matching; see the module docstring for the rules."""
     chars: list[str] = []
@@ -164,6 +174,8 @@ def normalize_comment(text: str) -> NormalizedText:
     ends: list[int] = []
     for index, char in enumerate(text):
         folded = _fold_char(char)
+        if char in _DECIMAL_SEPARATORS and _between_digits(text, index):
+            folded = DECIMAL
         if folded:
             chars.append(folded)
             starts.extend([index] * len(folded))

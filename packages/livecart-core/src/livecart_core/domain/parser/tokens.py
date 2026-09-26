@@ -18,6 +18,9 @@ because a buyer glues what belongs together ("A12M", "C3x2", "2xC3"):
    even through a swap (``A13``, ``A1O``), the word is one unknown code,
    carrying the catalog codes it could be read as when there are several.
 
+A numbered size (``2xl``), a time (``14h``, ``10h30``) or an ordinal (``3e``,
+``2eme``) stays one word, so that its number never passes for a quantity.
+
 A word with a non-ASCII letter (another script) never holds a code: it splits
 into its ASCII and non-ASCII runs, and the non-ASCII runs are plain words.
 """
@@ -31,9 +34,11 @@ from typing import Final
 
 from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.codes import PRODUCT_CODE_PATTERN, ProductCode
+from livecart_core.domain.parser import lexicon
 from livecart_core.domain.parser.normalization import (
     AMOUNT_UNIT,
     CART,
+    DECIMAL,
     NEGATION,
     QUESTION,
     NormalizedText,
@@ -45,6 +50,7 @@ class MarkKind(Enum):
     CART = CART
     NEGATION = NEGATION
     AMOUNT_UNIT = AMOUNT_UNIT
+    DECIMAL = DECIMAL
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,7 +241,7 @@ class _Reader:
         return [self._word(piece, offset)]
 
     def _ascii_word(self, word: str, offset: int) -> list[Token]:
-        if _NUMBERED_SIZE.fullmatch(word):
+        if _NUMBERED_SIZE.fullmatch(word) or lexicon.time_or_ordinal(word):
             return [self._word(word, offset)]
         pieces = list(_PIECE.finditer(word))
         if len(pieces) == 1:

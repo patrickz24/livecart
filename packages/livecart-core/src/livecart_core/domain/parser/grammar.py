@@ -17,14 +17,16 @@ gets, so that the catalog always wins over the generic vocabulary:
 4. phrases: "sold out" and "out of stock" (doubts), "i'd like" and "would like"
    (buy signals);
 5. the unknown codes left: product references too;
-6. quantities: a number next to a currency or ``%`` is a price and is ignored;
-   then a glued quantity ("x2"), a prefix and a number ("x 2", "qte 2"), a
-   number and a suffix ("2x", "2 pcs"), and finally a bare number;
+6. quantities: a number next to a currency, ``%``, a time unit or a decimal
+   separator is a price, a discount, a time or a decimal and is ignored
+   ("15,90 €", "29.99", "14 h"); then a glued quantity ("x2"), a prefix and a
+   number ("x 2", "qte 2"), a number and a suffix ("2x", "2 pcs"), and
+   finally a bare number;
 7. marks: the cart emoji is a buy signal, a question mark or an elided "n'" a
    doubt;
 8. words of the lexicon: buy verbs, doubts, numbers in words, the name of the
-   referenced product, sizes and colours, fillers; then the typos of buy
-   verbs; every other word is content.
+   referenced product, sizes and colours, fillers, times and ordinals
+   ("14h", "3e"); then the typos of buy verbs; every other word is content.
 
 When the comment references no product at all, the content, size and colour
 words are also compared with the words of every product name.
@@ -130,6 +132,7 @@ _MIN_NAME_WORD: Final = 3
 # Colours and sizes may be part of a name ("Pull rouge"); the rest of the
 # vocabulary never identifies a product.
 _NAME_STOPWORDS: Final = lexicon.GRAMMAR_WORDS - lexicon.COLOUR_WORDS - lexicon.SIZE_WORDS
+_UNIT_WORDS: Final = lexicon.CURRENCY_WORDS | lexicon.TIME_WORDS
 
 
 def _phrases_by_first_word() -> dict[str, list[tuple[tuple[str, ...], Role]]]:
@@ -346,7 +349,7 @@ class _Grammar:
             if number is None:
                 continue
             for neighbour in (i - 1, i + 1):
-                if self._is_amount_unit(neighbour):
+                if self._is_unit(neighbour):
                     self._roles[i] = Role.NEUTRAL
                     self._roles[neighbour] = Role.NEUTRAL
         i = 0
@@ -373,13 +376,14 @@ class _Grammar:
             else:
                 i += 1
 
-    def _is_amount_unit(self, i: int) -> bool:
+    def _is_unit(self, i: int) -> bool:
+        """Token ``i`` makes the number next to it an amount, a decimal or a time."""
         if not 0 <= i < len(self._tokens):
             return False
         token = self._tokens[i]
         if isinstance(token, Mark):
-            return token.kind is MarkKind.AMOUNT_UNIT
-        return self._free_word(i) in lexicon.CURRENCY_WORDS
+            return token.kind in {MarkKind.AMOUNT_UNIT, MarkKind.DECIMAL}
+        return self._free_word(i) in _UNIT_WORDS
 
     def _quantity(self, value: int, first: int, last: int) -> None:
         self._assign_all(range(first, last + 1), Role.QUANTITY)
@@ -391,6 +395,7 @@ class _Grammar:
             MarkKind.QUESTION: Role.DOUBT,
             MarkKind.NEGATION: Role.DOUBT,
             MarkKind.AMOUNT_UNIT: Role.NEUTRAL,
+            MarkKind.DECIMAL: Role.NEUTRAL,
         }
         for i, token in enumerate(self._tokens):
             if isinstance(token, Mark) and self._roles[i] is None:
@@ -459,7 +464,7 @@ def _word_role(word: str, own_name: frozenset[str]) -> Role:
         return Role.NEUTRAL
     if lexicon.in_vocabulary(word, lexicon.SIZE_WORDS | lexicon.COLOUR_WORDS):
         return Role.VARIANT_WORD
-    if word in lexicon.GRAMMAR_WORDS:
+    if word in lexicon.GRAMMAR_WORDS or lexicon.time_or_ordinal(word):
         return Role.NEUTRAL
     if lexicon.typo_of_buy_verb(word):
         return Role.TYPO_SIGNAL

@@ -10,6 +10,7 @@ from livecart_core.domain.parser.lexicon import (
     one_edit_apart,
     same_variant_word,
     same_word,
+    time_or_ordinal,
     typo_of_buy_verb,
     word_forms,
 )
@@ -144,3 +145,15 @@ def test_the_lexicon_is_folded() -> None:
     for word in GRAMMAR_WORDS | NOT_A_TYPO:
         assert word == word.lower()
         assert word.isascii(), word
+
+
+@pytest.mark.parametrize(
+    "word", ["14h", "10h30", "9h00", "20min", "5mn", "3e", "2eme", "1er", "1ere", "2nd", "4th"]
+)
+def test_a_number_glued_to_a_time_or_ordinal_ending(word: str) -> None:
+    assert time_or_ordinal(word)
+
+
+@pytest.mark.parametrize("word", ["14", "h", "2x", "2pcs", "10h3", "x2", "3eme3", "2ex"])
+def test_other_glued_numbers_are_not_times_or_ordinals(word: str) -> None:
+    assert not time_or_ordinal(word)

@@ -33,7 +33,7 @@ Each line is one JSON object, in UTF-8. Visible characters are written as they a
 
 Every field is compared exactly: the kind, the reason, the code, the variant label, the quantity, the confidence and the list of candidates. The evidence is not part of the corpus; the unit tests of the parser check it.
 
-`tag` is one short lower-case word (letters, digits, hyphens) that says what the case exercises: `fr-verb`, `en-verb`, `typo`, `typo-guard` (an ordinary word that must not pass for a verb typo), `emoji`, `fullwidth`, `case`, `accent`, `apostrophe`, `elision`, `variant`, `size`, `colour`, `synonym`, `single-variant`, `no-variant`, `glued`, `quantity`, `number-word`, `bounds`, `price`, `question`, `negation`, `noise`, `mention`, `multiple`, `code-alone`, `o0-confusion`, `unknown-code`, `name`, and `limitation` for a result that is deliberate but that a reader might not expect (the docstring of `livecart_core.domain.parser` lists those limits).
+`tag` is one short lower-case word (letters, digits, hyphens) that says what the case exercises: `fr-verb`, `en-verb`, `typo`, `typo-guard` (an ordinary word that must not pass for a verb typo), `emoji`, `fullwidth`, `case`, `accent`, `apostrophe`, `elision`, `variant`, `size`, `colour`, `synonym`, `single-variant`, `no-variant`, `glued`, `quantity`, `number-word`, `bounds`, `price`, `time`, `question`, `negation`, `noise`, `mention`, `multiple`, `code-alone`, `o0-confusion`, `unknown-code`, `name`, and `limitation` for a result that is deliberate but that a reader might not expect (the docstring of `livecart_core.domain.parser` lists those limits).
 
 ## Adding a case
 

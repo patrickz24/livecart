@@ -117,6 +117,8 @@
 {"text": "je prends B07 à 15€", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}
 {"text": "B07 15 euros", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "price"}
 {"text": "je prends le B07 à -50%", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}
+{"text": "je prends B07 à 15,90€", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}
+{"text": "je prends B07 demain à 14h", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "time"}
 {"text": "B07 c'est combien ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
 {"text": "C3 dispo ?", "kind": "rejected", "reason": "no_intent", "tag": "question"}
 {"text": "je prends B07 ?", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "question"}

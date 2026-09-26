@@ -15,6 +15,7 @@ not typos of "sold", "veux" and "take"), and the word is not itself a word of
 this vocabulary or of ``NOT_A_TYPO``, the real words one edit away from a verb.
 """
 
+import re
 from functools import lru_cache
 from typing import Final
 
@@ -169,8 +170,17 @@ NUMBER_WORDS: Final = frozenset(
         "ten",
     }
 )
-# The price of the product, not a quantity: "15 euros".
-CURRENCY_WORDS: Final = frozenset({"eur", "euro", "euros", "usd", "dollar", "dollars"})
+# The price of the product, not a quantity: "15 euros", "15 balles".
+CURRENCY_WORDS: Final = frozenset(
+    {"eur", "euro", "euros", "balle", "balles", "usd", "dollar", "dollars"}
+)
+# A time, not a quantity: "14 h", "20 heures", "10 min".
+TIME_WORDS: Final = frozenset({"h", "heure", "heures", "min", "mn", "minute", "minutes"})
+# Glued to a number, a time ("14h", "10h30", "20min") or an ordinal ("3e",
+# "2eme", "1er", "2nd"; "15e" is also 15 euros): never a quantity either.
+_TIME_OR_ORDINAL: Final = re.compile(
+    r"[0-9]+(?:h(?:[0-9]{2})?|min|mn|e|er|ere|eme|nd|nde|st|rd|th)"
+)
 
 # French for "in", as in "en 38": the number after it is a size, not a quantity.
 SIZE_PREPOSITION: Final = "en"
@@ -364,6 +374,7 @@ GRAMMAR_WORDS: Final = (
     | QUANTITY_SUFFIXES
     | NUMBER_WORDS
     | CURRENCY_WORDS
+    | TIME_WORDS
     | VARIANT_KEYWORDS
     | SIZE_WORDS
     | COLOUR_WORDS
@@ -432,6 +443,11 @@ def one_edit_apart(typed: str, reference: str) -> bool:
     shorter, longer = sorted((typed, reference), key=len)
     # Skip the one extra character of the longer word wherever it is.
     return any(longer[:i] + longer[i + 1 :] == shorter for i in range(len(longer)))
+
+
+def time_or_ordinal(word: str) -> bool:
+    """A number glued to a time or ordinal ending: "14h", "10h30", "3e", "2eme"."""
+    return _TIME_OR_ORDINAL.fullmatch(word) is not None
 
 
 @lru_cache(maxsize=_CACHE_SIZE)

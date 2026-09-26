@@ -33,6 +33,7 @@ SHOPPING_CART = chr(0x1F6D2)
 FULLWIDTH_C3 = chr(0xFF23) + chr(0xFF13)
 SMALL_E_GRAVE = chr(0x00E8)
 SMALL_E_ACUTE = chr(0x00E9)
+SMALL_A_GRAVE = chr(0x00E0)
 RIGHT_SINGLE_QUOTE = chr(0x2019)
 EURO = chr(0x20AC)
 HEART = chr(0x2764) + VS16
@@ -223,10 +224,46 @@ def test_the_same_quantity_written_twice_is_one_quantity() -> None:
 
 
 @pytest.mark.parametrize(
-    "text", [f"je prends B07 15{EURO}", "je prends B07 15 euros", "je prends B07 -50%"]
+    "text",
+    [
+        f"je prends B07 15{EURO}",
+        "je prends B07 15 euros",
+        "je prends B07 a 15 balles",
+        "je prends B07 -50%",
+        f"je prends B07 {SMALL_A_GRAVE} 9,90{EURO}",
+        f"je prends B07 {SMALL_A_GRAVE} 15.90 {EURO}",
+        "je prends B07 a 29.99",
+    ],
 )
 def test_a_price_or_a_discount_is_not_a_quantity(text: str) -> None:
     assert parse(text) == match(B07, "", 1, Confidence.EXACT, "prends", "B07")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "je prends B07 10h",
+        f"je prends B07 demain {SMALL_A_GRAVE} 9h",
+        "je prends B07 avant 20h",
+        "je prends B07 je paie a 10h30",
+        "je prends B07 vers 9 h",
+        "je prends B07 dans 5 min",
+        "je prends B07 pour la 3e fois",
+        f"je prends B07 pour la 2{SMALL_E_GRAVE}me fois",
+        "je prends B07 le 1er",
+    ],
+)
+def test_a_time_or_an_ordinal_is_not_a_quantity(text: str) -> None:
+    assert parse(text) == match(B07, "", 1, Confidence.EXACT, "prends", "B07")
+
+
+def test_a_price_beside_a_quantity_leaves_the_quantity() -> None:
+    assert parse(f"je prends B07 x2 {SMALL_A_GRAVE} 12,50{EURO}") == match(
+        B07, "", 2, Confidence.EXACT, "prends", "B07", "x2"
+    )
+    assert parse("je prends 2 B07 pour 30 euros") == match(
+        B07, "", 2, Confidence.EXACT, "prends", "2", "B07"
+    )
 
 
 @pytest.mark.parametrize(

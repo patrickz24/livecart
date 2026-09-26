@@ -3,6 +3,7 @@ import pytest
 from livecart_core.domain.parser.normalization import (
     AMOUNT_UNIT,
     CART,
+    DECIMAL,
     NEGATION,
     normalize_comment,
 )
@@ -27,6 +28,8 @@ EURO = chr(0x20AC)
 EN_DASH = chr(0x2013)
 HEART = chr(0x2764) + VS16
 CIRCLED_M = chr(0x24C2)
+FULLWIDTH_ONE = chr(0xFF11)
+FULLWIDTH_COMMA = chr(0xFF0C)
 
 
 def folded(text: str) -> str:
@@ -134,6 +137,23 @@ def test_a_mention_names_another_viewer_and_is_dropped() -> None:
 
 def test_currency_symbols_and_percent_become_the_amount_unit() -> None:
     assert folded(f"15{EURO} -50% $3") == f"15{AMOUNT_UNIT} 50{AMOUNT_UNIT} {AMOUNT_UNIT}3"
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        ("15,90", f"15{DECIMAL}90"),
+        ("29.99", f"29{DECIMAL}99"),
+        (f"{FULLWIDTH_ONE}{FULLWIDTH_COMMA}{FULLWIDTH_ONE}", f"1{DECIMAL}1"),
+        ("B07, C3", "b07 c3"),
+        ("x2. merci", "x2 merci"),
+        ("2 ,3", "2 3"),
+        (",5", "5"),
+    ],
+    ids=["comma", "full-stop", "fullwidth", "after-code", "after-number", "spaced", "leading"],
+)
+def test_a_separator_between_two_digits_becomes_the_decimal_mark(typed: str, expected: str) -> None:
+    assert folded(typed) == expected
 
 
 def test_every_folded_character_maps_back_to_the_original_text() -> None:

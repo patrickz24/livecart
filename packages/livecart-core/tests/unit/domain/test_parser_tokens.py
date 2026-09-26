@@ -135,15 +135,24 @@ def test_a_numbered_size_is_one_word(typed: str) -> None:
     assert shapes(typed) == [f"Word:{typed.lower()}"]
 
 
+@pytest.mark.parametrize("typed", ["14h", "10h30", "20min", "3e", "2eme", "1er", "2nd", "15e"])
+def test_a_time_or_an_ordinal_is_one_word(typed: str) -> None:
+    # Split, "10h30" would leave a code-shaped "h30" and a quantity of 10.
+    assert shapes(typed) == [f"Word:{typed}"]
+
+
 def test_marks_are_tokens_of_their_own() -> None:
     marks = [
-        token for token in tokens(f"je n'en veux ? {SHOPPING_CART} 15$") if isinstance(token, Mark)
+        token
+        for token in tokens(f"je n'en veux ? {SHOPPING_CART} 15,90$")
+        if isinstance(token, Mark)
     ]
 
     assert [mark.kind for mark in marks] == [
         MarkKind.NEGATION,
         MarkKind.QUESTION,
         MarkKind.CART,
+        MarkKind.DECIMAL,
         MarkKind.AMOUNT_UNIT,
     ]
 
