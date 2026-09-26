@@ -14,7 +14,7 @@ from pydantic import SecretStr
 
 from livecart_core.application.dto import QueueDelivery
 from livecart_core.application.expire_reservations import ExpireReservations, SweepResult
-from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.application.ports import NullIntentFallback, ServiceUnavailable
 from livecart_core.application.process_comment import HandledComment, ProcessComment
 from livecart_core.application.reclaim_comments import DeadLetter, Reclaimed
 from livecart_core.domain.outcomes import RejectionReason
@@ -79,8 +79,10 @@ def _worker() -> Worker:
         events=events,
         notifier=FakeBuyerNotifier(),
         access_token=TEST_ORDER_TOKENS.token_for,
+        fallback=NullIntentFallback(),
         clock=clock,
         lease=timedelta(seconds=30),
+        db_budget=timedelta(seconds=5),
         reservation_ttl=timedelta(seconds=900),
         max_quantity=DEMO_MAX_QUANTITY,
     )

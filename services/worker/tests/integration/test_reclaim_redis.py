@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import QueuedComment
+from livecart_core.application.ports import NullIntentFallback
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
 from livecart_core.domain.state_machines import CommentStatus
@@ -63,8 +64,10 @@ async def worker(
             redis_client, prefix=redis_key_prefix, link_scheme="livecart", production=False
         ),
         access_token=ORDER_TOKENS.token_for,
+        fallback=NullIntentFallback(),
         clock=clock,
         lease=timedelta(seconds=30),
+        db_budget=timedelta(seconds=5),
         reservation_ttl=timedelta(seconds=900),
         max_quantity=DEMO_MAX_QUANTITY,
     )

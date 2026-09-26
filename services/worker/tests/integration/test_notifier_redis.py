@@ -22,7 +22,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import OrderRecord, QueueDelivery
-from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.application.ports import NullIntentFallback, ServiceUnavailable
 from livecart_core.application.process_comment import Handling, ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
 from livecart_core.infrastructure.clock import SystemClock
@@ -152,8 +152,10 @@ def _process(
             redis, prefix=prefix, link_scheme="livecart", production=False
         ),
         access_token=TOKENS.token_for,
+        fallback=NullIntentFallback(),
         clock=SystemClock(),
         lease=timedelta(seconds=30),
+        db_budget=timedelta(seconds=5),
         reservation_ttl=timedelta(seconds=900),
         max_quantity=DEMO_MAX_QUANTITY,
     )

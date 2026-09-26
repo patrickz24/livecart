@@ -9,6 +9,7 @@ import pytest
 from livecart_core.application.dto import (
     MAX_IDENTIFIER_LENGTH,
     BuyerNotification,
+    FallbackReceipt,
     InboxComment,
     IntentSource,
     LiveSessionRecord,
@@ -23,7 +24,7 @@ from livecart_core.application.dto import (
     SessionEventType,
     StockLevel,
 )
-from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
+from livecart_core.application.ports import NullIntentFallback, RecordNotFound, ServiceUnavailable
 from livecart_core.application.process_comment import (
     HandledComment,
     Handling,
@@ -31,7 +32,12 @@ from livecart_core.application.process_comment import (
     lease_holder,
 )
 from livecart_core.domain.codes import ProductCode, Variant
-from livecart_core.domain.outcomes import AmbiguityReason, IntentOutcome, RejectionReason
+from livecart_core.domain.outcomes import (
+    AmbiguityReason,
+    IntentOutcome,
+    LlmOutcome,
+    RejectionReason,
+)
 from livecart_core.domain.state_machines import (
     CommentStatus,
     LiveSessionStatus,
@@ -52,6 +58,7 @@ from livecart_core.testing.fakes import (
 )
 
 LEASE = timedelta(seconds=30)
+DB_BUDGET = timedelta(seconds=5)
 TTL = timedelta(seconds=900)
 CONSUMER = "worker-1"
 BUY_B07 = queued_comment("je prends B07", external_comment_id="comment-1", author="buyer-1")
@@ -108,8 +115,10 @@ def _world(
         events=events,
         notifier=notifier,
         access_token=TEST_ORDER_TOKENS.token_for,
+        fallback=NullIntentFallback(),
         clock=clock,
         lease=LEASE,
+        db_budget=DB_BUDGET,
         reservation_ttl=TTL,
         max_quantity=DEMO_MAX_QUANTITY,
     )
@@ -225,15 +234,16 @@ async def test_a_parser_rejection_settles_the_comment_with_its_reason() -> None:
     assert world.database.tables.intents == {}
 
 
-async def test_an_ambiguity_stays_unresolved_until_the_llm_fallback() -> None:
+async def test_an_ambiguity_stays_unresolved_without_an_llm() -> None:
     world = _world()
 
     handled = await world.handle(queued_comment("je prends A13"))
 
     assert handled.rejection is RejectionReason.AMBIGUOUS_UNRESOLVED
+    assert handled.llm_outcome is LlmOutcome.DISABLED
     row = world.row(handled.comment.id)
     assert row.parse == ParseSummary(ParseKind.AMBIGUOUS, AmbiguityReason.UNKNOWN_CODE)
-    assert row.llm_receipt is None
+    assert row.llm_receipt == FallbackReceipt(LlmOutcome.DISABLED)
     assert world.event_types() == [SessionEventType.COMMENT_REJECTED]
 
 
@@ -507,8 +517,10 @@ async def test_a_redelivery_after_the_stamp_sends_no_second_notice() -> None:
         events=world.events,
         notifier=world.notifier,
         access_token=TEST_ORDER_TOKENS.token_for,
+        fallback=NullIntentFallback(),
         clock=world.clock,
         lease=LEASE,
+        db_budget=DB_BUDGET,
         reservation_ttl=TTL,
         max_quantity=DEMO_MAX_QUANTITY,
     )
@@ -704,15 +716,16 @@ def test_the_lease_holder_is_the_consumer_and_the_delivery() -> None:
 
 
 @pytest.mark.parametrize(
-    ("lease", "max_quantity", "message"),
+    ("lease", "db_budget", "max_quantity", "message"),
     [
-        (timedelta(0), DEMO_MAX_QUANTITY, "lease"),
-        (LEASE, 0, "max_quantity"),
-        (LEASE, 100, "max_quantity"),
+        (timedelta(0), DB_BUDGET, DEMO_MAX_QUANTITY, "lease"),
+        (LEASE, timedelta(0), DEMO_MAX_QUANTITY, "db_budget"),
+        (LEASE, DB_BUDGET, 0, "max_quantity"),
+        (LEASE, DB_BUDGET, 100, "max_quantity"),
     ],
 )
 def test_nonsensical_settings_are_refused(
-    lease: timedelta, max_quantity: int, message: str
+    lease: timedelta, db_budget: timedelta, max_quantity: int, message: str
 ) -> None:
     database = InMemoryDatabase()
     clock = FakeClock()
@@ -725,8 +738,10 @@ def test_nonsensical_settings_are_refused(
             events=FakeEventPublisher(),
             notifier=FakeBuyerNotifier(),
             access_token=TEST_ORDER_TOKENS.token_for,
+            fallback=NullIntentFallback(),
             clock=clock,
             lease=lease,
+            db_budget=db_budget,
             reservation_ttl=TTL,
             max_quantity=max_quantity,
         )

@@ -21,6 +21,7 @@ from livecart_core.application.dto import (
     StockLevel,
 )
 from livecart_core.application.expire_reservations import ExpireReservations
+from livecart_core.application.ports import NullIntentFallback
 from livecart_core.application.process_comment import Handling, ProcessComment
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.outcomes import IntentOutcome
@@ -65,8 +66,10 @@ async def test_an_unpaid_reservation_expires_and_its_stock_returns(
         events=events,
         notifier=FakeBuyerNotifier(),
         access_token=ORDER_TOKENS.token_for,
+        fallback=NullIntentFallback(),
         clock=clock,
         lease=timedelta(seconds=30),
+        db_budget=timedelta(seconds=5),
         reservation_ttl=RESERVATION_TTL,
         max_quantity=DEMO_MAX_QUANTITY,
     )

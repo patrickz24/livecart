@@ -35,7 +35,7 @@ from typing import Final
 import structlog
 
 from livecart_core.application.expire_reservations import ExpireReservations
-from livecart_core.application.ports import Clock
+from livecart_core.application.ports import Clock, NullIntentFallback
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
 from livecart_core.infrastructure.clock import SystemClock
@@ -146,8 +146,10 @@ async def serve(
                 production=settings.is_production,
             ),
             access_token=tokens.token_for,
+            fallback=NullIntentFallback(),
             clock=clock,
             lease=settings.message_process_timeout,
+            db_budget=settings.db_budget,
             reservation_ttl=settings.reservation_ttl,
             max_quantity=settings.max_quantity_per_comment,
         )

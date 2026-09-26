@@ -494,7 +494,8 @@ class FallbackRequest:
     text: str
     ambiguity: Ambiguous
     catalog: Catalog
-    # What is left of the message deadline once the fallback slot is taken.
+    # The most the attempt may take: what is left of the message deadline,
+    # less the time kept for the units after it (DB_BUDGET_S).
     timeout_seconds: float
 
     def __post_init__(self) -> None:

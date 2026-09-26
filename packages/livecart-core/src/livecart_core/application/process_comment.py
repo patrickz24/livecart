@@ -23,12 +23,24 @@ own, so that no connection is ever held across another port:
    ``session_not_live`` one. The session's catalog is loaded next.
 3. **The deterministic parser** reads the comment's stored text (the first
    delivery's): a ``Rejected`` result settles the comment with its reason,
-   an ``Ambiguous`` one as ``ambiguous_unresolved`` (milestone 4c asks the
-   LLM fallback first), and a ``Match`` goes to
-4. **unit 3** (``ReserveStock``), one transaction that settles the comment as
+   and a ``Match`` goes to unit 3. An ``Ambiguous`` one goes to
+4. **the LLM fallback** (``IntentFallback``), outside any transaction, and
+   only when the comment has no receipt yet: a receipt that an earlier
+   delivery stored is decided on again, never paid for twice. The fallback
+   gets what is left of the message deadline, less ``db_budget``, the time
+   kept for the units that follow; with none left, the receipt is a
+   ``timeout`` without a call. **Unit 2** stores the receipt unless the
+   comment has one (``CommentInbox.record_llm_receipt``), and the decision
+   is made on the receipt stored, read back, not on the one received:
+   ``decide_from_llm`` checks its proposal against the catalog and the
+   quantity bound. An intent it accepts goes to unit 3, with the source
+   ``llm``; anything else (the fallback disabled, busy, over budget or
+   failed, or a reading the domain refuses) settles the comment as
+   ``ambiguous_unresolved``.
+5. **Unit 3** (``ReserveStock``), one transaction that settles the comment as
    processed, reserves the stock, records the intent and opens the order;
    every deadline comes from the ``Clock`` port.
-5. **After the commit**, the session events are published, best effort (a
+6. **After the commit**, the session events are published, best effort (a
    failure is counted in the result, never raised: the dashboard catches up
    from its next snapshot). The buyer of an order opened is then notified
    (``BuyerNotifier``) of its reference and its access token, the token
@@ -50,6 +62,7 @@ to the reclaim loop, and whatever committed before the failure makes the
 retry a duplicate rather than a second effect.
 """
 
+import asyncio
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
@@ -60,6 +73,8 @@ from uuid import UUID
 from livecart_core.application.dto import (
     MAX_IDENTIFIER_LENGTH,
     BuyerNotification,
+    FallbackReceipt,
+    FallbackRequest,
     InboxComment,
     OrderRecord,
     ParseSummary,
@@ -74,6 +89,7 @@ from livecart_core.application.ports import (
     CommentInbox,
     CommentQueue,
     EventPublisher,
+    IntentFallback,
     LiveSessionRepository,
     OrderReservations,
     RecordNotFound,
@@ -81,8 +97,10 @@ from livecart_core.application.ports import (
 )
 from livecart_core.application.reserve_stock import ReserveStock
 from livecart_core.application.session_events import comment_rejected, reservation_events
+from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.errors import InvalidTransition
-from livecart_core.domain.outcomes import RejectionReason
+from livecart_core.domain.llm_decision import decide_from_llm
+from livecart_core.domain.outcomes import LlmOutcome, RejectionReason
 from livecart_core.domain.parser import Ambiguous, Rejected, parse_comment
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.domain.state_machines import (
@@ -140,6 +158,9 @@ class HandledComment:
     unpublished_events: int = 0
     # Whether this delivery sent the buyer the order's reference and token.
     notified: bool = False
+    # The outcome of the fallback's receipt the comment was decided on, when
+    # the parser left it ambiguous: this delivery's, or an earlier one's.
+    llm_outcome: LlmOutcome | None = None
 
 
 class ProcessComment:
@@ -155,13 +176,17 @@ class ProcessComment:
         events: EventPublisher,
         notifier: BuyerNotifier,
         access_token: TokenFor,
+        fallback: IntentFallback,
         clock: Clock,
         lease: timedelta,
+        db_budget: timedelta,
         reservation_ttl: timedelta,
         max_quantity: int,
     ) -> None:
         if lease <= timedelta(0):
             raise ValueError(f"lease must be positive, not {lease}")
+        if db_budget <= timedelta(0):
+            raise ValueError(f"db_budget must be positive, not {db_budget}")
         if not 1 <= max_quantity <= QUANTITY_CEILING:
             raise ValueError(f"max_quantity must be from 1 to {QUANTITY_CEILING}")
         self._inbox = inbox
@@ -171,13 +196,24 @@ class ProcessComment:
         self._events = events
         self._notifier = notifier
         self._access_token = access_token
+        self._fallback = fallback
         self._clock = clock
         self._lease = lease
+        self._db_budget_s = db_budget.total_seconds()
         self._max_quantity = max_quantity
         self._reserve = ReserveStock(orders, clock, reservation_ttl=reservation_ttl)
 
-    async def __call__(self, delivery: QueueDelivery, *, consumer: str) -> HandledComment:
-        """Handle one delivery for ``consumer``, the queue consumer that received it."""
+    async def __call__(
+        self, delivery: QueueDelivery, *, consumer: str, deadline: float | None = None
+    ) -> HandledComment:
+        """Handle one delivery for ``consumer``, the queue consumer that received it.
+
+        ``deadline`` is when the consumer cancels the handler, on the event
+        loop's clock (``loop.time()``, what ``asyncio.timeout_at`` reads): the
+        fallback's time is counted from it. ``None`` is a lease from now.
+        """
+        if deadline is None:
+            deadline = asyncio.get_running_loop().time() + self._lease.total_seconds()
         envelope = delivery.comment
         claim = await self._inbox.claim(
             envelope,
@@ -210,19 +246,27 @@ class ProcessComment:
             return await self._reject(
                 delivery, comment, parsed.reason, session_id=session.id, parse=parse
             )
+        llm_outcome = None
         if isinstance(parsed, Ambiguous):
-            # Milestone 4c asks the LLM fallback before an ambiguity gives up.
-            return await self._reject(
-                delivery,
-                comment,
-                RejectionReason.AMBIGUOUS_UNRESOLVED,
-                session_id=session.id,
-                parse=parse,
-            )
+            receipt = await self._receipt(comment, session.id, parsed, catalog, deadline=deadline)
+            llm_outcome = receipt.outcome
+            choice = None
+            if receipt.proposal is not None:
+                choice = decide_from_llm(receipt.proposal, catalog, max_quantity=self._max_quantity)
+            if choice is None:
+                return await self._reject(
+                    delivery,
+                    comment,
+                    RejectionReason.AMBIGUOUS_UNRESOLVED,
+                    session_id=session.id,
+                    parse=parse,
+                    llm_outcome=llm_outcome,
+                )
+            intent = ResolvedIntent.from_llm(choice, evidence=parsed.evidence)
+        else:
+            intent = ResolvedIntent.from_match(parsed)
 
-        result = await self._reserve(
-            comment.id, session.id, ResolvedIntent.from_match(parsed), parse=parse
-        )
+        result = await self._reserve(comment.id, session.id, intent, parse=parse)
         if result is None:
             return await self._duplicate(delivery, await self._reread(comment.id))
         unpublished = await self._publish(
@@ -238,7 +282,36 @@ class ProcessComment:
             reservation=result,
             unpublished_events=unpublished,
             notified=notified,
+            llm_outcome=llm_outcome,
         )
+
+    async def _receipt(
+        self,
+        comment: InboxComment,
+        session_id: UUID,
+        ambiguity: Ambiguous,
+        catalog: Catalog,
+        *,
+        deadline: float,
+    ) -> FallbackReceipt:
+        """The comment's receipt: an earlier delivery's, or one attempt now, stored by unit 2."""
+        if comment.llm_receipt is not None:
+            return comment.llm_receipt
+        left = deadline - asyncio.get_running_loop().time() - self._db_budget_s
+        if left > 0:
+            attempt = await self._fallback.resolve(
+                FallbackRequest(
+                    session_id=session_id,
+                    text=comment.text,
+                    ambiguity=ambiguity,
+                    catalog=catalog,
+                    timeout_seconds=left,
+                )
+            )
+        else:
+            # What came before took the fallback's time: no call to start now.
+            attempt = FallbackReceipt(LlmOutcome.TIMEOUT)
+        return await self._inbox.record_llm_receipt(comment.id, attempt)
 
     async def _reject(
         self,
@@ -248,6 +321,7 @@ class ProcessComment:
         *,
         session_id: UUID | None,
         parse: ParseSummary | None = None,
+        llm_outcome: LlmOutcome | None = None,
     ) -> HandledComment:
         try:
             outcome = await self._inbox.reject(
@@ -273,7 +347,11 @@ class ProcessComment:
         unpublished = await self._publish(events)
         await self._queue.ack(delivery)
         return HandledComment(
-            Handling.REJECTED, comment, rejection=reason, unpublished_events=unpublished
+            Handling.REJECTED,
+            comment,
+            rejection=reason,
+            unpublished_events=unpublished,
+            llm_outcome=llm_outcome,
         )
 
     async def _duplicate(self, delivery: QueueDelivery, comment: InboxComment) -> HandledComment:
@@ -316,6 +394,7 @@ class ProcessComment:
             rejection=comment.rejection_reason,
             unpublished_events=unpublished,
             notified=notified,
+            llm_outcome=None if comment.llm_receipt is None else comment.llm_receipt.outcome,
         )
 
     async def _notify(self, comment: InboxComment, order: OrderRecord) -> bool:

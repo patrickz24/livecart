@@ -87,6 +87,10 @@ MAX_WORKER_CONCURRENCY: Final = 64
 MAX_WORKER_BATCH: Final = 256
 MIN_MESSAGE_PROCESS_TIMEOUT_S: Final = 5
 MAX_MESSAGE_PROCESS_TIMEOUT_S: Final = 300
+# The most a delivery may keep for its units after the LLM fallback: each
+# waits 2 s for a lock and runs 5 s at most (lock_timeout, statement_timeout),
+# so a minute is beyond anything they need.
+MAX_DB_BUDGET_S: Final = 60
 # PostgreSQL's 100 connections, less the 3 it keeps for superusers.
 MAX_DB_CONNECTIONS: Final = 97
 # The deliveries of one comment before it goes to the dead-letter queue.
@@ -272,6 +276,10 @@ class Settings(BaseAppSettings):
     # The deadline of one delivery, from when its handler starts, and the
     # length of the comment's lease, which therefore outlives the handler.
     message_process_timeout_s: int = 30
+    # The part of a delivery's deadline kept for what follows the LLM
+    # fallback (its receipt, unit 3, the events, the buyer's notice): the
+    # fallback gets what is left of the deadline, less this.
+    db_budget_s: int = 5
     # The connections the worker's pool may open at most: startup refuses a
     # WORKER_CONCURRENCY whose pool (livecart_core.infrastructure.db.engine)
     # would open more.
@@ -302,6 +310,10 @@ class Settings(BaseAppSettings):
     @property
     def message_process_timeout(self) -> timedelta:
         return timedelta(seconds=self.message_process_timeout_s)
+
+    @property
+    def db_budget(self) -> timedelta:
+        return timedelta(seconds=self.db_budget_s)
 
     @property
     def worker_pool(self) -> PoolSize:
@@ -435,6 +447,14 @@ class Settings(BaseAppSettings):
                 f"must be from {MIN_MESSAGE_PROCESS_TIMEOUT_S} to "
                 f"{MAX_MESSAGE_PROCESS_TIMEOUT_S} seconds"
             )
+        return value
+
+    @field_validator("db_budget_s")
+    @classmethod
+    def _check_db_budget_s(cls, value: int) -> int:
+        """A second at least: the fallback must never take the time its receipt needs."""
+        if not 1 <= value <= MAX_DB_BUDGET_S:
+            raise ValueError(f"must be from 1 to {MAX_DB_BUDGET_S} seconds")
         return value
 
     @field_validator("worker_db_max_connections")

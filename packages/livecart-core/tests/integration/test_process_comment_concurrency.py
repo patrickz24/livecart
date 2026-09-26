@@ -15,9 +15,15 @@ import pytest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.dto import QueuedComment, QueueDelivery
+from livecart_core.application.dto import (
+    FallbackReceipt,
+    FallbackRequest,
+    QueuedComment,
+    QueueDelivery,
+)
+from livecart_core.application.ports import IntentFallback, NullIntentFallback
 from livecart_core.application.process_comment import HandledComment, Handling, ProcessComment
-from livecart_core.domain.outcomes import IntentOutcome
+from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome
 from livecart_core.domain.state_machines import CommentStatus, OrderStatus
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.engine import WORKER_POOL
@@ -28,6 +34,8 @@ from livecart_core.testing.fakes import (
     FakeClock,
     FakeCommentQueue,
     FakeEventPublisher,
+    FakeIntentFallback,
+    ok_receipt,
 )
 from livecart_core.testing.pools import PoolProbe
 
@@ -56,7 +64,11 @@ class Stored:
 
 
 async def _setup(
-    backend: PostgresBackend, comments: list[QueuedComment], *, stock_total: int
+    backend: PostgresBackend,
+    comments: list[QueuedComment],
+    *,
+    stock_total: int,
+    fallback: IntentFallback | None = None,
 ) -> tuple[ProcessComment, FakeCommentQueue, list[QueueDelivery], UUID]:
     """A live session selling Z99, its comments delivered, and the use case."""
     session = await backend.add_live_session()
@@ -73,8 +85,10 @@ async def _setup(
         events=FakeEventPublisher(),
         notifier=FakeBuyerNotifier(),
         access_token=ORDER_TOKENS.token_for,
+        fallback=fallback if fallback is not None else NullIntentFallback(),
         clock=clock,
         lease=LEASE,
+        db_budget=timedelta(seconds=5),
         reservation_ttl=TTL,
         max_quantity=DEMO_MAX_QUANTITY,
     )
@@ -202,3 +216,45 @@ async def test_twenty_parallel_deliveries_of_one_comment_give_one_effect(
     assert len(queue.acknowledged) == 20
     # The claims overlapped: several connections were busy with them at once.
     assert probe.peak > 1
+
+
+class _PoolWatchingFallback(FakeIntentFallback):
+    """Answers after 0.2 s, once the other deliveries are done, and notes the pool's use then."""
+
+    def __init__(self, probe: PoolProbe, receipts: list[FallbackReceipt]) -> None:
+        super().__init__(receipts, delay_seconds=0.2)
+        self._probe = probe
+        self.checked_out_at_the_answer: list[int] = []
+
+    async def resolve(self, request: FallbackRequest) -> FallbackReceipt:
+        receipt = await super().resolve(request)
+        self.checked_out_at_the_answer.append(self._probe.checked_out)
+        return receipt
+
+
+async def test_twenty_parallel_deliveries_of_an_ambiguous_comment_make_one_llm_call(
+    postgres_backend: PostgresBackend, worker_engine: AsyncEngine, migrator_engine: AsyncEngine
+) -> None:
+    # "deux": a quantity in words, which the parser leaves to the fallback.
+    comment = queued_comment("je prends deux Z99", external_comment_id="c-1", author="buyer-1")
+    probe = PoolProbe(worker_engine)
+    # One receipt only, and a call slow enough for every claim to overlap it.
+    fallback = _PoolWatchingFallback(probe, [ok_receipt("Z99", quantity=2)])
+    process, queue, deliveries, session_id = await _setup(
+        postgres_backend, [comment] * 20, stock_total=10, fallback=fallback
+    )
+
+    with probe:
+        handled = await _race(process, deliveries)
+
+    stored = await _stored(migrator_engine, session_id)
+    assert len(fallback.requests) == 1
+    [processed] = [result for result in handled if result.handling is Handling.PROCESSED]
+    assert processed.llm_outcome is LlmOutcome.OK
+    assert (stored.reserved, stored.orders) == (2, 1)
+    assert stored.intents == {IntentOutcome.RESERVED: 1}
+    assert stored.processed_comments == stored.comments == 1
+    assert queue.pending == []
+    # The delivery that called held no connection while the fallback answered.
+    assert fallback.checked_out_at_the_answer == [0]
+    assert probe.checked_out == 0

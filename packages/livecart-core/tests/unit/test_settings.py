@@ -23,6 +23,7 @@ WORKER_SETTINGS = (
     "WORKER_CONCURRENCY",
     "WORKER_BATCH",
     "MESSAGE_PROCESS_TIMEOUT_S",
+    "DB_BUDGET_S",
     "QUEUE_MAX_DELIVERIES",
     "QUEUE_RECLAIM_MIN_IDLE_MS",
     "BUYER_LINK_SCHEME",
@@ -555,6 +556,17 @@ def test_the_worker_settings_stay_within_their_bounds(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         load(**{name: refused}, **dev_env())
+
+
+def test_five_seconds_of_each_deadline_are_kept_for_the_units_after_the_fallback() -> None:
+    assert load(**dev_env()).db_budget == timedelta(seconds=5)
+    assert load(DB_BUDGET_S="60", **dev_env()).db_budget_s == 60
+
+
+@pytest.mark.parametrize("value", ["0", "61"])
+def test_the_database_budget_stays_between_a_second_and_a_minute(value: str) -> None:
+    with pytest.raises(ValidationError, match="from 1 to 60 seconds"):
+        load(DB_BUDGET_S=value, **dev_env())
 
 
 def test_the_worker_pool_must_fit_its_connection_cap() -> None:
