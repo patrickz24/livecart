@@ -21,8 +21,11 @@ ambiguous comment that reaches the model goes through it, in this order:
 
 The day's spend is checked before a call and known only after it, so the
 calls in flight when it is reached may go past it: one per slot of each
-worker at most, a few cents with the defaults. The prices are list prices,
-per million input and output tokens: the spend approximates the bill.
+worker process at most, each up to the adapter's ``max_tokens`` of output
+plus its prompt. With ``claude-opus-5`` and its 1024 tokens, about $0.03 a
+call, so about $0.12 per worker past the day's budget, growing with the
+number of workers (ADR 0006). The prices are list prices, per million input
+and output tokens: the spend approximates the bill.
 
 The guard counts in plain numbers, which the worker's metrics read at scrape
 time: the receipts by outcome, the dollars spent, and the costs the budget

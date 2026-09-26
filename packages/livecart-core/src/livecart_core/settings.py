@@ -257,7 +257,10 @@ class LlmSettings(BaseAppSettings):
     # after a transient failure, within what the message deadline has left.
     llm_call_timeout_s: float = 8.0
     # The cost guard, shared by every worker through Redis: the calls of one
-    # live session, and the dollars of one UTC day, each checked before a call.
+    # live session, and the dollars of one UTC day, each checked before a call,
+    # so the calls in flight when the day's budget is reached go past it: up to
+    # LLM_SLOTS per worker process, about $0.12 per worker with the defaults
+    # (ADR 0006).
     llm_max_calls_per_session: int = 200
     llm_daily_budget_usd: Decimal = Decimal("1.00")
     llm_prices: Annotated[dict[str, LlmPrice], NoDecode] = Field(
