@@ -1,4 +1,3 @@
-import asyncio
 import secrets
 from datetime import timedelta
 from decimal import Decimal
@@ -16,17 +15,14 @@ from livecart_core.application.dto import (
 from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
-from livecart_core.domain.outcomes import IntentOutcome, RejectionReason
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import (
     REFERENCE_SPACE,
-    OrderReference,
     RandomSource,
     encode_reference,
 )
 from livecart_core.domain.state_machines import (
     CommentStatus,
-    LiveSessionStatus,
     OrderStatus,
     TransitionOutcome,
 )
@@ -82,149 +78,7 @@ def _database(
     return database, session.id, b07.id
 
 
-# --- Unit 3 ----------------------------------------------------------------------------
-
-
-async def test_a_reservation_opens_a_pending_order_for_the_author() -> None:
-    database, session_id, product_id = _database()
-    comment_id = await _claimed(database, "comment-1", author="buyer-7")
-
-    result = await database.orders.reserve(_request(comment_id, session_id, quantity=2))
-
-    assert result is not None
-    order = result.order
-    assert result.intent.outcome is IntentOutcome.RESERVED
-    assert result.intent.product_id == product_id
-    assert result.intent.evidence == ("je prends", "B07")
-    assert order is not None
-    assert order.status is OrderStatus.PENDING_PAYMENT
-    assert order.intent_id == result.intent.id
-    assert order.buyer_platform_user_id == "buyer-7"
-    assert order.seller_id == database.tables.sessions[session_id].seller_id
-    assert (order.unit_price, order.total) == (Money(1_250, "EUR"), Money(2_500, "EUR"))
-    assert order.reserved_until == NOW + TTL
-    assert order.created_at == NOW
-    assert result.stock == StockLevel(10, reserved=2)
-    product = await database.products.get(product_id)
-    assert product is not None
-    assert product.stock == StockLevel(10, reserved=2)
-    comment = await database.comments.get(comment_id)
-    assert comment is not None
-    assert (comment.status, comment.session_id) == (CommentStatus.PROCESSED, session_id)
-    assert await database.orders.find_reservation(comment_id) == result
-    assert await database.orders.get(order.id) == order
-    assert await database.orders.get_by_reference(order.reference) == order
-
-
-async def test_short_stock_records_an_out_of_stock_intent() -> None:
-    database, session_id, _ = _database(stock_total=1)
-    comment_id = await _claimed(database, "comment-1")
-
-    result = await database.orders.reserve(_request(comment_id, session_id, quantity=2))
-
-    assert result is not None
-    assert result.intent.outcome is IntentOutcome.OUT_OF_STOCK
-    assert result.order is None
-    assert result.stock == StockLevel(1)
-    assert database.tables.orders == {}
-    comment = await database.comments.get(comment_id)
-    assert comment is not None
-    assert comment.status is CommentStatus.PROCESSED
-
-
-async def test_a_session_no_longer_live_reserves_nothing() -> None:
-    database, session_id, _ = _database()
-    comment_id = await _claimed(database, "comment-1")
-    await database.live_sessions.set_status(session_id, LiveSessionStatus.ENDED, now=NOW)
-
-    result = await database.orders.reserve(_request(comment_id, session_id))
-
-    assert result is not None
-    assert result.intent.outcome is IntentOutcome.OUT_OF_STOCK
-    assert result.stock == StockLevel(10)
-
-
-async def test_one_pending_order_per_buyer_and_product() -> None:
-    database, session_id, _ = _database()
-    first = await database.orders.reserve(
-        _request(await _claimed(database, "comment-1"), session_id)
-    )
-    same = await database.orders.reserve(
-        _request(await _claimed(database, "comment-2"), session_id)
-    )
-    other_product = await database.orders.reserve(
-        _request(await _claimed(database, "comment-3"), session_id, "A12", variant="M")
-    )
-    other_buyer = await database.orders.reserve(
-        _request(await _claimed(database, "comment-4", author="buyer-2"), session_id)
-    )
-
-    assert first is not None
-    assert same is not None
-    assert other_product is not None
-    assert other_buyer is not None
-    assert same.intent.outcome is IntentOutcome.ALREADY_RESERVED
-    assert same.order is None
-    assert same.stock == StockLevel(10, reserved=1)
-    assert other_product.intent.outcome is IntentOutcome.RESERVED
-    assert other_buyer.intent.outcome is IntentOutcome.RESERVED
-    assert other_buyer.stock == StockLevel(10, reserved=2)
-
-
-async def test_an_expired_order_frees_the_buyer_for_a_new_one() -> None:
-    database, session_id, _ = _database()
-    await database.orders.reserve(_request(await _claimed(database, "comment-1"), session_id))
-    await database.orders.expire_due(now=NOW + TTL + timedelta(seconds=1), limit=10)
-
-    again = await database.orders.reserve(
-        _request(await _claimed(database, "comment-2"), session_id)
-    )
-
-    assert again is not None
-    assert again.intent.outcome is IntentOutcome.RESERVED
-
-
-async def test_a_settled_comment_reserves_nothing_and_writes_nothing() -> None:
-    database, session_id, _ = _database()
-    processed = await _claimed(database, "comment-1")
-    rejected = await _claimed(database, "comment-2")
-    await database.orders.reserve(_request(processed, session_id))
-    await database.comments.reject(rejected, RejectionReason.NO_INTENT, session_id=session_id)
-    intents, orders = dict(database.tables.intents), dict(database.tables.orders)
-
-    assert await database.orders.reserve(_request(processed, session_id)) is None
-    assert await database.orders.reserve(_request(rejected, session_id)) is None
-    assert (database.tables.intents, database.tables.orders) == (intents, orders)
-
-
-async def test_twenty_parallel_buyers_never_oversell() -> None:
-    database, session_id, product_id = _database(stock_total=5)
-    comments = [await _claimed(database, f"comment-{n}", author=f"buyer-{n}") for n in range(20)]
-
-    results = await asyncio.gather(
-        *(database.orders.reserve(_request(comment_id, session_id)) for comment_id in comments)
-    )
-
-    outcomes = [result.intent.outcome for result in results if result is not None]
-    assert outcomes.count(IntentOutcome.RESERVED) == 5
-    assert outcomes.count(IntentOutcome.OUT_OF_STOCK) == 15
-    product = await database.products.get(product_id)
-    assert product is not None
-    assert product.stock == StockLevel(5, reserved=5)
-
-
-async def test_twenty_parallel_comments_of_one_buyer_give_one_order() -> None:
-    database, session_id, _ = _database()
-    comments = [await _claimed(database, f"comment-{n}") for n in range(20)]
-
-    results = await asyncio.gather(
-        *(database.orders.reserve(_request(comment_id, session_id)) for comment_id in comments)
-    )
-
-    outcomes = [result.intent.outcome for result in results if result is not None]
-    assert outcomes.count(IntentOutcome.RESERVED) == 1
-    assert outcomes.count(IntentOutcome.ALREADY_RESERVED) == 19
-    assert len(database.tables.orders) == 1
+# --- Unit 3: reference draws (the other scenarios run on every backend, tests/contract) ---
 
 
 async def test_a_colliding_reference_is_drawn_again() -> None:
@@ -263,41 +117,6 @@ async def test_three_collisions_leave_everything_as_it_was() -> None:
     product = await database.products.get(product_id)
     assert product is not None
     assert product.stock == StockLevel(10, reserved=1)
-
-
-async def test_unit_3_needs_a_known_comment_session_and_product() -> None:
-    database, session_id, _ = _database()
-    comment_id = await _claimed(database, "comment-1")
-
-    with pytest.raises(RecordNotFound, match="comment"):
-        await database.orders.reserve(_request(UNKNOWN, session_id))
-    with pytest.raises(RecordNotFound, match="live session"):
-        await database.orders.reserve(_request(comment_id, UNKNOWN))
-    with pytest.raises(RecordNotFound, match="product"):
-        await database.orders.reserve(_request(comment_id, session_id, "Z99"))
-    comment = await database.comments.get(comment_id)
-    assert comment is not None
-    assert comment.status is CommentStatus.RECEIVED
-
-
-async def test_lookups_of_what_does_not_exist() -> None:
-    database, _, _ = _database()
-
-    assert await database.orders.find_reservation(UNKNOWN) is None
-    assert await database.orders.get(UNKNOWN) is None
-    assert await database.orders.get_by_reference(OrderReference("LC-000000")) is None
-
-
-async def test_an_out_of_stock_reservation_reads_back_without_order() -> None:
-    database, session_id, _ = _database(stock_total=0)
-    comment_id = await _claimed(database, "comment-1")
-    await database.orders.reserve(_request(comment_id, session_id))
-
-    stored = await database.orders.find_reservation(comment_id)
-
-    assert stored is not None
-    assert stored.intent.outcome is IntentOutcome.OUT_OF_STOCK
-    assert stored.order is None
 
 
 # --- After the reservation -------------------------------------------------------------

@@ -8,13 +8,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from functools import partial
 
-from livecart_core.infrastructure.db.engine import create_db_engine, ping_database
+from livecart_core.infrastructure.db.engine import API_POOL, create_db_engine, ping_database
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.settings import Settings
-
-# API pool: 5 connections plus 10 on overflow (see the pool budget in the docs).
-API_POOL_SIZE = 5
-API_MAX_OVERFLOW = 10
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,8 +33,8 @@ def build_resources(settings: Settings) -> Resources:
     engine = create_db_engine(
         settings.database_url,
         application_name="livecart-api",
-        pool_size=API_POOL_SIZE,
-        max_overflow=API_MAX_OVERFLOW,
+        pool_size=API_POOL.size,
+        max_overflow=API_POOL.max_overflow,
     )
     redis = create_redis_client(settings.redis_url)
 

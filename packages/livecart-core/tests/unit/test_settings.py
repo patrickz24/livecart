@@ -1,3 +1,4 @@
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -14,7 +15,8 @@ REDIS_URL = "redis://:{password}@localhost:56379/0"
 def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts from an environment without any LiveCart variable."""
     names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
-    for name in (*names, "WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT"):
+    extra = ("WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT", "RESERVATION_TTL_SECONDS")
+    for name in (*names, *extra, "DEFAULT_CURRENCY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -191,6 +193,37 @@ def test_max_quantity_per_comment_must_stay_within_the_database_check(value: str
 def test_max_quantity_per_comment_must_be_an_integer() -> None:
     with pytest.raises(ValidationError, match="max_quantity_per_comment"):
         load(MAX_QUANTITY_PER_COMMENT="ten", **dev_env())
+
+
+def test_a_reservation_holds_the_stock_for_fifteen_minutes_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert settings.reservation_ttl_seconds == 900
+    assert settings.reservation_ttl == timedelta(minutes=15)
+
+
+@pytest.mark.parametrize("value", ["60", "1800", "86400"])
+def test_the_reservation_ttl_is_configurable(value: str) -> None:
+    assert load(RESERVATION_TTL_SECONDS=value, **dev_env()).reservation_ttl_seconds == int(value)
+
+
+@pytest.mark.parametrize("value", ["59", "0", "-900", "86401"])
+def test_the_reservation_ttl_stays_between_a_minute_and_a_day(value: str) -> None:
+    with pytest.raises(ValidationError, match="from 60 to 86400 seconds") as excinfo:
+        load(RESERVATION_TTL_SECONDS=value, **dev_env())
+
+    assert "reservation_ttl_seconds" in str(excinfo.value)
+
+
+def test_the_deployment_currency_is_the_euro_by_default() -> None:
+    assert load(**dev_env()).default_currency == "EUR"
+    assert load(DEFAULT_CURRENCY="CHF", **dev_env()).default_currency == "CHF"
+
+
+@pytest.mark.parametrize("value", ["eur", "EURO", "E1R", ""])
+def test_the_deployment_currency_is_an_iso_4217_code(value: str) -> None:
+    with pytest.raises(ValidationError, match="ISO 4217"):
+        load(DEFAULT_CURRENCY=value, **dev_env())
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

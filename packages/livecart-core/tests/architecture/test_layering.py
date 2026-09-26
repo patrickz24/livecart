@@ -1,9 +1,11 @@
-"""The import rule of the inner layers, checked from the source text with ``ast``.
+"""The import rule of the inner layers, and the ban on hand-written SQL, checked with ``ast``.
 
 ``livecart_core.domain`` may import the standard library and itself only;
 ``livecart_core.application`` may add pydantic. Reading the source rather
 than importing it catches an import inside a function or under
 ``TYPE_CHECKING`` too, and does not depend on what happens to be installed.
+No runtime module of the package may use SQLAlchemy's raw SQL text either
+(ruff's S608 catches SQL built from strings; this catches ``text()``).
 """
 
 import ast
@@ -14,6 +16,7 @@ from types import ModuleType
 
 import pytest
 
+import livecart_core
 import livecart_core.application
 import livecart_core.domain
 
@@ -160,6 +163,99 @@ def test_the_application_may_add_pydantic_but_nothing_else() -> None:
         "sqlalchemy",
         "structlog",
     ]
+
+
+# --- No SQL written by hand ------------------------------------------------------------
+
+# The SQLAlchemy names that take raw SQL text. The adapters build every
+# statement with Core constructs instead (insert, update().where().returning(),
+# select().with_for_update()): hand-written SQL lives in infra/postgres only,
+# and in the migrations, which are DDL frozen in time.
+RAW_SQL_NAMES = frozenset({"text", "literal_column", "TextClause"})
+RAW_SQL_EXEMPT = ("livecart_core.migrations", "livecart_core.testing")
+
+
+def _raw_sql_uses(source: str) -> list[str]:
+    """``from sqlalchemy... import text`` and ``sa.text`` where ``sa`` is a sqlalchemy import."""
+    tree = ast.parse(source)
+    aliases: set[str] = set()
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            aliases.update(
+                (alias.asname or alias.name).partition(".")[0]
+                for alias in node.names
+                if alias.name.partition(".")[0] == "sqlalchemy"
+            )
+        elif isinstance(node, ast.ImportFrom) and (node.module or "").startswith("sqlalchemy"):
+            found.extend(
+                f"{node.module}.{alias.name}" for alias in node.names if alias.name in RAW_SQL_NAMES
+            )
+            # `from sqlalchemy import sql` then `sql.text(...)`.
+            aliases.update(
+                alias.asname or alias.name for alias in node.names if alias.name == "sql"
+            )
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr in RAW_SQL_NAMES
+            and isinstance(node.value, ast.Name | ast.Attribute)
+            and _root_name(node.value) in aliases
+        ):
+            found.append(f"{_root_name(node.value)}...{node.attr}")
+    return found
+
+
+def _root_name(node: ast.expr) -> str | None:
+    while isinstance(node, ast.Attribute):
+        node = node.value
+    return node.id if isinstance(node, ast.Name) else None
+
+
+def _runtime_modules() -> dict[str, Path]:
+    """Every module of livecart_core but the migrations and the test support."""
+    return {
+        module: path
+        for module, path, _ in _modules(livecart_core)
+        if not module.startswith(RAW_SQL_EXEMPT)
+    }
+
+
+@pytest.mark.parametrize(
+    "path", [pytest.param(path, id=module) for module, path in _runtime_modules().items()]
+)
+def test_no_runtime_module_writes_sql_by_hand(path: Path) -> None:
+    assert _raw_sql_uses(path.read_text(encoding="utf-8")) == []
+
+
+def test_the_raw_sql_check_finds_every_spelling() -> None:
+    sample = """
+import sqlalchemy as sa
+from sqlalchemy import text, select
+from sqlalchemy.sql import literal_column
+from sqlalchemy import sql
+
+def query():
+    sa.text("SELECT 1")
+    sql.expression.text("SELECT 1")
+    select(sa.column("id"))
+"""
+
+    assert sorted(_raw_sql_uses(sample)) == [
+        "sa...text",
+        "sql...text",
+        "sqlalchemy.sql.literal_column",
+        "sqlalchemy.text",
+    ]
+
+
+def test_the_adapters_are_among_the_modules_checked_for_raw_sql() -> None:
+    checked = set(_runtime_modules())
+
+    assert "livecart_core.infrastructure.db.orders" in checked
+    assert "livecart_core.infrastructure.db.products" in checked
+    assert "livecart_core.infrastructure.db.tables" in checked
+    assert not any(name.startswith(RAW_SQL_EXEMPT) for name in checked)
 
 
 def test_relative_imports_resolve_against_the_owning_package() -> None:

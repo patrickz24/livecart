@@ -31,7 +31,7 @@ from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome, RejectionReason
-from livecart_core.domain.parser import Ambiguous
+from livecart_core.domain.parser import Ambiguous, Match
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import (
@@ -326,6 +326,39 @@ class IntentSource(StrEnum):
 
     PARSER = "parser"
     LLM = "llm"
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedIntent:
+    """A purchase intent settled on one product of the session: by the parser, or by the LLM.
+
+    The LLM's proposal becomes one only once the domain has checked it
+    against the catalog (milestone 4c).
+    """
+
+    product_code: ProductCode
+    variant: Variant
+    quantity: Quantity
+    source: IntentSource
+    confidence: Decimal
+    # The substrings of the comment the intent rests on.
+    evidence: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not Decimal(0) <= self.confidence <= Decimal(1):
+            raise ValueError(f"confidence must be from 0 to 1, not {self.confidence}")
+
+    @classmethod
+    def from_match(cls, match: Match) -> Self:
+        """The intent of a parser match, with the confidence of the evidence it relied on."""
+        return cls(
+            product_code=match.product_code,
+            variant=match.variant,
+            quantity=match.quantity,
+            source=IntentSource.PARSER,
+            confidence=match.confidence.value,
+            evidence=match.evidence,
+        )
 
 
 @dataclass(frozen=True, slots=True)

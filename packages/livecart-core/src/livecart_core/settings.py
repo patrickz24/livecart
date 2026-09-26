@@ -7,9 +7,11 @@ connection URLs that embed a password, is a ``SecretStr``: it never shows up in 
 repr, a log line or a validation error.
 """
 
+import re
+from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
-from typing import Self
+from typing import Final, Self
 
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -19,6 +21,9 @@ from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 
 # Marker of the development placeholders shipped in .env.example.
 PLACEHOLDER_MARKER = "change-me"
+# Bounds of the reservation and payment delays: from a minute to a day.
+MIN_DELAY_SECONDS: Final = 60
+MAX_DELAY_SECONDS: Final = 86_400
 
 
 class AppEnv(StrEnum):
@@ -108,6 +113,15 @@ class Settings(BaseAppSettings):
     # Business bound on the quantity of one purchase intent. The domain never
     # reads settings: the use cases hand it to the parser as an argument.
     max_quantity_per_comment: int = 10
+    # How long an unpaid reservation holds the stock before the sweep releases it.
+    reservation_ttl_seconds: int = 900
+    # The one currency of the deployment (ISO 4217), frozen on every order and
+    # payment; multi-currency is out of scope.
+    default_currency: str = "EUR"
+
+    @property
+    def reservation_ttl(self) -> timedelta:
+        return timedelta(seconds=self.reservation_ttl_seconds)
 
     @field_validator("database_url")
     @classmethod
@@ -133,6 +147,21 @@ class Settings(BaseAppSettings):
                 f"must be from 1 to {QUANTITY_CEILING}, the bound of the "
                 "purchase_intents quantity CHECK"
             )
+        return value
+
+    @field_validator("reservation_ttl_seconds")
+    @classmethod
+    def _check_reservation_ttl_seconds(cls, value: int) -> int:
+        """Long enough to pay from a phone, short enough to free the stock during the live."""
+        if not MIN_DELAY_SECONDS <= value <= MAX_DELAY_SECONDS:
+            raise ValueError(f"must be from {MIN_DELAY_SECONDS} to {MAX_DELAY_SECONDS} seconds")
+        return value
+
+    @field_validator("default_currency")
+    @classmethod
+    def _check_default_currency(cls, value: str) -> str:
+        if not re.fullmatch("[A-Z]{3}", value):
+            raise ValueError("must be a three-letter upper-case ISO 4217 code, such as EUR")
         return value
 
 

@@ -1,10 +1,9 @@
-from dataclasses import replace
 from uuid import UUID
 
 import pytest
 
 from livecart_core.application.dto import Platform, StockLevel
-from livecart_core.application.ports import RecordNotFound, StockConflict
+from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.errors import InvalidTransition
@@ -156,46 +155,3 @@ async def test_an_ended_session_does_not_go_live_again() -> None:
         await database.live_sessions.set_status(
             session.id, LiveSessionStatus.ENDED, now=NOW.replace(tzinfo=None)
         )
-
-
-# --- Products and stock ----------------------------------------------------------------
-
-
-async def test_products_are_listed_per_session_in_creation_order() -> None:
-    database = InMemoryDatabase()
-    session = database.add_live_session()
-    other = database.add_live_session(external_live_id="live-2")
-    second = database.add_product(session.id, "C3", variant="Rouge")
-    database.add_product(other.id, "C3", variant="Rouge")
-    first = database.add_product(session.id, "A12", variant="M")
-
-    assert await database.products.list_for_session(session.id) == [second, first]
-    assert await database.products.get(first.id) == first
-    assert await database.products.get(UNKNOWN) is None
-
-
-async def test_a_restock_adds_or_removes_units() -> None:
-    database = InMemoryDatabase()
-    product = database.add_product(database.add_live_session().id, "Z99", stock_total=10)
-
-    added = await database.products.restock(product.id, 5)
-    removed = await database.products.restock(product.id, -12)
-
-    assert added.stock == StockLevel(15)
-    assert removed.stock == StockLevel(3)
-    assert await database.products.get(product.id) == removed
-
-
-async def test_a_restock_never_goes_below_what_is_reserved_and_sold() -> None:
-    database = InMemoryDatabase()
-    product = database.add_product(database.add_live_session().id, "Z99", stock_total=10)
-    # Reservations and sales go through the orders; setting them directly keeps this test short.
-    database.tables.products[product.id] = replace(
-        product, stock=StockLevel(10, reserved=3, sold=2)
-    )
-
-    assert (await database.products.restock(product.id, -5)).stock.available == 0
-    with pytest.raises(StockConflict, match="below"):
-        await database.products.restock(product.id, -1)
-    with pytest.raises(RecordNotFound):
-        await database.products.restock(UNKNOWN, 1)

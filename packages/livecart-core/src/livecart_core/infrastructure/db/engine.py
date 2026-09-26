@@ -1,12 +1,52 @@
-"""Async engine factory: each process builds exactly one engine at startup."""
+"""Async engine factory: each process builds exactly one engine at startup.
+
+Every connection runs in READ COMMITTED, with a statement timeout and a lock
+timeout set on the server side. READ COMMITTED is what the stock reservation
+relies on: a blocked ``UPDATE`` re-evaluates its ``WHERE`` on the row version
+that the other transaction committed, so a reservation never oversells and
+never needs a retry, where REPEATABLE READ or SERIALIZABLE would fail it with
+a serialization error instead. It is PostgreSQL's default too, but a server
+or database setting could change the default; the engine does not depend on it.
+
+The pools follow the plan's connection budget (97 connections available):
+
+- the API holds 5 connections plus 10 on overflow;
+- the worker holds one connection per comment handler (``WORKER_CONCURRENCY``,
+  16) and one per background loop that uses the database (4), so 20, plus 2
+  on overflow: 22 at most.
+
+That is 37 connections for one API and one worker, 81 with three workers.
+"""
+
+from dataclasses import dataclass
+from typing import Final
 
 from pydantic import SecretStr
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 # Server-side guards applied to every connection, in milliseconds.
-STATEMENT_TIMEOUT_MS = 5000
-LOCK_TIMEOUT_MS = 2000
+STATEMENT_TIMEOUT_MS: Final = 5000
+LOCK_TIMEOUT_MS: Final = 2000
+ISOLATION_LEVEL: Final = "READ COMMITTED"
+# How long a caller waits for a free pooled connection before giving up.
+POOL_TIMEOUT_S: Final = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class PoolSize:
+    """The connections a process keeps open, and how many more it may open under load."""
+
+    size: int
+    max_overflow: int
+
+    @property
+    def max_connections(self) -> int:
+        return self.size + self.max_overflow
+
+
+API_POOL: Final = PoolSize(size=5, max_overflow=10)
+WORKER_POOL: Final = PoolSize(size=20, max_overflow=2)
 
 
 def create_db_engine(
@@ -15,10 +55,12 @@ def create_db_engine(
     application_name: str,
     pool_size: int,
     max_overflow: int,
-    pool_timeout_s: float = 10.0,
+    pool_timeout_s: float = POOL_TIMEOUT_S,
 ) -> AsyncEngine:
     """Create the process-wide engine; no connection is opened until first use.
 
+    ``pool_pre_ping`` checks a pooled connection before handing it out, so a
+    restarted PostgreSQL costs a reconnection rather than a failed request.
     ``hide_parameters`` keeps bound values (which may be personal data or
     tokens) out of SQLAlchemy exception messages and therefore out of logs.
     """
@@ -29,6 +71,7 @@ def create_db_engine(
         pool_timeout=pool_timeout_s,
         pool_pre_ping=True,
         hide_parameters=True,
+        isolation_level=ISOLATION_LEVEL,
         connect_args={
             "server_settings": {
                 "application_name": application_name,

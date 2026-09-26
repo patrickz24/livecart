@@ -9,14 +9,18 @@ test its own Redis keys, and ``clean_database`` empty tables at the head
 revision.
 """
 
+import secrets
 from collections.abc import AsyncIterator
+from typing import Protocol
 
 import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.redis_client import create_redis_client
+from livecart_core.testing.backends import InMemoryBackend, PostgresBackend, ReservationBackend
 from livecart_core.testing.database import (
     IntegrationSettings,
     IntegrationSettingsError,
@@ -89,6 +93,35 @@ def database_schema(integration_settings: IntegrationSettings) -> None:
 async def clean_database(database_schema: None, migrator_engine: AsyncEngine) -> None:
     """Every table of the schema, empty: earlier tests' rows are truncated as the migrator."""
     await truncate_all(migrator_engine)
+
+
+class BackendFactory(Protocol):
+    def __call__(self, *, random_source: RandomSource = secrets) -> ReservationBackend: ...
+
+
+@pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.integration)])
+def make_backend(request: pytest.FixtureRequest) -> BackendFactory:
+    """Builds the backend of this run of a contract scenario: the fakes, then PostgreSQL.
+
+    The PostgreSQL run is marked ``integration``, so ``-m "not integration"``
+    keeps the in-memory run only. It starts from empty tables.
+    """
+    if request.param == "memory":
+        return InMemoryBackend
+    request.getfixturevalue("clean_database")
+    app_engine: AsyncEngine = request.getfixturevalue("app_engine")
+    migrator_engine: AsyncEngine = request.getfixturevalue("migrator_engine")
+
+    def postgres(*, random_source: RandomSource = secrets) -> ReservationBackend:
+        return PostgresBackend(app_engine, migrator_engine, random_source=random_source)
+
+    return postgres
+
+
+@pytest.fixture
+def backend(make_backend: BackendFactory) -> ReservationBackend:
+    """The backend of this run of a contract scenario, drawing references at random."""
+    return make_backend()
 
 
 @pytest.fixture

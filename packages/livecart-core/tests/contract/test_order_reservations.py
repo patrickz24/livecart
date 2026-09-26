@@ -1,0 +1,284 @@
+"""Unit 3, ``OrderReservations.reserve``, on every backend: the in-memory fake, then PostgreSQL.
+
+Each scenario runs twice through the ``backend`` fixture; the PostgreSQL run
+is marked ``integration``. The fake and the SQL adapter keep the same promises
+(ADR 0002), and these scenarios are those promises.
+"""
+
+import asyncio
+from datetime import timedelta
+from decimal import Decimal
+from uuid import UUID
+
+import pytest
+
+from livecart_core.application.dto import IntentSource, ReservationRequest, StockLevel
+from livecart_core.application.ports import RecordNotFound
+from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.domain.money import Money
+from livecart_core.domain.outcomes import IntentOutcome
+from livecart_core.domain.quantity import Quantity
+from livecart_core.domain.reference import OrderReference
+from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
+from livecart_core.testing.backends import ReservationBackend
+from livecart_core.testing.fakes import FAKE_CLOCK_START
+
+NOW = FAKE_CLOCK_START
+TTL = timedelta(seconds=900)
+UNKNOWN = UUID(int=404)
+
+
+def _request(
+    comment_id: UUID,
+    session_id: UUID,
+    code: str = "B07",
+    *,
+    variant: str = "",
+    quantity: int = 1,
+) -> ReservationRequest:
+    return ReservationRequest(
+        comment_id=comment_id,
+        session_id=session_id,
+        product_code=ProductCode(code),
+        variant=Variant(variant),
+        quantity=Quantity(quantity),
+        source=IntentSource.PARSER,
+        confidence=Decimal("1.00"),
+        evidence=("je prends", code),
+        now=NOW,
+        reserved_until=NOW + TTL,
+    )
+
+
+async def _seed(backend: ReservationBackend, *, stock_total: int = 10) -> tuple[UUID, UUID, UUID]:
+    """A live session selling B07 (no variant) and A12 M: the session, its seller, B07."""
+    session = await backend.add_live_session()
+    b07 = await backend.add_product(
+        session.id, "B07", price=Money(1_250, "EUR"), stock_total=stock_total
+    )
+    await backend.add_product(session.id, "A12", variant="M", stock_total=stock_total)
+    return session.id, session.seller_id, b07.id
+
+
+async def test_a_reservation_opens_a_pending_order_for_the_author(
+    backend: ReservationBackend,
+) -> None:
+    session_id, seller_id, product_id = await _seed(backend)
+    comment_id = await backend.add_comment("comment-1", author="buyer-7")
+
+    result = await backend.orders.reserve(_request(comment_id, session_id, quantity=2))
+
+    assert result is not None
+    order = result.order
+    assert result.intent.outcome is IntentOutcome.RESERVED
+    assert result.intent.product_id == product_id
+    assert result.intent.evidence == ("je prends", "B07")
+    assert order is not None
+    assert order.status is OrderStatus.PENDING_PAYMENT
+    assert order.intent_id == result.intent.id
+    assert order.buyer_platform_user_id == "buyer-7"
+    assert order.seller_id == seller_id
+    assert (order.unit_price, order.total) == (Money(1_250, "EUR"), Money(2_500, "EUR"))
+    assert order.reserved_until == NOW + TTL
+    assert order.created_at == NOW
+    assert result.stock == StockLevel(10, reserved=2)
+    product = await backend.products.get(product_id)
+    assert product is not None
+    assert product.stock == StockLevel(10, reserved=2)
+    assert await backend.comment_state(comment_id) == (CommentStatus.PROCESSED, session_id)
+    assert await backend.orders.find_reservation(comment_id) == result
+    assert await backend.orders.get(order.id) == order
+    assert await backend.orders.get_by_reference(order.reference) == order
+
+
+async def test_short_stock_records_an_out_of_stock_intent(backend: ReservationBackend) -> None:
+    session_id, _, _ = await _seed(backend, stock_total=1)
+    comment_id = await backend.add_comment("comment-1")
+
+    result = await backend.orders.reserve(_request(comment_id, session_id, quantity=2))
+
+    assert result is not None
+    assert result.intent.outcome is IntentOutcome.OUT_OF_STOCK
+    assert result.order is None
+    assert result.stock == StockLevel(1)
+    assert await backend.count("orders") == 0
+    assert (await backend.comment_state(comment_id))[0] is CommentStatus.PROCESSED
+
+
+async def test_a_session_no_longer_live_reserves_nothing(backend: ReservationBackend) -> None:
+    session_id, _, _ = await _seed(backend)
+    comment_id = await backend.add_comment("comment-1")
+    await backend.set_session_status(session_id, LiveSessionStatus.ENDED)
+
+    result = await backend.orders.reserve(_request(comment_id, session_id))
+
+    assert result is not None
+    assert result.intent.outcome is IntentOutcome.OUT_OF_STOCK
+    assert result.stock == StockLevel(10)
+
+
+async def test_one_pending_order_per_buyer_and_product(backend: ReservationBackend) -> None:
+    session_id, _, _ = await _seed(backend)
+    first = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-1"), session_id)
+    )
+    same = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-2"), session_id)
+    )
+    other_product = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-3"), session_id, "A12", variant="M")
+    )
+    other_buyer = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-4", author="buyer-2"), session_id)
+    )
+
+    assert first is not None
+    assert same is not None
+    assert other_product is not None
+    assert other_buyer is not None
+    assert same.intent.outcome is IntentOutcome.ALREADY_RESERVED
+    assert same.order is None
+    assert same.stock == StockLevel(10, reserved=1)
+    assert other_product.intent.outcome is IntentOutcome.RESERVED
+    assert other_buyer.intent.outcome is IntentOutcome.RESERVED
+    assert other_buyer.stock == StockLevel(10, reserved=2)
+    assert await backend.count("orders") == 3
+    assert await backend.count("purchase_intents") == 4
+
+
+async def test_short_stock_is_checked_before_the_pending_order(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, _ = await _seed(backend, stock_total=1)
+    await backend.orders.reserve(_request(await backend.add_comment("comment-1"), session_id))
+
+    again = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-2"), session_id)
+    )
+
+    assert again is not None
+    assert again.intent.outcome is IntentOutcome.OUT_OF_STOCK
+
+
+async def test_an_expired_order_frees_the_buyer_for_a_new_one(backend: ReservationBackend) -> None:
+    session_id, _, product_id = await _seed(backend)
+    first = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-1"), session_id)
+    )
+    assert first is not None
+    assert first.order is not None
+    await backend.expire_order(first.order.id)
+
+    again = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-2"), session_id)
+    )
+
+    assert again is not None
+    assert again.intent.outcome is IntentOutcome.RESERVED
+    product = await backend.products.get(product_id)
+    assert product is not None
+    assert product.stock == StockLevel(10, reserved=1)
+
+
+async def test_a_settled_comment_reserves_nothing_and_writes_nothing(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, product_id = await _seed(backend)
+    processed = await backend.add_comment("comment-1")
+    rejected = await backend.add_comment("comment-2")
+    await backend.orders.reserve(_request(processed, session_id))
+    await backend.reject_comment(rejected)
+
+    assert await backend.orders.reserve(_request(processed, session_id)) is None
+    assert await backend.orders.reserve(_request(rejected, session_id)) is None
+    assert (await backend.count("purchase_intents"), await backend.count("orders")) == (1, 1)
+    product = await backend.products.get(product_id)
+    assert product is not None
+    assert product.stock == StockLevel(10, reserved=1)
+
+
+async def test_twenty_parallel_buyers_never_oversell(backend: ReservationBackend) -> None:
+    session_id, _, product_id = await _seed(backend, stock_total=5)
+    comments = [await backend.add_comment(f"comment-{n}", author=f"buyer-{n}") for n in range(20)]
+
+    results = await asyncio.gather(
+        *(backend.orders.reserve(_request(comment_id, session_id)) for comment_id in comments)
+    )
+
+    outcomes = [result.intent.outcome for result in results if result is not None]
+    assert outcomes.count(IntentOutcome.RESERVED) == 5
+    assert outcomes.count(IntentOutcome.OUT_OF_STOCK) == 15
+    product = await backend.products.get(product_id)
+    assert product is not None
+    assert product.stock == StockLevel(5, reserved=5)
+
+
+async def test_twenty_parallel_comments_of_one_buyer_give_one_order(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, _ = await _seed(backend)
+    comments = [await backend.add_comment(f"comment-{n}") for n in range(20)]
+
+    results = await asyncio.gather(
+        *(backend.orders.reserve(_request(comment_id, session_id)) for comment_id in comments)
+    )
+
+    outcomes = [result.intent.outcome for result in results if result is not None]
+    assert outcomes.count(IntentOutcome.RESERVED) == 1
+    assert outcomes.count(IntentOutcome.ALREADY_RESERVED) == 19
+    assert await backend.count("orders") == 1
+
+
+async def test_unit_3_needs_a_known_comment_session_and_product(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, _ = await _seed(backend)
+    comment_id = await backend.add_comment("comment-1")
+
+    with pytest.raises(RecordNotFound, match="comment"):
+        await backend.orders.reserve(_request(UNKNOWN, session_id))
+    with pytest.raises(RecordNotFound, match="live session"):
+        await backend.orders.reserve(_request(comment_id, UNKNOWN))
+    with pytest.raises(RecordNotFound, match="product"):
+        await backend.orders.reserve(_request(comment_id, session_id, "Z99"))
+    assert (await backend.comment_state(comment_id))[0] is CommentStatus.RECEIVED
+    assert await backend.count("purchase_intents") == 0
+
+
+async def test_lookups_of_what_does_not_exist(backend: ReservationBackend) -> None:
+    await _seed(backend)
+
+    assert await backend.orders.find_reservation(UNKNOWN) is None
+    assert await backend.orders.get(UNKNOWN) is None
+    assert await backend.orders.get_by_reference(OrderReference("LC-000000")) is None
+
+
+async def test_an_out_of_stock_reservation_reads_back_without_order(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, _ = await _seed(backend, stock_total=0)
+    comment_id = await backend.add_comment("comment-1")
+    await backend.orders.reserve(_request(comment_id, session_id))
+
+    stored = await backend.orders.find_reservation(comment_id)
+
+    assert stored is not None
+    assert stored.intent.outcome is IntentOutcome.OUT_OF_STOCK
+    assert stored.order is None
+    assert stored.stock == StockLevel(0)
+
+
+async def test_an_already_reserved_intent_reads_back_without_order(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, _ = await _seed(backend)
+    await backend.orders.reserve(_request(await backend.add_comment("comment-1"), session_id))
+    comment_id = await backend.add_comment("comment-2")
+    result = await backend.orders.reserve(_request(comment_id, session_id))
+
+    stored = await backend.orders.find_reservation(comment_id)
+
+    assert stored == result
+    assert stored is not None
+    assert stored.intent.outcome is IntentOutcome.ALREADY_RESERVED
+    assert stored.order is None

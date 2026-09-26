@@ -394,12 +394,13 @@ class ProductStockRepository(Protocol):
         """
 
 
-class OrderRepository(Protocol):
-    """Purchase intents and orders, with the stock effects of their transitions.
+class OrderReservations(Protocol):
+    """Unit 3 of a comment, and the reads of what it recorded: what ``ReserveStock`` needs.
 
     A buyer has at most one pending order per product of a session
     (``uq_orders_pending_buyer_product``), and every order has a reference no
-    other order has.
+    other order has. ``OrderRepository`` adds what happens to an order after
+    its reservation; the milestone of each step implements it.
     """
 
     async def reserve(self, request: ReservationRequest) -> ReservationResult | None:
@@ -411,10 +412,10 @@ class OrderRepository(Protocol):
         ``reserved_until``. The intent is ``out_of_stock`` when the stock is
         short or the session no longer live, and ``already_reserved`` when the
         buyer already has a pending order for the product; neither changes the
-        stock. Returns ``None``, having written nothing, when the comment is no
-        longer received (another delivery settled it). Raises
-        ``ServiceUnavailable``, having written nothing, when three reference
-        draws all collide.
+        stock, and short stock is checked first. Returns ``None``, having
+        written nothing, when the comment is no longer received (another
+        delivery settled it). Raises ``ServiceUnavailable``, having written
+        nothing, when three reference draws all collide.
         """
 
     async def find_reservation(self, comment_id: UUID) -> ReservationResult | None:
@@ -425,6 +426,10 @@ class OrderRepository(Protocol):
 
     async def get_by_reference(self, reference: OrderReference) -> OrderRecord | None:
         """The order with this reference, or ``None``."""
+
+
+class OrderRepository(OrderReservations, Protocol):
+    """Purchase intents and orders, with the stock effects of their transitions."""
 
     async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:
         """Stamp ``buyer_notified_at`` once; a later call keeps the first time."""

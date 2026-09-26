@@ -12,6 +12,7 @@ dependencies = [
     "redis==8.1.0",
     "sqlalchemy[asyncio]==2.0.54",
     "structlog==26.1.0",
+    "uuid-utils==1.0.0",
 ]
 
 [project.scripts]
