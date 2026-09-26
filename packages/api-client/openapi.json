@@ -37,6 +37,46 @@
         "title": "CarrierName",
         "type": "string"
       },
+      "CheckoutBody": {
+        "additionalProperties": false,
+        "description": "Where the bridge page sends the buyer back once the provider's page is done.",
+        "properties": {
+          "return_url": {
+            "description": "A link of the app, such as livecart://payment-return: no query, no fragment.",
+            "examples": [
+              "livecart://payment-return"
+            ],
+            "maxLength": 2048,
+            "minLength": 1,
+            "title": "Return Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "return_url"
+        ],
+        "title": "CheckoutBody",
+        "type": "object"
+      },
+      "CheckoutResponse": {
+        "description": "The provider's hosted page for the order's payment attempt.",
+        "properties": {
+          "attempt_no": {
+            "title": "Attempt No",
+            "type": "integer"
+          },
+          "redirect_url": {
+            "title": "Redirect Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "redirect_url",
+          "attempt_no"
+        ],
+        "title": "CheckoutResponse",
+        "type": "object"
+      },
       "CloseReason": {
         "description": "Why a stream ended: what its client does next.",
         "enum": [
@@ -3272,6 +3312,109 @@
         ]
       }
     },
+    "/api/v1/orders/{reference}/checkout": {
+      "post": {
+        "operationId": "start_checkout",
+        "parameters": [
+          {
+            "description": "LC- then six symbols, in any case, the hyphen optional.",
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "description": "LC- then six symbols, in any case, the hyphen optional.",
+              "examples": [
+                "LC-7K3F9Q"
+              ],
+              "maxLength": 32,
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckoutBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No order has this reference, or the token is missing or not its own"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No address yet, the order is paid or expired, its reservation has ended, or its payment attempts are used up"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "return_url is no link of the app"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests: try again after Retry-After seconds"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The payment provider or the database is unavailable: try again"
+          }
+        },
+        "security": [
+          {
+            "OrderAccessToken": []
+          }
+        ],
+        "summary": "Open the payment provider's hosted page, with the order's access token",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
     "/api/v1/orders/{reference}/details": {
       "get": {
         "operationId": "get_order_details",
@@ -3340,6 +3483,99 @@
           }
         ],
         "summary": "An order in full, shipping address included, with its access token",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{reference}/shipping-address": {
+      "put": {
+        "operationId": "put_shipping_address",
+        "parameters": [
+          {
+            "description": "LC- then six symbols, in any case, the hyphen optional.",
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "description": "LC- then six symbols, in any case, the hyphen optional.",
+              "examples": [
+                "LC-7K3F9Q"
+              ],
+              "maxLength": 32,
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShippingAddress"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDetailsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No order has this reference, or the token is missing or not its own"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The order is paid or expired: its address no longer changes"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests: try again after Retry-After seconds"
+          }
+        },
+        "security": [
+          {
+            "OrderAccessToken": []
+          }
+        ],
+        "summary": "Record where the order goes, with its access token",
         "tags": [
           "orders"
         ]

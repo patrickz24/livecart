@@ -6,8 +6,11 @@
 - the refusals that depend on the state of a row are 409: a transition the
   machine does not allow, a change the session's status no longer takes, a
   taken live id, a product the catalog cannot hold, a restock below what is
-  reserved and sold, a request whose idempotency key has not answered yet;
-- an idempotency key sent again with another request is 422.
+  reserved and sold, a request whose idempotency key has not answered yet,
+  an address or a checkout for an order that no longer waits for its
+  payment, a checkout without an address or past its attempts;
+- an idempotency key sent again with another request is 422, and so is a
+  return URL that is no link of the app.
 
 The body is always ``{"detail": ...}``, with a message chosen here: an
 exception's own text may name ids or values and never reaches a client. The
@@ -31,6 +34,7 @@ from fastapi.openapi.constants import REF_PREFIX
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from livecart_core.application.checkout import CheckoutRefusal, CheckoutRefused, InvalidReturnUrl
 from livecart_core.application.dto import MAX_STOCK_TOTAL
 from livecart_core.application.idempotency import (
     IdempotencyKeyReused,
@@ -38,6 +42,7 @@ from livecart_core.application.idempotency import (
 )
 from livecart_core.application.ports import (
     LiveSessionConflict,
+    OrderClosed,
     ProductConflict,
     RecordNotFound,
     StockConflict,
@@ -53,6 +58,17 @@ CATALOG_CONFLICTS: Final = {
     ),
     CatalogConflict.FULL: "The session holds as many products as it may",
 }
+ORDER_CLOSED: Final = "The order no longer waits for its payment: it is paid or expired"
+CHECKOUT_REFUSALS: Final = {
+    CheckoutRefusal.ADDRESS_REQUIRED: "The order needs a shipping address before its checkout",
+    CheckoutRefusal.NOT_PAYABLE: (
+        "The order can no longer be paid: it is paid or expired, or its reservation has ended"
+    ),
+    CheckoutRefusal.ATTEMPTS_EXHAUSTED: "The order has used all its payment attempts",
+}
+INVALID_RETURN_URL: Final = (
+    "return_url must be a link of the app (<scheme>://...), without a query or a fragment"
+)
 ANSWERED: Final = (
     RecordNotFound,
     InvalidTransition,
@@ -62,6 +78,9 @@ ANSWERED: Final = (
     StockConflict,
     IdempotencyKeyReused,
     IdempotentRequestInFlight,
+    OrderClosed,
+    CheckoutRefused,
+    InvalidReturnUrl,
 )
 
 
@@ -95,6 +114,12 @@ def error_answer(error: Exception) -> tuple[int, str]:
             return 409, "The request of this Idempotency-Key has not answered yet: try again"
         case IdempotencyKeyReused():
             return 422, "This Idempotency-Key was sent with another request"
+        case OrderClosed():
+            return 409, ORDER_CLOSED
+        case CheckoutRefused(reason=reason):
+            return 409, CHECKOUT_REFUSALS[reason]
+        case InvalidReturnUrl():
+            return 422, INVALID_RETURN_URL
     raise error
 
 

@@ -6,12 +6,16 @@ about 2**30 values: it identifies an order, it cannot authorize anything
 
 - the reference alone gives the order's public projection: its status, its
   product, quantity and total, and until when it is reserved;
-- whatever needs more (for now the detailed view, with the shipping
-  address) needs the order's access token as well, the one the buyer
-  received with the reference. It is checked against the stored hash in
-  constant time (``livecart_core.order_tokens``); a missing or wrong token,
-  or the token of another order, gets exactly the answer of an unknown
-  reference.
+- whatever needs more (the detailed view, the shipping address, the
+  checkout of ``livecart_core.application.checkout``) needs the order's
+  access token as well, the one the buyer received with the reference. It
+  is checked against the stored hash in constant time
+  (``livecart_core.order_tokens``); a missing or wrong token, or the token
+  of another order, gets exactly the answer of an unknown reference.
+
+``SetShippingAddress`` records where the buyer wants the order delivered,
+behind the token: only while the order waits for its payment, since the
+shipment of a paid order is created from the address it had.
 
 References are read tolerantly (``parse_order_reference``: any case, the
 hyphen optional, ``O`` for ``0`` and ``I`` or ``L`` for ``1``); a text that
@@ -19,9 +23,10 @@ cannot be one is an unknown reference, answered without a query.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 
-from livecart_core.application.dto import BuyerOrderRecord
-from livecart_core.application.ports import OrderLookup
+from livecart_core.application.dto import BuyerOrderRecord, ShippingAddress
+from livecart_core.application.ports import BuyerOrders, OrderLookup
 from livecart_core.domain.errors import InvalidOrderReference
 from livecart_core.domain.reference import parse_order_reference
 
@@ -52,3 +57,24 @@ class LookUpOrder:
         if order is None or not self._check_token(token, order.access_token_hash):
             return None
         return order
+
+
+class SetShippingAddress:
+    """The buyer's delivery address, behind the order's token; see the module docstring."""
+
+    def __init__(self, lookup: LookUpOrder, orders: BuyerOrders) -> None:
+        self._lookup = lookup
+        self._orders = orders
+
+    async def set(
+        self, reference: str, token: str | None, address: ShippingAddress
+    ) -> BuyerOrderRecord | None:
+        """The order with its new address; ``None`` for an unknown order or a wrong token.
+
+        Raises ``OrderClosed`` once the order is paid or expired.
+        """
+        found = await self._lookup.with_token(reference, token)
+        if found is None:
+            return None
+        order = await self._orders.set_shipping_address(found.order.id, address)
+        return replace(found, order=order)

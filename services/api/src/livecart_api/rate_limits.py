@@ -14,9 +14,11 @@ settings may change:
   counted for all addresses together, and a warning is logged when they pass
   ``BUYER_LOOKUP_NOT_FOUND_ALERT_PER_MINUTE``: references guessed from many
   addresses at once;
-- the buyer's token routes (for now ``GET /api/v1/orders/{reference}/details``):
-  60 requests a minute per order access token, counted by its SHA-256, or per
-  address when no token is sent. A whole live audience behind one mobile
+- the buyer's token routes (``GET /api/v1/orders/{reference}/details``, ``PUT
+  .../shipping-address`` and ``POST .../checkout``): 60 requests a minute per
+  order access token, counted by its SHA-256, or per address when no token
+  is sent, and within them 5 checkouts a minute per token, since each one
+  may call the payment provider. A whole live audience behind one mobile
   carrier's address (CGNAT) holds as many tokens as orders. Any value counts
   as a token there, so their not-found answers, a wrong token's included,
   count against the address with the lookup's 20: a client that sends a new
@@ -129,6 +131,7 @@ class RateLimitRules:
     buyer_lookup_not_found: RateLimitRule
     buyer_lookup_not_found_alert: RateLimitRule
     buyer_token: RateLimitRule
+    checkout: RateLimitRule
     storefront: RateLimitRule
     comment_webhook: RateLimitRule
     comment_webhook_signature_failures: RateLimitRule
@@ -162,6 +165,7 @@ class RateLimitRules:
             buyer_token=RateLimitRule(
                 "buyer_token", settings.rate_limit_buyer_token_per_minute, MINUTE
             ),
+            checkout=RateLimitRule("checkout", settings.rate_limit_checkout_per_minute, MINUTE),
             storefront=RateLimitRule(
                 "storefront", settings.rate_limit_storefront_per_minute, MINUTE
             ),

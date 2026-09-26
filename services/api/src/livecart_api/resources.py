@@ -11,13 +11,14 @@ from functools import partial
 
 from livecart_core.application.dto import Platform
 from livecart_core.application.ports import (
+    BuyerOrders,
     Clock,
     CommentQueue,
     IdempotencyStore,
     LiveSessionActivity,
     LiveSessionRepository,
-    OrderLookup,
     PasswordHasher,
+    PaymentAttempts,
     PaymentProvider,
     PlatformAdapter,
     ProductStockRepository,
@@ -33,6 +34,7 @@ from livecart_core.infrastructure.db.activity import SqlLiveSessionActivity
 from livecart_core.infrastructure.db.engine import API_POOL, create_db_engine, ping_database
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
+from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
@@ -67,7 +69,8 @@ class Resources:
     live_sessions: LiveSessionRepository
     products: ProductStockRepository
     idempotency: IdempotencyStore
-    orders: OrderLookup
+    orders: BuyerOrders
+    payments: PaymentAttempts
     rate_limiter: RateLimiter
     # The comment webhook's adapter of each enabled platform, and the queue it feeds.
     platforms: Mapping[Platform, PlatformAdapter]
@@ -142,6 +145,7 @@ def build_resources(settings: Settings) -> Resources:
             currency=settings.default_currency,
             access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
         ),
+        payments=SqlPaymentRepository(engine),
         rate_limiter=RedisRateLimiter(redis, prefix=settings.redis_key_prefix),
         platforms=platforms,
         comment_queue=RedisCommentQueue(redis, prefix=settings.redis_key_prefix),

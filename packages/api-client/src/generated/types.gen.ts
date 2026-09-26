@@ -32,6 +32,36 @@ export type AccessTokenResponse = {
 export type CarrierName = 'mock' | 'dpd' | 'chronopost' | 'dhl';
 
 /**
+ * CheckoutBody
+ *
+ * Where the bridge page sends the buyer back once the provider's page is done.
+ */
+export type CheckoutBody = {
+    /**
+     * Return Url
+     *
+     * A link of the app, such as livecart://payment-return: no query, no fragment.
+     */
+    return_url: string;
+};
+
+/**
+ * CheckoutResponse
+ *
+ * The provider's hosted page for the order's payment attempt.
+ */
+export type CheckoutResponse = {
+    /**
+     * Attempt No
+     */
+    attempt_no: number;
+    /**
+     * Redirect Url
+     */
+    redirect_url: string;
+};
+
+/**
  * CloseReason
  *
  * Why a stream ended: what its client does next.
@@ -1804,6 +1834,54 @@ export type GetOrderResponses = {
 
 export type GetOrderResponse = GetOrderResponses[keyof GetOrderResponses];
 
+export type StartCheckoutData = {
+    body: CheckoutBody;
+    path: {
+        /**
+         * Reference
+         *
+         * LC- then six symbols, in any case, the hyphen optional.
+         */
+        reference: string;
+    };
+    query?: never;
+    url: '/api/v1/orders/{reference}/checkout';
+};
+
+export type StartCheckoutErrors = {
+    /**
+     * No order has this reference, or the token is missing or not its own
+     */
+    404: ErrorResponse;
+    /**
+     * No address yet, the order is paid or expired, its reservation has ended, or its payment attempts are used up
+     */
+    409: ErrorResponse;
+    /**
+     * return_url is no link of the app
+     */
+    422: ErrorResponse;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+    /**
+     * The payment provider or the database is unavailable: try again
+     */
+    503: ErrorResponse;
+};
+
+export type StartCheckoutError = StartCheckoutErrors[keyof StartCheckoutErrors];
+
+export type StartCheckoutResponses = {
+    /**
+     * Successful Response
+     */
+    200: CheckoutResponse;
+};
+
+export type StartCheckoutResponse = StartCheckoutResponses[keyof StartCheckoutResponses];
+
 export type GetOrderDetailsData = {
     body?: never;
     path: {
@@ -1843,6 +1921,50 @@ export type GetOrderDetailsResponses = {
 };
 
 export type GetOrderDetailsResponse = GetOrderDetailsResponses[keyof GetOrderDetailsResponses];
+
+export type PutShippingAddressData = {
+    body: ShippingAddress;
+    path: {
+        /**
+         * Reference
+         *
+         * LC- then six symbols, in any case, the hyphen optional.
+         */
+        reference: string;
+    };
+    query?: never;
+    url: '/api/v1/orders/{reference}/shipping-address';
+};
+
+export type PutShippingAddressErrors = {
+    /**
+     * No order has this reference, or the token is missing or not its own
+     */
+    404: ErrorResponse;
+    /**
+     * The order is paid or expired: its address no longer changes
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+};
+
+export type PutShippingAddressError = PutShippingAddressErrors[keyof PutShippingAddressErrors];
+
+export type PutShippingAddressResponses = {
+    /**
+     * Successful Response
+     */
+    200: OrderDetailsResponse;
+};
+
+export type PutShippingAddressResponse = PutShippingAddressResponses[keyof PutShippingAddressResponses];
 
 export type GetStorefrontData = {
     body?: never;

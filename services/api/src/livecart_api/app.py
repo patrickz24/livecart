@@ -62,7 +62,8 @@ from livecart_api.routes.session_events import (
 )
 from livecart_api.routes.storefronts import build_storefront_router
 from livecart_api.routes.webhooks import build_webhook_router
-from livecart_core.application.buyer_orders import LookUpOrder
+from livecart_core.application.buyer_orders import LookUpOrder, SetShippingAddress
+from livecart_core.application.checkout import CheckoutPages, ReturnUrlPolicy, StartCheckout
 from livecart_core.application.idempotency import IdempotentRequests
 from livecart_core.application.ingest_comments import IngestComments
 from livecart_core.application.live_sessions import SellerLiveSessions
@@ -222,8 +223,22 @@ def create_app(
         )
     )
     # Checking a token needs its stored hash only, never ORDER_TOKEN_KEY.
+    lookup = LookUpOrder(resources.orders, OrderTokens.verify)
+    checkout = StartCheckout(
+        lookup,
+        resources.payments,
+        resources.payment_provider,
+        resources.clock,
+        pages=CheckoutPages(settings.public_api_base_url),
+        # Expo Go's exp:// links, on a private address, in development only.
+        return_urls=ReturnUrlPolicy(
+            frozenset(settings.allowed_app_schemes), allow_expo_go=not settings.is_production
+        ),
+        grace=settings.payment_grace,
+        max_attempts=settings.payment_max_attempts,
+    )
     app.include_router(
-        build_order_router(LookUpOrder(resources.orders, OrderTokens.verify), limits)
+        build_order_router(lookup, SetShippingAddress(lookup, resources.orders), checkout, limits)
     )
     ingest = IngestComments(
         resources.comment_queue,

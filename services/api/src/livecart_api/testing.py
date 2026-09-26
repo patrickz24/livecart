@@ -46,6 +46,7 @@ from livecart_core.domain.quantity import Quantity
 from livecart_core.infrastructure.db.activity import SqlLiveSessionActivity
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
+from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
@@ -155,6 +156,7 @@ def memory_resources(
         products=database.products,
         idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
         orders=database.orders,
+        payments=database.payments,
         rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
         platforms=platforms if platforms is not None else simulator_only(clock),
         comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
@@ -201,6 +203,7 @@ def postgres_resources(
         orders=SqlOrderRepository(
             engine, currency=CURRENCY, access_token_hash=TEST_ORDER_TOKENS.stored_hash
         ),
+        payments=SqlPaymentRepository(engine),
         rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
         platforms=simulator_only(clock),
         comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),

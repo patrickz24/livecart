@@ -83,6 +83,8 @@ def test_the_exported_schema_holds_every_route(tmp_path: Path) -> None:
         "/api/v1/storefronts/{seller_slug}",
         "/api/v1/orders/{reference}",
         "/api/v1/orders/{reference}/details",
+        "/api/v1/orders/{reference}/shipping-address",
+        "/api/v1/orders/{reference}/checkout",
         "/api/v1/webhooks/comments/{platform}",
     }
     assert schema["info"]["title"] == "LiveCart API"

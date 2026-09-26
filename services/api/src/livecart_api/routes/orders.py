@@ -12,15 +12,26 @@ Two tiers (``application.buyer_orders``):
   A missing or wrong token, or the token of another order, answers the very
   404 of an unknown reference, so the route tells a guesser nothing.
 
-The routes that pay, give the address and follow the delivery join the
-second tier with the milestones that implement them.
+The routes that act on the order are of the second tier too, with the same
+404 for a token that is not the order's:
 
-Both are rate limited (``livecart_api.rate_limits``): the lookup per client
+- ``PUT /{reference}/shipping-address`` records the delivery address, which
+  pydantic validates (``ShippingAddress``), while the order waits for its
+  payment (409 once it is paid or expired);
+- ``POST /{reference}/checkout`` opens the provider's hosted page
+  (``application.checkout.StartCheckout``) and answers its URL, for the app
+  to open. ``return_url`` is the link of the app the bridge page sends the
+  buyer back to, one of ``ALLOWED_APP_SCHEMES`` (422 otherwise). The order
+  needs an address first, then a reservation still running and an attempt
+  left (409 otherwise). A second click while the attempt is pending answers
+  the same URL.
+
+All are rate limited (``livecart_api.rate_limits``): the lookup per client
 address, its not-found answers too, so that guessing references is slow, and
-the details per access token. The not-found answers of the details, those
-of a wrong or missing token included, count against the client address with
-the lookup's: a client that sends a new token value with every request gets
-no new window from it.
+the token routes per access token, the checkout within them to 5 a minute.
+The not-found answers of the token routes, those of a wrong or missing token
+included, count against the client address with the lookup's: a client that
+sends a new token value with every request gets no new window from it.
 """
 
 from datetime import datetime
@@ -28,7 +39,7 @@ from typing import Annotated, Final, Self
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 from livecart_api.errors import NOT_FOUND, documented
 from livecart_api.rate_limits import (
@@ -37,8 +48,9 @@ from livecart_api.rate_limits import (
     client_address,
     token_subject,
 )
-from livecart_core.application.buyer_orders import LookUpOrder
-from livecart_core.application.dto import BuyerOrderRecord, ShippingAddress
+from livecart_core.application.buyer_orders import LookUpOrder, SetShippingAddress
+from livecart_core.application.checkout import StartCheckout
+from livecart_core.application.dto import MAX_URL_LENGTH, BuyerOrderRecord, ShippingAddress
 from livecart_core.domain.state_machines import OrderStatus
 
 PREFIX: Final = "/api/v1/orders"
@@ -116,11 +128,40 @@ class OrderDetailsResponse(OrderStatusResponse):
         )
 
 
+class CheckoutBody(BaseModel):
+    """Where the bridge page sends the buyer back once the provider's page is done."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    return_url: str = Field(
+        min_length=1,
+        max_length=MAX_URL_LENGTH,
+        description="A link of the app, such as livecart://payment-return: no query, no fragment.",
+        examples=["livecart://payment-return"],
+    )
+
+
+class CheckoutResponse(BaseModel):
+    """The provider's hosted page for the order's payment attempt."""
+
+    redirect_url: str
+    attempt_no: int
+
+
 def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail=NOT_FOUND)
 
 
-def build_order_router(lookup: LookUpOrder, limits: RateLimiting) -> APIRouter:
+def _token(credentials: HTTPAuthorizationCredentials | None) -> str | None:
+    return None if credentials is None else credentials.credentials
+
+
+def build_order_router(
+    lookup: LookUpOrder,
+    addresses: SetShippingAddress,
+    checkout: StartCheckout,
+    limits: RateLimiting,
+) -> APIRouter:
     router = APIRouter(
         prefix=PREFIX, tags=["orders"], responses=documented({429: TOO_MANY_REQUESTS})
     )
@@ -140,6 +181,17 @@ def build_order_router(lookup: LookUpOrder, limits: RateLimiting) -> APIRouter:
         await limits.check(limits.rules.buyer_lookup_not_found, address)
         subject = address if credentials is None else token_subject(credentials.credentials)
         await limits.enforce(limits.rules.buyer_token, subject)
+
+    async def limit_checkouts(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
+    ) -> None:
+        subject = (
+            client_address(request)
+            if credentials is None
+            else token_subject(credentials.credentials)
+        )
+        await limits.enforce(limits.rules.checkout, subject)
 
     @router.get(
         "/{reference}",
@@ -167,13 +219,63 @@ def build_order_router(lookup: LookUpOrder, limits: RateLimiting) -> APIRouter:
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
     ) -> OrderDetailsResponse:
-        token = None if credentials is None else credentials.credentials
-        found = await lookup.with_token(reference, token)
+        found = await lookup.with_token(reference, _token(credentials))
         if found is None:
             # Against the address, never the token: any value sent opens a counter of its
             # own, while the verified tokens of one shared address (CGNAT) never fill this one.
             await limits.record_lookup_not_found(client_address(request))
             raise _not_found()
         return OrderDetailsResponse.of(found)
+
+    @router.put(
+        "/{reference}/shipping-address",
+        summary="Record where the order goes, with its access token",
+        dependencies=[Depends(limit_token_requests)],
+        responses=documented(
+            {
+                404: "No order has this reference, or the token is missing or not its own",
+                409: "The order is paid or expired: its address no longer changes",
+            }
+        ),
+    )
+    async def put_shipping_address(
+        reference: Reference,
+        address: ShippingAddress,
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
+    ) -> OrderDetailsResponse:
+        found = await addresses.set(reference, _token(credentials), address)
+        if found is None:
+            await limits.record_lookup_not_found(client_address(request))
+            raise _not_found()
+        return OrderDetailsResponse.of(found)
+
+    @router.post(
+        "/{reference}/checkout",
+        summary="Open the payment provider's hosted page, with the order's access token",
+        dependencies=[Depends(limit_token_requests), Depends(limit_checkouts)],
+        responses=documented(
+            {
+                404: "No order has this reference, or the token is missing or not its own",
+                409: (
+                    "No address yet, the order is paid or expired, its reservation has "
+                    "ended, or its payment attempts are used up"
+                ),
+                422: "return_url is no link of the app",
+                503: "The payment provider or the database is unavailable: try again",
+            }
+        ),
+    )
+    async def start_checkout(
+        reference: Reference,
+        body: CheckoutBody,
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
+    ) -> CheckoutResponse:
+        started = await checkout.start(reference, _token(credentials), body.return_url)
+        if started is None:
+            await limits.record_lookup_not_found(client_address(request))
+            raise _not_found()
+        return CheckoutResponse(redirect_url=started.redirect_url, attempt_no=started.attempt_no)
 
     return router

@@ -29,8 +29,9 @@ from livecart_api.testing import (
 from livecart_core.application.dto import CommentBatch, IncomingComment, Platform, QueuedComment
 from livecart_core.application.ingest_comments import BACKLOG_TTL, IngestComments
 from livecart_core.application.ports import (
+    BuyerOrders,
     LiveSessionRepository,
-    OrderLookup,
+    PaymentAttempts,
     PlatformAdapter,
     ProductStockRepository,
     RefreshTokenRepository,
@@ -418,7 +419,8 @@ async def test_the_webhook_never_touches_the_database() -> None:
         refresh_tokens=cast(RefreshTokenRepository, no_database),
         live_sessions=cast(LiveSessionRepository, no_database),
         products=cast(ProductStockRepository, no_database),
-        orders=cast(OrderLookup, no_database),
+        orders=cast(BuyerOrders, no_database),
+        payments=cast(PaymentAttempts, no_database),
     )
     headers, body = signed_webhook(BATCH, clock)
 

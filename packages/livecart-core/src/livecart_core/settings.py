@@ -56,6 +56,7 @@ RATE_LIMITS: Final = (
     "rate_limit_buyer_lookup_not_found_per_minute",
     "buyer_lookup_not_found_alert_per_minute",
     "rate_limit_buyer_token_per_minute",
+    "rate_limit_checkout_per_minute",
     "rate_limit_storefront_per_minute",
     "rate_limit_comment_webhook_per_minute",
     "rate_limit_comment_webhook_signature_failures_per_minute",
@@ -80,6 +81,16 @@ QUEUE_ENTRY_MEMORY_FACTOR: Final = Fraction(5, 4)
 # and the history not trimmed yet. Under noeviction, a full Redis refuses
 # writes, logins included.
 QUEUE_MEMORY_SHARE: Final = Fraction(1, 2)
+# The bounds of PAYMENT_MAX_ATTEMPTS: one attempt at least, five at most.
+MAX_PAYMENT_ATTEMPTS: Final = 5
+# Schemes a return URL never takes, whatever ALLOWED_APP_SCHEMES says: the
+# web's, which would make the bridge page an open redirect, those a browser
+# runs or reads (javascript, data, file...), and Expo Go's, which only
+# development takes, on a private address (livecart_core.application.checkout).
+FORBIDDEN_APP_SCHEMES: Final = frozenset(
+    {"http", "https", "ws", "wss", "ftp", "javascript", "vbscript", "data", "file", "blob"}
+    | {"about", "exp"}
+)
 # One HMAC key per platform's comment webhook (livecart_core.signing).
 COMMENT_WEBHOOK_SECRETS: Final = {
     platform: f"comment_webhook_secret_{platform.value}" for platform in Platform
@@ -440,6 +451,9 @@ class Settings(LlmSettings):
     # warning is logged: a guess of references spread over many addresses.
     buyer_lookup_not_found_alert_per_minute: int = 100
     rate_limit_buyer_token_per_minute: int = 60  # per order access token
+    # Checkouts per minute per order access token, within the 60 above: each
+    # one may call the payment provider.
+    rate_limit_checkout_per_minute: int = 5
     # Per client address, where the plan names no limit: generous, since every
     # viewer opens the storefront first and a live audience may share one
     # carrier's address (CGNAT), yet a cap on its three queries a request.
@@ -489,6 +503,19 @@ class Settings(LlmSettings):
     # Where the API posts the webhook of a mock payment: its own payment
     # webhook, on the loopback of its container (or of the host that runs it).
     mock_payment_webhook_url: str = "http://127.0.0.1:8000/api/v1/webhooks/payments/mock"
+    # The time a payment attempt adds to its order's reservation, at least:
+    # opening one extends the reservation to now + PAYMENT_GRACE_SECONDS if it
+    # would end sooner, so that a buyer who reached the payment page has the
+    # time to pay.
+    payment_grace_seconds: int = 600
+    # The payment attempts of one order: a new one opens once the previous
+    # attempt's session expired or its payment failed.
+    payment_max_attempts: int = 3
+    # The URI schemes of the buyer apps' return links (<scheme>://...), where
+    # the bridge page sends the buyer back after the payment: the brands'
+    # schemes, comma-separated in the environment. Expo Go's exp:// is taken
+    # too in development, on a private address only.
+    allowed_app_schemes: Annotated[tuple[str, ...], NoDecode] = ("livecart", "samplelive")
     # Backpressure of the comment webhook: once the queue's backlog (comments
     # not acknowledged yet, delivered or not) reaches this depth, the webhook
     # answers 503 until the workers catch up.
@@ -547,6 +574,10 @@ class Settings(LlmSettings):
     @property
     def reservation_ttl(self) -> timedelta:
         return timedelta(seconds=self.reservation_ttl_seconds)
+
+    @property
+    def payment_grace(self) -> timedelta:
+        return timedelta(seconds=self.payment_grace_seconds)
 
     @property
     def message_process_timeout(self) -> timedelta:
@@ -901,6 +932,41 @@ class Settings(LlmSettings):
     @classmethod
     def _check_mock_payment_webhook_url(cls, value: str) -> str:
         return require_http_url(value)
+
+    @field_validator("payment_grace_seconds")
+    @classmethod
+    def _check_payment_grace_seconds(cls, value: int) -> int:
+        if not MIN_DELAY_SECONDS <= value <= MAX_DELAY_SECONDS:
+            raise ValueError(f"must be from {MIN_DELAY_SECONDS} to {MAX_DELAY_SECONDS} seconds")
+        return value
+
+    @field_validator("payment_max_attempts")
+    @classmethod
+    def _check_payment_max_attempts(cls, value: int) -> int:
+        if not 1 <= value <= MAX_PAYMENT_ATTEMPTS:
+            raise ValueError(f"must be from 1 to {MAX_PAYMENT_ATTEMPTS} attempts")
+        return value
+
+    @field_validator("allowed_app_schemes", mode="before")
+    @classmethod
+    def _split_allowed_app_schemes(cls, value: object) -> object:
+        """``livecart, samplelive`` from the environment: schemes between commas, each once."""
+        if isinstance(value, str):
+            names = (name.strip().lower() for name in value.split(","))
+            return tuple(dict.fromkeys(name for name in names if name))
+        return value
+
+    @field_validator("allowed_app_schemes")
+    @classmethod
+    def _check_allowed_app_schemes(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+        if not value:
+            raise ValueError("must name at least one scheme, such as livecart")
+        for scheme in value:
+            if not LINK_SCHEME_PATTERN.fullmatch(scheme):
+                raise ValueError(f"{scheme!r} is not a URI scheme")
+            if scheme in FORBIDDEN_APP_SCHEMES:
+                raise ValueError(f"{scheme} is no app's scheme: a return URL never takes it")
+        return value
 
     @field_validator("rate_limit_login_failure_window_seconds")
     @classmethod

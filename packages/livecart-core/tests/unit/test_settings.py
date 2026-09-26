@@ -49,6 +49,9 @@ PAYMENT_SETTINGS = (
     "MOCK_PAYMENT_WEBHOOK_SECRET",
     "PUBLIC_API_BASE_URL",
     "MOCK_PAYMENT_WEBHOOK_URL",
+    "PAYMENT_GRACE_SECONDS",
+    "PAYMENT_MAX_ATTEMPTS",
+    "ALLOWED_APP_SCHEMES",
 )
 # Signing keys that pass every check, in production too.
 KEYS = {
@@ -1006,3 +1009,50 @@ def test_the_mock_posts_its_webhook_to_the_api_on_its_loopback_by_default() -> N
 def test_the_mock_webhook_url_is_an_http_url_with_a_host(value: str) -> None:
     with pytest.raises(ValidationError, match="must be an http or https URL with a host"):
         load(MOCK_PAYMENT_WEBHOOK_URL=value, **dev_env())
+
+
+def test_checkout_defaults_give_ten_minutes_three_attempts_and_the_brands_schemes() -> None:
+    settings = load(**dev_env())
+
+    assert settings.payment_grace == timedelta(seconds=600)
+    assert settings.payment_max_attempts == 3
+    assert settings.allowed_app_schemes == ("livecart", "samplelive")
+    assert settings.rate_limit_checkout_per_minute == 5
+
+
+@pytest.mark.parametrize(
+    ("name", "value"), [("PAYMENT_GRACE_SECONDS", "59"), ("PAYMENT_GRACE_SECONDS", "86401")]
+)
+def test_the_payment_grace_stays_between_a_minute_and_a_day(name: str, value: str) -> None:
+    assert load(PAYMENT_GRACE_SECONDS="60", **dev_env()).payment_grace_seconds == 60
+    with pytest.raises(ValidationError, match="from 60 to 86400 seconds"):
+        load(**{name: value}, **dev_env())
+
+
+@pytest.mark.parametrize("value", ["0", "6"])
+def test_the_payment_attempts_are_one_to_five(value: str) -> None:
+    assert load(PAYMENT_MAX_ATTEMPTS="5", **dev_env()).payment_max_attempts == 5
+    with pytest.raises(ValidationError, match="from 1 to 5 attempts"):
+        load(PAYMENT_MAX_ATTEMPTS=value, **dev_env())
+
+
+def test_the_app_schemes_are_listed_between_commas() -> None:
+    settings = load(ALLOWED_APP_SCHEMES=" LiveCart, samplelive,,livecart ", **dev_env())
+
+    assert settings.allowed_app_schemes == ("livecart", "samplelive")
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("", "at least one scheme"),
+        ("livecart,https", "https is no app's scheme"),
+        ("javascript", "javascript is no app's scheme"),
+        ("exp", "exp is no app's scheme"),
+        ("live cart", "is not a URI scheme"),
+        ("1app", "is not a URI scheme"),
+    ],
+)
+def test_the_app_schemes_refuse_the_web_and_expo_go(value: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(ALLOWED_APP_SCHEMES=value, **dev_env())

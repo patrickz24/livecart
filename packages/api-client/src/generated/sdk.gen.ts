@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, ReceiveCommentWebhookData, ReceiveCommentWebhookErrors, ReceiveCommentWebhookResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, StreamLiveSessionEventsData, StreamLiveSessionEventsErrors, StreamLiveSessionEventsResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
+import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, PutShippingAddressData, PutShippingAddressErrors, PutShippingAddressResponses, ReceiveCommentWebhookData, ReceiveCommentWebhookErrors, ReceiveCommentWebhookResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartCheckoutData, StartCheckoutErrors, StartCheckoutResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, StreamLiveSessionEventsData, StreamLiveSessionEventsErrors, StreamLiveSessionEventsResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -235,6 +235,23 @@ export const startLiveSession = <ThrowOnError extends boolean = false>(options: 
 export const getOrder = <ThrowOnError extends boolean = false>(options: Options<GetOrderData, ThrowOnError>): RequestResult<GetOrderResponses, GetOrderErrors, ThrowOnError> => (options.client ?? client).get<GetOrderResponses, GetOrderErrors, ThrowOnError>({ url: '/api/v1/orders/{reference}', ...options });
 
 /**
+ * Open the payment provider's hosted page, with the order's access token
+ */
+export const startCheckout = <ThrowOnError extends boolean = false>(options: Options<StartCheckoutData, ThrowOnError>): RequestResult<StartCheckoutResponses, StartCheckoutErrors, ThrowOnError> => (options.client ?? client).post<StartCheckoutResponses, StartCheckoutErrors, ThrowOnError>({
+    security: [{
+            key: 'OrderAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/orders/{reference}/checkout',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
  * An order in full, shipping address included, with its access token
  */
 export const getOrderDetails = <ThrowOnError extends boolean = false>(options: Options<GetOrderDetailsData, ThrowOnError>): RequestResult<GetOrderDetailsResponses, GetOrderDetailsErrors, ThrowOnError> => (options.client ?? client).get<GetOrderDetailsResponses, GetOrderDetailsErrors, ThrowOnError>({
@@ -245,6 +262,23 @@ export const getOrderDetails = <ThrowOnError extends boolean = false>(options: O
         }],
     url: '/api/v1/orders/{reference}/details',
     ...options
+});
+
+/**
+ * Record where the order goes, with its access token
+ */
+export const putShippingAddress = <ThrowOnError extends boolean = false>(options: Options<PutShippingAddressData, ThrowOnError>): RequestResult<PutShippingAddressResponses, PutShippingAddressErrors, ThrowOnError> => (options.client ?? client).put<PutShippingAddressResponses, PutShippingAddressErrors, ThrowOnError>({
+    security: [{
+            key: 'OrderAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/orders/{reference}/shipping-address',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
 });
 
 /**
