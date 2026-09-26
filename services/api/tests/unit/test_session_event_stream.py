@@ -165,13 +165,14 @@ async def test_a_cursor_whose_events_are_gone_gets_a_gap_then_a_new_snapshot() -
 
 async def test_the_stream_closes_before_the_access_token_expires() -> None:
     live = _live(clock=SystemClock())
-    # A token of 6 s: the stream closes 5 s before it expires, about a second from now.
-    token = AccessTokens(TEST_JWT_SECRET, live.clock, ttl=timedelta(seconds=6))
+    # A token of 8 s: the stream closes 5 s before it expires, 2 to 3 s from now (whole
+    # seconds), time enough for the snapshot even on a loaded machine.
+    token = AccessTokens(TEST_JWT_SECRET, live.clock, ttl=timedelta(seconds=8))
     headers = {"Authorization": f"Bearer {token.issue(live.session.seller_id).value}"}
 
     async with open_event_stream(live.app, live.path, headers) as stream:
         await _snapshot(stream)
-        close = await stream.next_message(timeout_s=4)
+        close = await stream.next_message(timeout_s=6)
         with pytest.raises(StreamEnded):
             await stream.next_frame()
 
