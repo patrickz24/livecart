@@ -33,6 +33,15 @@ whenever it looked: the read loop spends its time in ``XREADGROUP BLOCK``,
 with the room it asked for set aside, so a worker left idle never took back
 what a crashed one had left.
 
+**The stop**: once the stop event is set, the loop reads no more, the
+handlers that started run on, each by its deadline, and the deliveries still
+waiting for one of the ``WORKER_CONCURRENCY`` slots are left pending, whole,
+for a reclaim (``comment_left_on_stop``). So a stop takes one deadline at
+most, whatever the window holds: waiting for them all could take
+``ceil(batch / concurrency)`` deadlines, 60 s by default, past the 40 s
+compose gives before it kills the process. A delivery left so counts one
+more delivery when it is reclaimed.
+
 A handler never raises into the loop: whatever it does is logged, with the
 comment's correlation and request ids bound to every line, and counted
 (``livecart_worker.metrics``): the time the comment waited in the queue, the
@@ -104,7 +113,7 @@ class CommentConsumer:
     """One consumer of the group ``workers``; see the module docstring.
 
     ``run`` reads, and reclaims when a ``reclaim`` is given, until its stop
-    event is set, then waits for the handlers in flight.
+    event is set, then waits for the handlers that started.
     """
 
     def __init__(
@@ -153,6 +162,8 @@ class CommentConsumer:
         # collector, which may drop a task nothing references.
         self._in_flight = 0
         self._handlers: set[asyncio.Task[None]] = set()
+        # Set when run stops: a handler that has no slot yet then starts nothing.
+        self._stopping = False
         self._room_freed = asyncio.Event()
         self._last_progress = monotonic()
 
@@ -182,7 +193,7 @@ class CommentConsumer:
         handler.add_done_callback(self._handlers.discard)
 
     async def run(self, stop: asyncio.Event) -> None:
-        """Read, and reclaim, until ``stop`` is set, then wait for the handlers."""
+        """Read, and reclaim, until ``stop`` is set, then wait for the handlers that started."""
         logger.info("comment_consumer_started", consumer=self.name)
         next_reclaim = self._monotonic()
         try:
@@ -206,6 +217,8 @@ class CommentConsumer:
                 for delivery in deliveries:
                     self.submit(delivery)
         finally:
+            # The deliveries still waiting for a slot stay pending: see the stop.
+            self._stopping = True
             await self.drain()
             logger.info("comment_consumer_stopped", consumer=self.name)
 
@@ -251,7 +264,11 @@ class CommentConsumer:
             logger.warning("queue_backlog_unavailable", error=str(error))
 
     async def drain(self) -> None:
-        """Wait for every handler in flight; each ends by its deadline at the latest."""
+        """Wait for every handler submitted; one that started ends by its deadline at the latest.
+
+        Once ``run`` has stopped, the handlers still waiting for a slot end as
+        soon as they get one, without handling their delivery.
+        """
         # Only the unfinished ones: a finished task leaves the set in a callback
         # that runs later, and waiting on it again would never yield.
         while running := {handler for handler in self._handlers if not handler.done()}:
@@ -281,6 +298,11 @@ class CommentConsumer:
                 "delivery_count": delivery.delivery_count,
             }
             async with self._slots:
+                if self._stopping:
+                    # Not started before the stop: left pending, untouched, for a
+                    # reclaim, so that the stop waits for one deadline at most.
+                    logger.info("comment_left_on_stop", **fields)
+                    return
                 waited_s = self._wall_clock() - envelope.enqueued_at.timestamp()
                 # A worker's clock behind the API's would make it negative.
                 self.metrics.queue_wait.observe(max(waited_s, 0.0))

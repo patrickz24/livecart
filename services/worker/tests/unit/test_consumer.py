@@ -345,6 +345,35 @@ async def test_stop_lets_the_handlers_in_flight_finish() -> None:
     assert queue.acknowledged == ["1-0"]
 
 
+async def test_stop_leaves_the_deliveries_still_waiting_for_a_slot_pending() -> None:
+    queue = BlockingQueue()
+    gate = asyncio.Event()
+
+    async def wait_for_gate(delivery: QueueDelivery, attempt: int) -> None:
+        await gate.wait()
+
+    handler = Handler(queue, wait_for_gate)
+    await queue.enqueue([queued_comment(external_comment_id=f"c-{n}") for n in range(3)])
+    consumer = _consumer(queue, handler, batch=3, concurrency=1)
+    with structlog.testing.capture_logs() as logs:
+        stop, task = await _running(consumer)
+        await until(lambda: consumer.in_flight == 3 and handler.running == 1)
+
+        stop.set()
+        await asyncio.sleep(0.05)
+        # The drain waits for the one handler that started, not for a second round.
+        assert not task.done()
+        gate.set()
+        await asyncio.wait_for(task, timeout=2)
+
+    assert handler.calls == [("1-0", "worker-1")]
+    assert queue.acknowledged == ["1-0"]
+    assert [delivery.delivery_id for delivery in queue.pending] == ["2-0", "3-0"]
+    assert consumer.in_flight == 0
+    left = [log["delivery_id"] for log in logs if log["event"] == "comment_left_on_stop"]
+    assert left == ["2-0", "3-0"]
+
+
 async def test_the_reclaim_loop_submits_into_the_same_window() -> None:
     queue = BlockingQueue()
     gate = asyncio.Event()

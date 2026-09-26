@@ -54,6 +54,7 @@ During a live, comments arrive in bursts, and a platform expects its webhook ans
 - An effect happens once per comment, and at most one delivery works on a comment at a time, which, with the receipt stored once in the inbox, bounds the LLM calls to one per comment (ADR 0006).
 - The order is first come, first served at best: a reclaimed comment comes back after newer ones.
 - After a worker dies, its deliveries wait for the idle time before another worker takes them: about two minutes with the defaults, about one with a window of 16.
+- A stop (`docker stop`, SIGTERM) lets the handlers that started finish, each by its deadline, and leaves the deliveries still waiting for a handler pending for a reclaim, untouched: it takes one deadline at most, within compose's `stop_grace_period` of 40 s, where waiting for the whole window could take `ceil(batch / concurrency)` deadlines. Each delivery left so counts one more delivery towards the dead-letter queue when it is reclaimed, and waits for the idle time.
 - Every comment leaves a row in the inbox, and nothing purges them yet (a purge job is on the roadmap).
 - Consumers named `<host>-<pid>` stay listed in the group after their process ends, with nothing pending once reclaimed; a container restarted in place keeps its name.
 - While Redis is down, the webhook answers 503 and the worker's loops log and retry; its heartbeat stops, so the container reports unhealthy.

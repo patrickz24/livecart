@@ -28,9 +28,11 @@ undoes the commit.
 the container's internal port 9100, for as long as they run.
 
 SIGTERM (``docker stop``) and SIGINT (Ctrl+C) set a stop event that every
-loop watches: the consumer stops reading, lets its handlers finish (each by
-its deadline), and the process releases its connections and exits with
-status 0. A delivery cut short is only left pending, never lost.
+loop watches: the consumer stops reading, lets the handlers that started
+finish (each by its deadline), leaves the deliveries still waiting for a
+handler pending, and the process releases its connections and exits with
+status 0: one deadline at most, within compose's stop_grace_period. A
+delivery cut short or never started is only left pending, never lost.
 """
 
 import asyncio

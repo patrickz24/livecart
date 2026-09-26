@@ -256,9 +256,13 @@ services:
     # The Prometheus endpoint (METRICS_PORT, 9100): the compose network only.
     expose:
       - "9100"
-    # On SIGTERM the worker stops reading and lets its handlers finish, each
-    # within MESSAGE_PROCESS_TIMEOUT_S (30 s): Docker's default 10 s would kill
-    # them midway, which only leaves their deliveries for a reclaim.
+    # On SIGTERM the worker stops reading, lets the handlers that started
+    # finish, each within MESSAGE_PROCESS_TIMEOUT_S (30 s), and leaves the
+    # deliveries still waiting for a handler pending for a reclaim: a stop
+    # takes one deadline at most, whatever WORKER_BATCH, and 40 s leaves the
+    # time to close the pools; raise it with MESSAGE_PROCESS_TIMEOUT_S. Docker's
+    # default 10 s would kill handlers midway, and only leave their deliveries
+    # for a reclaim.
     stop_grace_period: 40s
     healthcheck:
       # The heartbeat file in /tmp, touched every 10 s while Redis answers PING.
