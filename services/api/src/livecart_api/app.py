@@ -159,7 +159,12 @@ def create_app(
     app.include_router(
         build_order_router(LookUpOrder(resources.orders, OrderTokens.verify), limits)
     )
-    ingest = IngestComments(resources.comment_queue, resources.clock)
+    ingest = IngestComments(
+        resources.comment_queue,
+        resources.clock,
+        max_depth=settings.queue_max_depth,
+        max_envelope_bytes=settings.queue_max_envelope_bytes,
+    )
     app.state.ingest_comments = ingest
     app.include_router(build_webhook_router(resources.platforms, ingest, limits))
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)

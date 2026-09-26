@@ -42,6 +42,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     limits = (*(name.upper() for name in RATE_LIMITS), "RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS")
     http = ("ALLOWED_HOSTS", "HSTS_ENABLED")
     webhooks = ("ENABLED_PLATFORMS", *(name.upper() for name in COMMENT_WEBHOOK_SECRETS.values()))
+    webhooks += ("QUEUE_MAX_DEPTH", "QUEUE_MAX_ENVELOPE_BYTES", "REDIS_MAXMEMORY_BYTES")
     for name in (
         *names,
         *extra,
@@ -471,6 +472,49 @@ def test_placeholder_webhook_secrets_are_rejected_in_production() -> None:
     message = str(excinfo.value)
     assert "COMMENT_WEBHOOK_SECRET_SIMULATOR" in message
     assert "change-me-simulator" not in message
+
+
+def test_the_queue_holds_20000_envelopes_of_5_kib_in_256_mib_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert settings.queue_max_depth == 20_000
+    assert settings.queue_max_envelope_bytes == 5_120
+    assert settings.redis_maxmemory_bytes == 256 * 1024 * 1024
+    # 20000 x 5120 x 1.25: 47.7 % of maxmemory, within the half the queue may take.
+    assert settings.queue_memory_bytes == 128_000_000
+    assert settings.queue_memory_bytes <= settings.redis_maxmemory_bytes // 2
+
+
+@pytest.mark.parametrize(
+    ("name", "refused", "message"),
+    [
+        ("QUEUE_MAX_DEPTH", "0", "from 1 to 1000000 comments"),
+        ("QUEUE_MAX_DEPTH", "1000001", "from 1 to 1000000 comments"),
+        ("QUEUE_MAX_ENVELOPE_BYTES", "4096", "from 5120 to 65536 bytes"),
+        ("QUEUE_MAX_ENVELOPE_BYTES", "65537", "from 5120 to 65536 bytes"),
+        ("REDIS_MAXMEMORY_BYTES", "1048575", "at least 1048576 bytes"),
+    ],
+)
+def test_the_queue_settings_stay_within_their_bounds(name: str, refused: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(**{name: refused}, **dev_env())
+
+
+def test_a_full_queue_must_fit_in_half_of_redis() -> None:
+    # 20000 x 5120 x 1.25 = 128000000 bytes: exactly half of 256000000.
+    assert load(REDIS_MAXMEMORY_BYTES="256000000", **dev_env())
+
+    with pytest.raises(ValidationError, match="within half of REDIS_MAXMEMORY_BYTES"):
+        load(REDIS_MAXMEMORY_BYTES="255999999", **dev_env())
+    with pytest.raises(ValidationError, match="within half of REDIS_MAXMEMORY_BYTES"):
+        load(QUEUE_MAX_DEPTH="21000", **dev_env())
+    with pytest.raises(ValidationError, match="within half of REDIS_MAXMEMORY_BYTES"):
+        load(QUEUE_MAX_ENVELOPE_BYTES="5400", **dev_env())
+    # A larger Redis takes a deeper queue.
+    deeper = load(
+        QUEUE_MAX_DEPTH="40000", REDIS_MAXMEMORY_BYTES=str(512 * 1024 * 1024), **dev_env()
+    )
+    assert deeper.queue_max_depth == 40_000
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

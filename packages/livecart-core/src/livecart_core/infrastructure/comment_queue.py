@@ -55,8 +55,9 @@ logger = structlog.get_logger(__name__)
 GROUP: Final = "workers"
 ENVELOPE_FIELD: Final = "envelope"
 # Dead letters are rare, and each one's inbox row says what happened to it:
-# the stream keeps the last ten thousand for inspection, bounded under noeviction.
-DEAD_LETTER_MAX_LENGTH: Final = 10_000
+# the stream keeps about the last thousand for inspection, at most some 6 MiB
+# (6.2 KB each at the envelope's bound), outside the queue's half of maxmemory.
+DEAD_LETTER_MAX_LENGTH: Final = 1_000
 # The oldest id of a stream: nothing sorts below it.
 START_ID: Final = "0-0"
 

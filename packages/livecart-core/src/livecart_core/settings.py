@@ -10,6 +10,7 @@ repr, a log line or a validation error.
 import re
 from datetime import timedelta
 from enum import StrEnum
+from fractions import Fraction
 from pathlib import Path
 from typing import Annotated, Final, Self
 
@@ -47,6 +48,26 @@ RATE_LIMITS: Final = (
     "rate_limit_storefront_per_minute",
     "rate_limit_comment_webhook_per_minute",
 )
+# The bounds of the comment queue's backpressure settings.
+MAX_QUEUE_DEPTH: Final = 1_000_000
+# The envelope of a comment of 1000 four-byte characters with ASCII ids of
+# full length takes 4706 bytes: a smaller bound would refuse comments the
+# webhook format allows.
+MIN_QUEUE_ENVELOPE_BYTES: Final = 5_120
+MAX_QUEUE_ENVELOPE_BYTES: Final = 65_536
+MIN_REDIS_MAXMEMORY_BYTES: Final = 1024 * 1024
+# What one queued envelope may cost Redis, as a multiple of its JSON. The
+# stream's listpack adds about 50 bytes per entry, which MEMORY USAGE reports;
+# jemalloc then rounds each allocation above 4 KiB up to a size class at most
+# 25 % above it, which MEMORY USAGE does not show. Measured on redis
+# 8.10.2 (jemalloc 5.3.0), 4000 envelopes of 5120 bytes took 6162 bytes of
+# used_memory each, 5171 by MEMORY USAGE.
+QUEUE_ENTRY_MEMORY_FACTOR: Final = Fraction(5, 4)
+# The share of Redis's maxmemory a full queue may take: the rest holds the
+# session streams, the rate limit and budget counters, the idempotency keys
+# and the history not trimmed yet. Under noeviction, a full Redis refuses
+# writes, logins included.
+QUEUE_MEMORY_SHARE: Final = Fraction(1, 2)
 # One HMAC key per platform's comment webhook (livecart_core.signing).
 COMMENT_WEBHOOK_SECRETS: Final = {
     platform: f"comment_webhook_secret_{platform.value}" for platform in Platform
@@ -202,6 +223,17 @@ class Settings(BaseAppSettings):
     comment_webhook_secret_facebook: SecretStr | None = None
     comment_webhook_secret_instagram: SecretStr | None = None
     comment_webhook_secret_tiktok: SecretStr | None = None
+    # Backpressure of the comment webhook: once the queue's backlog (comments
+    # not acknowledged yet, delivered or not) reaches this depth, the webhook
+    # answers 503 until the workers catch up.
+    queue_max_depth: int = 20_000
+    # The largest envelope, as JSON, the webhook queues; a comment whose
+    # envelope is larger is refused (422). With the depth, it bounds the
+    # memory the queue may take.
+    queue_max_envelope_bytes: int = 5_120
+    # Redis's maxmemory (256 MiB in compose, which passes the same value to
+    # both): startup checks that a full queue fits in half of it.
+    redis_maxmemory_bytes: int = 256 * 1024 * 1024
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -241,6 +273,52 @@ class Settings(BaseAppSettings):
         if value is not None and len(value.get_secret_value().encode()) < MIN_KEY_BYTES:
             raise ValueError(f"must be at least {MIN_KEY_BYTES} bytes long")
         return value
+
+    @property
+    def queue_memory_bytes(self) -> int:
+        """What a queue of ``queue_max_depth`` envelopes of the largest size may cost Redis."""
+        cost = self.queue_max_depth * self.queue_max_envelope_bytes * QUEUE_ENTRY_MEMORY_FACTOR
+        return int(cost)
+
+    @field_validator("queue_max_depth")
+    @classmethod
+    def _check_queue_max_depth(cls, value: int) -> int:
+        if not 1 <= value <= MAX_QUEUE_DEPTH:
+            raise ValueError(f"must be from 1 to {MAX_QUEUE_DEPTH} comments")
+        return value
+
+    @field_validator("queue_max_envelope_bytes")
+    @classmethod
+    def _check_queue_max_envelope_bytes(cls, value: int) -> int:
+        if not MIN_QUEUE_ENVELOPE_BYTES <= value <= MAX_QUEUE_ENVELOPE_BYTES:
+            raise ValueError(
+                f"must be from {MIN_QUEUE_ENVELOPE_BYTES} to {MAX_QUEUE_ENVELOPE_BYTES} bytes"
+            )
+        return value
+
+    @field_validator("redis_maxmemory_bytes")
+    @classmethod
+    def _check_redis_maxmemory_bytes(cls, value: int) -> int:
+        if value < MIN_REDIS_MAXMEMORY_BYTES:
+            raise ValueError(f"must be at least {MIN_REDIS_MAXMEMORY_BYTES} bytes")
+        return value
+
+    @model_validator(mode="after")
+    def _a_full_queue_fits_in_half_of_redis(self) -> Self:
+        """QUEUE_MAX_DEPTH x QUEUE_MAX_ENVELOPE_BYTES x 5/4 within half of maxmemory.
+
+        Backpressure stops the webhook at the depth, so this is the most the
+        queue can take; above half, a spike could fill Redis, and noeviction
+        would then refuse every write, the logins' counters included.
+        """
+        budget = int(self.redis_maxmemory_bytes * QUEUE_MEMORY_SHARE)
+        if self.queue_memory_bytes > budget:
+            raise ValueError(
+                "QUEUE_MAX_DEPTH x QUEUE_MAX_ENVELOPE_BYTES x 1.25 (the allocator's rounding) "
+                f"is {self.queue_memory_bytes} bytes: it must stay within half of "
+                f"REDIS_MAXMEMORY_BYTES, {budget} bytes"
+            )
+        return self
 
     @model_validator(mode="after")
     def _keys_are_distinct(self) -> Self:

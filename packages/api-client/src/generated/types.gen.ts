@@ -1368,7 +1368,7 @@ export type ReceiveCommentWebhookErrors = {
      */
     429: ErrorResponse;
     /**
-     * The comment queue did not take the batch: try again after Retry-After
+     * The comment queue is full, or did not take the whole batch: try again after Retry-After
      */
     503: ErrorResponse;
 };

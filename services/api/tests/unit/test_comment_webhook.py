@@ -3,6 +3,7 @@
 import json
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from typing import cast
 
@@ -11,7 +12,11 @@ import pytest
 
 from livecart_api.app import MAX_REQUEST_BODY_BYTES, create_app
 from livecart_api.rate_limits import TOO_MANY_REQUESTS
-from livecart_api.routes.webhooks import INVALID_SIGNATURE
+from livecart_api.routes.webhooks import (
+    INVALID_SIGNATURE,
+    QUEUE_FULL,
+    QUEUE_FULL_RETRY_AFTER_S,
+)
 from livecart_api.testing import (
     SIMULATOR_WEBHOOK,
     current_time_clock,
@@ -22,7 +27,7 @@ from livecart_api.testing import (
     simulator_only,
 )
 from livecart_core.application.dto import CommentBatch, Platform, QueuedComment
-from livecart_core.application.ingest_comments import IngestComments
+from livecart_core.application.ingest_comments import BACKLOG_TTL, IngestComments
 from livecart_core.application.ports import (
     LiveSessionRepository,
     OrderLookup,
@@ -30,6 +35,7 @@ from livecart_core.application.ports import (
     RefreshTokenRepository,
     SellerRepository,
 )
+from livecart_core.settings import AppEnv
 from livecart_core.signing import SIGNATURE_HEADER
 from livecart_core.testing.builders import incoming_comment
 from livecart_core.testing.fakes import (
@@ -68,16 +74,23 @@ class Api:
         return await self.client.post(SIMULATOR_WEBHOOK, content=body, headers=headers)
 
 
-@pytest.fixture
-async def api() -> AsyncIterator[Api]:
+@asynccontextmanager
+async def _open_api(**settings: object) -> AsyncIterator[Api]:
+    """The app over the fakes, with ``settings`` replacing some of the tests' settings."""
     clock = current_time_clock()
     queue, limiter = FakeCommentQueue(clock), InMemoryRateLimiter(clock)
     resources = memory_resources(
         InMemoryDatabase(), clock=clock, rate_limiter=limiter, comment_queue=queue
     )
-    app = create_app(make_settings(), resources)
+    app = create_app(make_settings(AppEnv.DEVELOPMENT, **settings), resources)
     async with open_client(app) as client:
         yield Api(client, clock, queue, limiter, app.state.ingest_comments)
+
+
+@pytest.fixture
+async def api() -> AsyncIterator[Api]:
+    async with _open_api() as opened:
+        yield opened
 
 
 # --- Accepted --------------------------------------------------------------------------
@@ -270,7 +283,51 @@ async def test_a_comment_of_another_platform_answers_422(api: Api) -> None:
     assert await api.queued() == []
 
 
-# --- The queue -------------------------------------------------------------------------
+# --- The queue and its backpressure ----------------------------------------------------
+
+
+async def test_a_full_queue_answers_503_until_the_workers_catch_up() -> None:
+    async with _open_api(queue_max_depth=3) as api:
+        accepted = [(await api.post()).status_code for _ in range(2)]
+        full = await api.post()
+        # The workers consume and acknowledge everything.
+        for delivery in await api.queue.receive("worker-1", max_messages=10, block_seconds=0):
+            await api.queue.ack(delivery)
+        still_cached = await api.post()
+        api.clock.advance(BACKLOG_TTL)
+        again = await api.post()
+
+    # The second batch still went in: 2 < 3 before it, 4 after.
+    assert accepted == [202, 202]
+    assert full.status_code == 503
+    assert full.json() == {"detail": QUEUE_FULL}
+    assert full.headers["Retry-After"] == str(QUEUE_FULL_RETRY_AFTER_S)
+    assert still_cached.status_code == 503
+    assert again.status_code == 202
+    assert api.ingest.queue_backpressure_total == 2
+    assert await api.queue.backlog() == 2
+
+
+async def test_a_comment_too_large_once_queued_answers_422() -> None:
+    async with _open_api(queue_max_envelope_bytes=1_000) as api:
+        batch = CommentBatch(
+            comments=[
+                incoming_comment(external_comment_id="c-1"),
+                incoming_comment("😀" * 1000, external_comment_id="c-2"),
+            ]
+        )
+        response = await api.post(batch)
+        queued = await api.queued()
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == [
+        {
+            "loc": ["body", "comments", 1],
+            "msg": "The comment takes over 1000 bytes once queued",
+            "type": "envelope_too_large",
+        }
+    ]
+    assert queued == []
 
 
 async def test_a_queue_that_did_not_take_the_batch_answers_503(api: Api) -> None:

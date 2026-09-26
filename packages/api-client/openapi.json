@@ -2476,7 +2476,7 @@
                 }
               }
             },
-            "description": "The comment queue did not take the batch: try again after Retry-After"
+            "description": "The comment queue is full, or did not take the whole batch: try again after Retry-After"
           }
         },
         "summary": "Receive a batch of live comments from a platform",

@@ -15,8 +15,11 @@ before the next one reads anything more:
    checked against ``CommentBatch``: 1 to 200 comments, each within its
    bounds, and each of the path's platform (422 otherwise);
 5. ``IngestComments`` puts each comment in its envelope onto the queue: 202
-   with the number queued, or 503 when the queue did not take them all (the
-   platform retries, and the inbox deduplicates).
+   with the number queued. An envelope over ``QUEUE_MAX_ENVELOPE_BYTES`` is a
+   422. Backpressure: once the queue's backlog reaches ``QUEUE_MAX_DEPTH``,
+   nothing is queued and the answer is 503 with ``Retry-After``; so is it
+   when the queue did not take the whole batch (the platform retries, and the
+   inbox deduplicates what went in). A 429 is abuse, a 503 is load.
 
 Nothing on this path touches PostgreSQL.
 """
@@ -34,13 +37,21 @@ from pydantic import BaseModel, Field, ValidationError
 from livecart_api.errors import NOT_FOUND, documented
 from livecart_api.rate_limits import TOO_MANY_REQUESTS, RateLimiting
 from livecart_core.application.dto import MAX_BATCH_SIZE, CommentBatch, IncomingComment, Platform
-from livecart_core.application.ingest_comments import IngestComments
+from livecart_core.application.ingest_comments import (
+    EnvelopeTooLarge,
+    IngestComments,
+    QueueFull,
+)
 from livecart_core.application.ports import InvalidSignature, PlatformAdapter
 
 logger = structlog.get_logger(__name__)
 
 PREFIX: Final = "/api/v1/webhooks/comments"
 INVALID_SIGNATURE: Final = "Invalid signature"
+QUEUE_FULL: Final = "The comment queue is full: try again after Retry-After seconds"
+# A backlog at its depth drains in seconds, not in one: an earlier retry would
+# only meet the same cached backlog and add to the load.
+QUEUE_FULL_RETRY_AFTER_S: Final = 5
 # The body is each platform's own format: only the simulator's is the common one.
 REQUEST_BODY: Final = {
     "required": True,
@@ -108,7 +119,8 @@ def build_webhook_router(
                     status.HTTP_404_NOT_FOUND: "The platform's webhook is not enabled",
                     status.HTTP_429_TOO_MANY_REQUESTS: TOO_MANY_REQUESTS,
                     status.HTTP_503_SERVICE_UNAVAILABLE: (
-                        "The comment queue did not take the batch: try again after Retry-After"
+                        "The comment queue is full, or did not take the whole batch: "
+                        "try again after Retry-After"
                     ),
                 }
             ),
@@ -130,7 +142,27 @@ def build_webhook_router(
         comments = _read_comments(adapter, raw_body)
         # Set by CorrelationIdMiddleware on every request; a fresh id otherwise.
         request_id = correlation_id.get() or uuid4().hex
-        accepted = await ingest(comments, request_id=request_id)
+        try:
+            accepted = await ingest(comments, request_id=request_id)
+        except EnvelopeTooLarge as error:
+            too_large = {
+                "loc": ("comments", error.index),
+                "msg": f"The comment takes over {error.max_size} bytes once queued",
+                "type": "envelope_too_large",
+            }
+            raise _invalid_body([too_large]) from None
+        except QueueFull as error:
+            logger.warning(
+                "comment_queue_full",
+                platform=platform.value,
+                backlog=error.backlog,
+                max_depth=error.max_depth,
+            )
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=QUEUE_FULL,
+                headers={"Retry-After": str(QUEUE_FULL_RETRY_AFTER_S)},
+            ) from None
         logger.info("comment_webhook_accepted", platform=platform.value, comments=accepted)
         return WebhookAccepted(accepted=accepted)
 

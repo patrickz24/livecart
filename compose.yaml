@@ -99,7 +99,9 @@ services:
     image: ${REDIS_IMAGE:-redis:8.10.2-alpine}
     # The entrypoint drops to the redis user when the command is redis-server.
     # Append-only file flushed every second; bounded memory that refuses writes
-    # rather than evicting queue entries.
+    # rather than evicting queue entries. The API receives the same maxmemory
+    # (256 MiB by default) and checks at startup that a full comment queue
+    # takes at most half of it.
     command:
       - redis-server
       - --requirepass
@@ -109,7 +111,7 @@ services:
       - --appendfsync
       - everysec
       - --maxmemory
-      - 256mb
+      - ${REDIS_MAXMEMORY_BYTES:-268435456}
       - --maxmemory-policy
       - noeviction
     environment:
@@ -191,6 +193,10 @@ services:
       # Only the API checks the comment webhooks: the worker never receives their keys.
       ENABLED_PLATFORMS: ${ENABLED_PLATFORMS:-simulator}
       COMMENT_WEBHOOK_SECRET_SIMULATOR: ${COMMENT_WEBHOOK_SECRET_SIMULATOR:?set it in .env (cp .env.example .env)}
+      # Backpressure of the webhook, checked against Redis's own maxmemory above.
+      QUEUE_MAX_DEPTH: ${QUEUE_MAX_DEPTH:-20000}
+      QUEUE_MAX_ENVELOPE_BYTES: ${QUEUE_MAX_ENVELOPE_BYTES:-5120}
+      REDIS_MAXMEMORY_BYTES: ${REDIS_MAXMEMORY_BYTES:-268435456}
     ports:
       - "127.0.0.1:8000:8000" # loopback only: other clients go through nginx
     healthcheck:
