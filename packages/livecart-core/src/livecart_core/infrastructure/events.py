@@ -29,7 +29,11 @@ logged here with the event's type and session, raised as
 stands, and the dashboard catches up from its next snapshot.
 
 Reading: ``cursor`` is ``XREVRANGE + - COUNT 1``, ``read`` is ``XREAD COUNT
-n BLOCK ms``, which waits for the stream to exist if it does not yet, and
+n BLOCK ms``, which waits for the stream to exist if it does not yet. Its
+wait stays under ``MAX_READ_BLOCK`` (2 s), whatever the caller asks: the
+client's socket times out after 5 s (redis-py 8's default), and a longer
+``BLOCK`` would end in a ``TimeoutError`` instead of an empty read, as the
+comment queue's ``XREADGROUP BLOCK 2000`` also avoids. Then
 ``has_gap`` reads ``XINFO STREAM``. Trimming does not record the ids it
 removed (``max-deleted-entry-id`` only follows ``XDEL``), so the check errs
 on the safe side: a cursor older than the stream's first event is a gap as
@@ -63,6 +67,8 @@ from livecart_core.domain.state_machines import LiveSessionStatus
 logger = structlog.get_logger(__name__)
 
 EVENT_FIELD: Final = "event"
+# The longest XREAD BLOCK: under the client's 5 s socket timeout.
+MAX_READ_BLOCK: Final = timedelta(seconds=2)
 # How long a stream keeps an event, then how long it outlives its last one.
 EVENT_RETENTION: Final = timedelta(minutes=15)
 LIVE_STREAM_TTL: Final = timedelta(hours=24)
@@ -193,8 +199,10 @@ class RedisSessionEvents:
         event_id_key(after)
         if max_events < 1 or block_seconds < 0:
             raise ValueError("a read takes one event at least, and waits zero seconds or more")
-        # BLOCK 0 would wait for ever: no wait is no BLOCK at all, any wait 1 ms at least.
-        block = max(1, round(block_seconds * 1000)) if block_seconds > 0 else None
+        # BLOCK 0 would wait for ever: no wait is no BLOCK at all, any wait 1 ms at
+        # least, and none longer than the client's socket lets a reply take.
+        wait_s = min(block_seconds, MAX_READ_BLOCK.total_seconds())
+        block = max(1, round(wait_s * 1000)) if wait_s > 0 else None
         key = self.stream_key(session_id)
         async with _redis_errors("read"):
             response: Any = await self._client.xread({key: after}, count=max_events, block=block)

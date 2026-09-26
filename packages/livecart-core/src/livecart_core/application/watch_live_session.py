@@ -18,7 +18,7 @@ format:
      ``FeedGap``, then a new snapshot as above.
 
 2. **Then**, the events after the cursor, read in batches of 100 with a
-   wait of at most 5 s (``SessionEventStream.read``), each yielded as the
+   wait of at most 2 s (``SessionEventStream.read``), each yielded as the
    ``StreamedEvent`` it is, its id the cursor a reconnection resumes from.
    Once a minute the reader checks again for a gap, in case it fell behind
    the stream's 15 minutes of retention: a gap, then a new snapshot.
@@ -55,8 +55,9 @@ from livecart_core.application.ports import (
 MAX_STREAM_DURATION: Final = timedelta(hours=1)
 # How long before its token's expiry a stream closes: time for a refresh.
 TOKEN_MARGIN: Final = timedelta(seconds=5)
-# The longest wait of one read, so that the deadline is seen in time.
-READ_WAIT: Final = timedelta(seconds=5)
+# The longest wait of one read, so that the deadline is seen in time; the
+# Redis adapter keeps it under its client's socket timeout anyway.
+READ_WAIT: Final = timedelta(seconds=2)
 READ_BATCH: Final = 100
 # How often a reader checks that the stream's retention did not overtake it.
 GAP_CHECK_INTERVAL: Final = timedelta(minutes=1)

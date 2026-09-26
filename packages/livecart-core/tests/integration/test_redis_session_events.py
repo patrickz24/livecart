@@ -156,3 +156,16 @@ async def test_a_read_refuses_a_count_or_a_wait_out_of_bounds(
         await events.read(SESSION, after=START_CURSOR, max_events=0, block_seconds=0)
     with pytest.raises(ValueError, match="one event at least"):
         await events.read(SESSION, after=START_CURSOR, max_events=1, block_seconds=-1)
+
+
+async def test_a_long_wait_ends_empty_within_the_client_timeout(
+    redis_client: Redis, redis_key_prefix: str
+) -> None:
+    events = RedisSessionEvents(redis_client, prefix=redis_key_prefix)
+    started = time.monotonic()
+
+    # redis-py 8 times a socket out after 5 s: a BLOCK that long would raise.
+    read = await events.read(SESSION, after=START_CURSOR, max_events=1, block_seconds=6)
+
+    assert read == []
+    assert time.monotonic() - started < 4
