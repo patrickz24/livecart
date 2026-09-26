@@ -1,13 +1,15 @@
 from datetime import timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from livecart_core.application.dto import Platform
+from livecart_core.application.dto import LlmPrice, Platform
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.settings import (
     COMMENT_WEBHOOK_SECRETS,
+    DEFAULT_LLM_PRICES,
     RATE_LIMITS,
     AppEnv,
     LlmEffort,
@@ -36,6 +38,10 @@ LLM_SETTINGS = (
     "LLM_EFFORT",
     "LLM_REFUSAL_FALLBACK",
     "LLM_CALL_TIMEOUT_S",
+    "LLM_MAX_CALLS_PER_SESSION",
+    "LLM_DAILY_BUDGET_USD",
+    "LLM_PRICES",
+    "LLM_SLOT_WAIT_S",
 )
 # Signing keys that pass every check, in production too.
 KEYS = {
@@ -696,6 +702,94 @@ def test_the_model_is_configurable() -> None:
 def test_the_llm_settings_stay_within_their_bounds(name: str, refused: str, message: str) -> None:
     with pytest.raises(ValidationError, match=message):
         load(**{name: refused}, **dev_env())
+
+
+def test_the_cost_guard_defaults_to_the_plan() -> None:
+    settings = load(**dev_env())
+
+    assert settings.llm_max_calls_per_session == 200
+    assert settings.llm_daily_budget_usd == Decimal("1.00")
+    assert settings.llm_slot_wait_s == 7
+    assert settings.llm_prices["claude-opus-5"] == LlmPrice(
+        input_per_mtok=Decimal(5), output_per_mtok=Decimal(25)
+    )
+    assert set(settings.llm_prices) == set(DEFAULT_LLM_PRICES)
+
+
+def test_a_call_may_take_two_attempts_and_the_backoff_between_them() -> None:
+    assert load(**dev_env()).llm_call_budget_s == 18
+    assert load(LLM_CALL_TIMEOUT_S="5", **dev_env()).llm_call_budget_s == 12
+
+
+def test_an_empty_price_table_keeps_the_default_one() -> None:
+    assert load(LLM_PRICES="", **dev_env()).llm_prices == DEFAULT_LLM_PRICES
+
+
+def test_the_price_table_is_replaced_from_json() -> None:
+    table = '{"claude-opus-5": {"input_per_mtok": "5.5", "output_per_mtok": 27}}'
+
+    settings = load(LLM_PRICES=table, **dev_env())
+
+    assert settings.llm_prices == {
+        "claude-opus-5": LlmPrice(input_per_mtok=Decimal("5.5"), output_per_mtok=Decimal(27))
+    }
+
+
+@pytest.mark.parametrize(
+    ("name", "refused", "message"),
+    [
+        ("LLM_MAX_CALLS_PER_SESSION", "0", "from 1 to 100000 calls"),
+        ("LLM_DAILY_BUDGET_USD", "0", "above 0 and at most 1000 dollars"),
+        ("LLM_DAILY_BUDGET_USD", "1000.01", "above 0 and at most 1000 dollars"),
+        ("LLM_SLOT_WAIT_S", "0.5", "from 1 to 60 seconds"),
+        ("LLM_PRICES", '{"Opus": {"input_per_mtok": 5, "output_per_mtok": 25}}', "no model id"),
+        ("LLM_PRICES", '{"claude-opus-5": {"input_per_mtok": -1, "output_per_mtok": 25}}', "0"),
+        ("LLM_PRICES", "{not json", "Expecting property name"),
+    ],
+)
+def test_the_cost_guard_settings_stay_within_their_bounds(
+    name: str, refused: str, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(**{name: refused}, **dev_env())
+
+
+@pytest.mark.parametrize(
+    "env",
+    [
+        {"MESSAGE_PROCESS_TIMEOUT_S": "29"},
+        {"LLM_SLOT_WAIT_S": "8"},
+        {"DB_BUDGET_S": "6"},
+        {"MESSAGE_PROCESS_TIMEOUT_S": "20", "LLM_CALL_TIMEOUT_S": "4"},
+    ],
+)
+def test_with_a_key_the_deadline_must_hold_the_slot_wait_the_call_and_the_units(
+    env: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError, match="is shorter than LLM_CALL_BUDGET_S"):
+        load(ANTHROPIC_API_KEY="sk-ant-test", **env, **dev_env())
+
+
+def test_the_deadline_rule_holds_at_the_defaults_and_only_with_the_fallback_on() -> None:
+    assert load(ANTHROPIC_API_KEY="sk-ant-test", **dev_env()).llm_active
+    # 20 >= 4 x 2 + 2 + 5 + 5.
+    tighter = {"MESSAGE_PROCESS_TIMEOUT_S": "20", "LLM_CALL_TIMEOUT_S": "4", "LLM_SLOT_WAIT_S": "5"}
+    assert load(ANTHROPIC_API_KEY="sk-ant-test", **tighter, **dev_env()).llm_active
+    # The parser alone needs no time for a call.
+    assert not load(MESSAGE_PROCESS_TIMEOUT_S="5", DB_BUDGET_S="1", **dev_env()).llm_active
+    off = load(
+        ANTHROPIC_API_KEY="sk-ant-test",
+        LLM_ENABLED="false",
+        MESSAGE_PROCESS_TIMEOUT_S="5",
+        **dev_env(),
+    )
+    assert not off.llm_active
+
+
+def test_with_a_key_the_model_needs_a_price() -> None:
+    with pytest.raises(ValidationError, match="LLM_MODEL=claude-future-9 has no price"):
+        load(ANTHROPIC_API_KEY="sk-ant-test", LLM_MODEL="claude-future-9", **dev_env())
+    assert load(LLM_MODEL="claude-future-9", **dev_env()).llm_model == "claude-future-9"
 
 
 def test_the_buyer_links_open_the_demo_app_by_default() -> None:

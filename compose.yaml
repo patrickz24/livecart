@@ -248,6 +248,11 @@ services:
       LLM_REFUSAL_FALLBACK: ${LLM_REFUSAL_FALLBACK:-true}
       LLM_CALL_TIMEOUT_S: ${LLM_CALL_TIMEOUT_S:-8}
       DB_BUDGET_S: ${DB_BUDGET_S:-5}
+      # Its cost guard and its slot wait; LLM_PRICES, when set, replaces the price table.
+      LLM_MAX_CALLS_PER_SESSION: ${LLM_MAX_CALLS_PER_SESSION:-200}
+      LLM_DAILY_BUDGET_USD: ${LLM_DAILY_BUDGET_USD:-1.00}
+      LLM_SLOT_WAIT_S: ${LLM_SLOT_WAIT_S:-7}
+      LLM_PRICES: ${LLM_PRICES:-}
     # The Prometheus endpoint (METRICS_PORT, 9100): the compose network only.
     expose:
       - "9100"

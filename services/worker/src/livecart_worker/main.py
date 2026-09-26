@@ -14,7 +14,9 @@ then runs the worker's loops in one TaskGroup:
 
 ``ProcessComment`` asks Claude (``livecart_worker.llm.claude``) about the
 comments the parser leaves ambiguous when ``ANTHROPIC_API_KEY`` is set and
-``LLM_ENABLED`` is not false; otherwise ``NullIntentFallback`` leaves them
+``LLM_ENABLED`` is not false, through ``LlmGuard``: the budget shared in
+Redis (``RedisLlmBudget``), then one of ``LLM_SLOTS`` (4) slots, waited for
+``LLM_SLOT_WAIT_S`` at most. Otherwise ``NullIntentFallback`` leaves them
 unresolved, and the worker runs on the parser alone.
 
 The consumer and the sweep publish the session events of what they commit
@@ -34,6 +36,7 @@ status 0. A delivery cut short is only left pending, never lost.
 import asyncio
 import signal
 from collections.abc import Callable
+from datetime import timedelta
 from functools import partial
 from typing import Final
 
@@ -41,7 +44,8 @@ import structlog
 from anthropic import AsyncAnthropic
 
 from livecart_core.application.expire_reservations import ExpireReservations
-from livecart_core.application.ports import Clock, IntentFallback, NullIntentFallback
+from livecart_core.application.llm_guard import LlmGuard
+from livecart_core.application.ports import Clock, IntentFallback, LlmBudget, NullIntentFallback
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
 from livecart_core.infrastructure.clock import SystemClock
@@ -51,12 +55,13 @@ from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.events import RedisSessionEvents
+from livecart_core.infrastructure.llm_budget import RedisLlmBudget
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.logging import configure_logging
 from livecart_core.metrics import MetricsServer
 from livecart_core.order_tokens import OrderTokens
-from livecart_core.settings import LLM_MAX_RETRIES, Settings
+from livecart_core.settings import LLM_MAX_RETRIES, LLM_SLOTS, Settings
 from livecart_worker.consumer import (
     RECLAIM_INTERVAL_S,
     CommentConsumer,
@@ -103,8 +108,13 @@ def install_stop_handlers(
     return remove_signal_handlers
 
 
-def llm_fallback(settings: Settings) -> tuple[IntentFallback, AsyncAnthropic | None]:
-    """Claude, with the client to close, when the fallback is on; the parser alone otherwise."""
+def llm_fallback(
+    settings: Settings, *, budget: LlmBudget, clock: Clock
+) -> tuple[IntentFallback, AsyncAnthropic | None]:
+    """Claude behind its guard, with the client to close, when the fallback is on.
+
+    The parser alone otherwise: ``NullIntentFallback``, and no client.
+    """
     if not settings.llm_active or settings.anthropic_api_key is None:
         return NullIntentFallback(), None
     client = AsyncAnthropic(
@@ -112,7 +122,7 @@ def llm_fallback(settings: Settings) -> tuple[IntentFallback, AsyncAnthropic | N
         max_retries=LLM_MAX_RETRIES,
         timeout=settings.llm_call_timeout_s,
     )
-    fallback = AnthropicIntentFallback(
+    claude = AnthropicIntentFallback(
         client,
         model=settings.llm_model,
         effort=settings.llm_effort,
@@ -120,7 +130,19 @@ def llm_fallback(settings: Settings) -> tuple[IntentFallback, AsyncAnthropic | N
         call_timeout_s=settings.llm_call_timeout_s,
         max_quantity=settings.max_quantity_per_comment,
     )
-    return fallback, client
+    guard = LlmGuard(
+        claude,
+        budget,
+        clock,
+        model=settings.llm_model,
+        prices=settings.llm_prices,
+        max_calls_per_session=settings.llm_max_calls_per_session,
+        daily_budget_usd=settings.llm_daily_budget_usd,
+        slots=LLM_SLOTS,
+        slot_wait=timedelta(seconds=settings.llm_slot_wait_s),
+        call_budget=timedelta(seconds=settings.llm_call_budget_s),
+    )
+    return guard, client
 
 
 async def serve(
@@ -144,7 +166,11 @@ async def serve(
     clock = clock if clock is not None else SystemClock()
     metrics = metrics if metrics is not None else WorkerMetrics()
     redis = create_redis_client(settings.redis_url)
-    fallback, llm_client = llm_fallback(settings)
+    fallback, llm_client = llm_fallback(
+        settings, budget=RedisLlmBudget(redis, prefix=settings.redis_key_prefix), clock=clock
+    )
+    if isinstance(fallback, LlmGuard):
+        metrics.watch_llm(fallback)
     engine = create_db_engine(
         settings.database_url,
         application_name=APPLICATION_NAME,

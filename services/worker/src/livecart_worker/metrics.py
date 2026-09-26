@@ -21,18 +21,30 @@ loops record what they do:
   (``livecart_comments_dead_lettered_total``), the entries trimmed, and the
   queue's backlog as the reclaim saw it (``livecart_queue_backlog``);
 - each sweep tick: the reservations expired and their unpublished events.
+- with the LLM fallback on (``watch_llm``), the plain counters of its
+  ``LlmGuard``, read at scrape time: the receipts by outcome
+  (``livecart_llm_outcomes_total{outcome}``, the closed list of
+  ``LlmOutcome``), the dollars spent at list price
+  (``livecart_llm_spend_usd_total``) and the costs the shared budget failed
+  to record (``livecart_llm_spend_unrecorded_total``). Without a key there
+  is no guard, and no LLM series: the ambiguities show as
+  ``ambiguous_unresolved`` rejections.
 
 Only identifiers of closed lists become labels, never a comment's, a
 session's or a buyer's id, so the number of series stays fixed.
 """
 
+from collections.abc import Iterable
 from enum import StrEnum
 from typing import Final
 
 from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
+from prometheus_client.core import CounterMetricFamily, Metric
+from prometheus_client.registry import Collector
 
 from livecart_core.application.dto import IntentSource
 from livecart_core.application.expire_reservations import SweepResult
+from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.process_comment import HandledComment, Handling
 from livecart_core.application.reclaim_comments import Reclaimed
 from livecart_core.domain.outcomes import RejectionReason
@@ -65,6 +77,33 @@ class FailureCause(StrEnum):
     DEADLINE = "deadline"
     TRANSIENT = "transient"
     ERROR = "error"
+
+
+class LlmCollector(Collector):
+    """The plain counters of the LLM guard, read at scrape time."""
+
+    def __init__(self, guard: LlmGuard) -> None:
+        self._guard = guard
+
+    def collect(self) -> Iterable[Metric]:
+        outcomes = CounterMetricFamily(
+            "livecart_llm_outcomes_total",
+            "Receipts of the LLM fallback, by outcome (a closed list).",
+            labels=["outcome"],
+        )
+        for outcome, count in self._guard.outcomes.items():
+            outcomes.add_metric([outcome.value], count)
+        yield outcomes
+        yield CounterMetricFamily(
+            "livecart_llm_spend_usd_total",
+            "Dollars the LLM calls cost at list price, as the budget counts them (approximate).",
+            value=float(self._guard.spent_usd),
+        )
+        yield CounterMetricFamily(
+            "livecart_llm_spend_unrecorded_total",
+            "LLM call costs the shared budget failed to record (Redis unavailable).",
+            value=self._guard.unrecorded_spend_total,
+        )
 
 
 class WorkerMetrics:
@@ -145,6 +184,10 @@ class WorkerMetrics:
             self.comments_rejected.labels(reason=reason.value)
         for cause in FailureCause:
             self.comment_failures.labels(cause=cause.value)
+
+    def watch_llm(self, guard: LlmGuard) -> None:
+        """Serve the counters of the process's LLM guard with the other metrics."""
+        self.registry.register(LlmCollector(guard))
 
     def record_handled(self, handled: HandledComment) -> None:
         """What one delivery settled; a duplicate or a comment in flight counts nothing again."""
