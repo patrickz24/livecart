@@ -216,6 +216,25 @@ async def test_the_calls_in_flight_may_spend_past_the_budget() -> None:
     assert (await _usage(budget)).spent_today_usd == Decimal("0.02")
 
 
+async def test_a_burst_goes_past_the_budget_by_one_call_per_slot_at_most() -> None:
+    # The bound ADR 0006 states: whatever the burst, the calls that pass the
+    # check before any cost is known are the slots' worth, no more.
+    budget = InMemoryLlmBudget()
+    fallback = _CountingFallback([METERED] * 16, delay_seconds=0.05)
+    guard = _guard(fallback, budget, daily_budget="0.005", slots=4)
+
+    receipts = await asyncio.gather(
+        *(guard.resolve(_request(session_id=UUID(int=n % 2 + 1))) for n in range(16))
+    )
+
+    outcomes = [receipt.outcome for receipt in receipts]
+    assert outcomes.count(LlmOutcome.OK) == 4
+    assert outcomes.count(LlmOutcome.BUDGET_EXCEEDED) == 12
+    assert len(fallback.requests) == fallback.most_running == 4
+    # Four calls of $0.01 against a budget of half a call.
+    assert (await _usage(budget)).spent_today_usd == Decimal("0.04")
+
+
 # --- The slot --------------------------------------------------------------------------
 
 
