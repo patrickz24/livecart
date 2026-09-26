@@ -6,7 +6,7 @@ passed. Every worker runs the loop; their sweeps skip each other's orders
 (``FOR UPDATE SKIP LOCKED``), so a busy deployment sweeps faster with more
 workers, and never releases an order twice. The loop is sequential and
 holds at most one connection at a time; a failure is logged, and the next
-tick tries again.
+tick tries again. Each tick counts what it expired in the worker's metrics.
 """
 
 import asyncio
@@ -18,6 +18,7 @@ import structlog
 
 from livecart_core.application.expire_reservations import ExpireReservations
 from livecart_core.application.ports import ServiceUnavailable
+from livecart_worker.metrics import WorkerMetrics
 
 logger = structlog.get_logger(__name__)
 
@@ -26,7 +27,7 @@ EXPIRY_INTERVAL_S: Final = 5.0
 EXPIRY_BUDGET: Final = timedelta(seconds=EXPIRY_INTERVAL_S)
 
 
-async def sweep_once(expire: ExpireReservations) -> None:
+async def sweep_once(expire: ExpireReservations, metrics: WorkerMetrics | None = None) -> None:
     """One tick; see the module docstring."""
     try:
         result = await expire()
@@ -35,6 +36,8 @@ async def sweep_once(expire: ExpireReservations) -> None:
     except Exception:
         logger.exception("reservation_sweep_failed")
     else:
+        if metrics is not None:
+            metrics.record_sweep(result)
         if result.expired:
             logger.info(
                 "reservations_expired",
@@ -45,12 +48,16 @@ async def sweep_once(expire: ExpireReservations) -> None:
 
 
 async def run_expiry_sweep(
-    expire: ExpireReservations, stop: asyncio.Event, *, interval_s: float = EXPIRY_INTERVAL_S
+    expire: ExpireReservations,
+    stop: asyncio.Event,
+    *,
+    interval_s: float = EXPIRY_INTERVAL_S,
+    metrics: WorkerMetrics | None = None,
 ) -> None:
     """Tick at startup, then every ``interval_s``, until ``stop`` is set."""
     logger.info("reservation_sweep_started", interval_s=interval_s)
     while not stop.is_set():
-        await sweep_once(expire)
+        await sweep_once(expire, metrics)
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(interval_s):
                 await stop.wait()

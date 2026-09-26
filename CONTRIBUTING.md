@@ -117,6 +117,16 @@ uv run --locked livecart-simulate --rate 2 --count 50 --exclude-codes B07,E15   
 
 `--exclude-codes` keeps products out of the comments, to buy them by hand meanwhile; `--seed` repeats a run; `--help` lists the rest, each option with the `SIMULATOR_*` variable it overrides (`.env.example`). From the host, the simulator reads `COMMENT_WEBHOOK_SECRET_SIMULATOR` and, for `--text`, `REDIS_URL` from `.env`. It refuses to run with `APP_ENV=production`, where it would open fake orders.
 
+## Metrics
+
+The API and the worker each serve their Prometheus metrics on port 9100 of their container (`METRICS_PORT`), for a scraper on the compose network: the port is never published on the host and nginx never routes it. To read them by hand:
+
+```bash
+docker compose exec worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9100/metrics').read().decode())"
+```
+
+The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations.
+
 ## Seller accounts
 
 There is no public sign-up: a seller account is created with `livecart-create-seller`, installed with the API. It checks the fields (an ASCII e-mail, unique whatever its case; a slug of lower-case words joined by hyphens; a display name), hashes the password with argon2id and connects as `livecart_app` through `DATABASE_URL`. From the repository root, against the database of `.env`:

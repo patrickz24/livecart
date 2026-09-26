@@ -106,6 +106,7 @@ describe("publishedBaseUrl", () => {
   it("is null when nothing is published", () => {
     assert.equal(publishedBaseUrl(""), null);
     assert.equal(publishedBaseUrl(":0"), null);
+    assert.equal(publishedBaseUrl("invalid IP:0\n"), null);
   });
 });
 

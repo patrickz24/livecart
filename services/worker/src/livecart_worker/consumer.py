@@ -33,8 +33,10 @@ with the room it asked for set aside, so a worker left idle never took back
 what a crashed one had left.
 
 A handler never raises into the loop: whatever it does is logged, with the
-comment's correlation and request ids bound to every line. The token of an
-order never reaches a log line (``HandledComment`` carries none).
+comment's correlation and request ids bound to every line, and counted
+(``livecart_worker.metrics``): the time the comment waited in the queue, the
+handler's own time, what it settled or why it failed. The token of an order
+never reaches a log line (``HandledComment`` carries none).
 """
 
 import asyncio
@@ -52,6 +54,7 @@ from livecart_core.application.dto import QueueDelivery
 from livecart_core.application.ports import CommentQueue, ServiceUnavailable
 from livecart_core.application.process_comment import HandledComment
 from livecart_core.application.reclaim_comments import Reclaimed
+from livecart_worker.metrics import FailureCause, WorkerMetrics
 
 logger = structlog.get_logger(__name__)
 
@@ -117,6 +120,8 @@ class CommentConsumer:
         jitter: Callable[[float], float] = full_jitter,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         monotonic: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] = time.time,
+        metrics: WorkerMetrics | None = None,
     ) -> None:
         if min(batch, concurrency) < 1 or min(deadline_s, block_s, reclaim_interval_s) <= 0:
             raise ValueError("a consumer needs a window, handlers, a deadline and a block time")
@@ -136,6 +141,9 @@ class CommentConsumer:
         self._jitter = jitter
         self._sleep = sleep
         self._monotonic = monotonic
+        # Unix time, compared with the envelopes' enqueued_at for the queue wait.
+        self._wall_clock = wall_clock
+        self.metrics = metrics if metrics is not None else WorkerMetrics()
         # Counted by the handlers themselves, so that the room is back as soon
         # as one ends; the tasks are kept for drain, and against the garbage
         # collector, which may drop a task nothing references.
@@ -209,6 +217,7 @@ class CommentConsumer:
         except Exception:
             logger.exception("queue_reclaim_failed")
             return
+        self.metrics.record_reclaimed(reclaimed)
         for delivery in reclaimed.redelivered:
             self.submit(delivery)
         for dead in reclaimed.dead_letters:
@@ -228,6 +237,14 @@ class CommentConsumer:
                 dead_lettered=len(reclaimed.dead_letters),
                 trimmed=reclaimed.trimmed,
             )
+        await self._sample_backlog()
+
+    async def _sample_backlog(self) -> None:
+        """The queue's backlog for the metrics, read once per reclaim; a failure keeps the last."""
+        try:
+            self.metrics.queue_backlog.set(await self._queue.backlog())
+        except ServiceUnavailable as error:
+            logger.warning("queue_backlog_unavailable", error=str(error))
 
     async def drain(self) -> None:
         """Wait for every handler in flight; each ends by its deadline at the latest."""
@@ -260,19 +277,29 @@ class CommentConsumer:
                 "delivery_count": delivery.delivery_count,
             }
             async with self._slots:
+                waited_s = self._wall_clock() - envelope.enqueued_at.timestamp()
+                # A worker's clock behind the API's would make it negative.
+                self.metrics.queue_wait.observe(max(waited_s, 0.0))
+                started = self._monotonic()
                 try:
                     async with asyncio.timeout(self._deadline_s):
                         handled = await self._attempts(delivery)
                 except TimeoutError:
+                    self.metrics.record_failure(FailureCause.DEADLINE)
                     logger.warning(
                         "comment_deadline_exceeded", deadline_s=self._deadline_s, **fields
                     )
                 except ServiceUnavailable as error:
+                    self.metrics.record_failure(FailureCause.TRANSIENT)
                     logger.warning("comment_left_for_reclaim", error=str(error), **fields)
                 except Exception:
+                    self.metrics.record_failure(FailureCause.ERROR)
                     logger.exception("comment_failed", **fields)
                 else:
+                    self.metrics.record_handled(handled)
                     logger.info("comment_handled", **fields, **_summary(handled))
+                finally:
+                    self.metrics.processing.observe(self._monotonic() - started)
 
     async def _attempts(self, delivery: QueueDelivery) -> HandledComment:
         """The handler, and up to ``retries`` more attempts after a transient failure."""

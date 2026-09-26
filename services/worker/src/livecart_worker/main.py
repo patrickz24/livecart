@@ -12,6 +12,9 @@ then runs the worker's loops in one TaskGroup:
   time expired, and their stock released;
 - the heartbeat, which also checks that the consumer keeps going round.
 
+``run`` serves the loops' metrics (``WorkerMetrics``) on ``METRICS_PORT``,
+the container's internal port 9100, for as long as they run.
+
 SIGTERM (``docker stop``) and SIGINT (Ctrl+C) set a stop event that every
 loop watches: the consumer stops reading, lets its handlers finish (each by
 its deadline), and the process releases its connections and exits with
@@ -40,6 +43,7 @@ from livecart_core.infrastructure.events import NullEventPublisher
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.logging import configure_logging
+from livecart_core.metrics import MetricsServer
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
 from livecart_worker.consumer import (
@@ -48,6 +52,7 @@ from livecart_worker.consumer import (
     default_consumer_name,
 )
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
+from livecart_worker.metrics import WorkerMetrics
 from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
 logger = structlog.get_logger(__name__)
@@ -95,13 +100,17 @@ async def serve(
     consumer_name: str | None = None,
     reclaim_interval_s: float = RECLAIM_INTERVAL_S,
     expiry_interval_s: float = EXPIRY_INTERVAL_S,
+    metrics: WorkerMetrics | None = None,
 ) -> None:
     """Run every worker loop until ``stop`` is set.
 
     ``clock`` and ``consumer_name`` default to the system clock and to
     ``<host>-<pid>``; the tests fix them, and the intervals of the loops.
+    The loops record their metrics in ``metrics``, a registry of their own
+    by default.
     """
     clock = clock if clock is not None else SystemClock()
+    metrics = metrics if metrics is not None else WorkerMetrics()
     redis = create_redis_client(settings.redis_url)
     engine = create_db_engine(
         settings.database_url,
@@ -151,11 +160,14 @@ async def serve(
                 max_deliveries=settings.queue_max_deliveries,
             ),
             reclaim_interval_s=reclaim_interval_s,
+            metrics=metrics,
         )
         expire = ExpireReservations(orders, events, clock, budget=EXPIRY_BUDGET)
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
-            loops.create_task(run_expiry_sweep(expire, stop, interval_s=expiry_interval_s))
+            loops.create_task(
+                run_expiry_sweep(expire, stop, interval_s=expiry_interval_s, metrics=metrics)
+            )
             loops.create_task(
                 run_heartbeat(
                     ping=partial(ping_redis, redis),
@@ -173,10 +185,16 @@ async def serve(
 async def run(settings: Settings) -> None:
     stop = asyncio.Event()
     restore_signal_handlers = install_stop_handlers(asyncio.get_running_loop(), stop)
-    logger.info("worker_started")
+    metrics = WorkerMetrics()
+    server = None
+    if settings.metrics_port is not None:
+        server = MetricsServer.start(metrics.registry, port=settings.metrics_port)
+    logger.info("worker_started", metrics_port=settings.metrics_port)
     try:
-        await serve(settings, stop)
+        await serve(settings, stop, metrics=metrics)
     finally:
+        if server is not None:
+            server.close()
         restore_signal_handlers()
         logger.info("worker_stopped")
 

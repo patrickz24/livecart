@@ -14,14 +14,21 @@ roadmap).
 """
 
 import threading
-from typing import Final, Self
+from collections.abc import Callable
+from typing import Final, Self, cast
 from wsgiref.simple_server import WSGIServer
 
-from prometheus_client import CollectorRegistry, start_http_server
+from prometheus_client import CollectorRegistry, disable_created_metrics, start_http_server
 
 # Every interface of the container: its network is the boundary, not its host.
 METRICS_HOST: Final = "0.0.0.0"  # noqa: S104
 DEFAULT_METRICS_PORT: Final = 9100
+
+# No "<name>_created" series: they would double every counter and histogram
+# for a creation timestamp that no query of ours reads. The switch is the
+# client's, process-wide, so it is thrown once, when the metrics are imported.
+# The client ships it without annotations: the cast gives it its real type.
+cast(Callable[[], None], disable_created_metrics)()
 
 
 class MetricsServer:

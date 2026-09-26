@@ -115,7 +115,7 @@ export const HTTP_CHECKS = [
  * probed with the image's own livecart-healthcheck, and be published nowhere.
  */
 export const METRICS_PORT = 9100;
-export const METRICS_SERVICES = ["api"];
+export const METRICS_SERVICES = ["api", "worker"];
 
 /** The compose command that probes a service's metrics from inside its container. */
 export function metricsProbe(service) {
@@ -155,6 +155,8 @@ export function publishedBaseUrl(portOutput) {
   const match = /^(\[[0-9a-f:.]*\]|[^:]+):(\d+)$/i.exec(line);
   if (match === null) return null;
   const [, host, port] = match;
+  // Compose prints "<something>:0" for a container port it publishes nowhere.
+  if (Number(port) === 0) return null;
   const wildcard = host === "0.0.0.0" || host === "[::]";
   return `http://${wildcard ? "127.0.0.1" : host}:${port}`;
 }
