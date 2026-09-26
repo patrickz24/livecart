@@ -227,7 +227,137 @@ class BaseAppSettings(BaseSettings):
         return self
 
 
-class Settings(BaseAppSettings):
+class LlmSettings(BaseAppSettings):
+    """The settings of the optional LLM fallback, which the worker and ``scripts/llm_eval.py`` read.
+
+    ``Settings`` adds the rest of the worker's, and the rule that ties the
+    fallback's times to the message deadline.
+    """
+
+    # The optional LLM fallback of the worker, for the comments the parser
+    # leaves ambiguous (livecart_worker.llm). Without a key, or with
+    # LLM_ENABLED=false, the worker runs the parser alone: every ambiguity is
+    # then rejected as ambiguous_unresolved. Only the worker needs the key.
+    anthropic_api_key: SecretStr | None = None
+    llm_enabled: bool = True
+    # The model, by the API's id without a date suffix; any change of model
+    # goes through scripts/llm_eval.py first (ADR 0006).
+    llm_model: str = "claude-opus-5"
+    # How much the model may think; None, from an empty LLM_EFFORT, sends no
+    # effort, for a model that does not take one.
+    llm_effort: LlmEffort | None = LlmEffort.LOW
+    # The server-side refusal fallback ("fallbacks": "default"): a request the
+    # model's safety classifiers decline runs again on the model Anthropic
+    # recommends for it, in the same call. Off for a model that does not take it.
+    llm_refusal_fallback: bool = True
+    # The longest one attempt of a call may take; the SDK makes one more
+    # after a transient failure, within what the message deadline has left.
+    llm_call_timeout_s: float = 8.0
+    # The cost guard, shared by every worker through Redis: the calls of one
+    # live session, and the dollars of one UTC day, each checked before a call.
+    llm_max_calls_per_session: int = 200
+    llm_daily_budget_usd: Decimal = Decimal("1.00")
+    llm_prices: Annotated[dict[str, LlmPrice], NoDecode] = Field(
+        default_factory=lambda: dict(DEFAULT_LLM_PRICES)
+    )
+    # How long an ambiguous comment waits for one of the worker's LLM slots
+    # before it is settled as llm_busy, rather than waiting until its deadline.
+    llm_slot_wait_s: float = 7.0
+
+    @property
+    def llm_active(self) -> bool:
+        """Whether the worker asks the LLM: a key is set and LLM_ENABLED is not false."""
+        return self.llm_enabled and self.anthropic_api_key is not None
+
+    @property
+    def llm_call_budget_s(self) -> float:
+        """LLM_CALL_BUDGET_S, the longest one call may take: its attempts, and the backoff.
+
+        18 s by default: 2 attempts (LLM_MAX_RETRIES + 1) of LLM_CALL_TIMEOUT_S
+        (8 s), and LLM_BACKOFF_MARGIN_S (2 s) for the SDK's backoff between them.
+        """
+        return self.llm_call_timeout_s * (LLM_MAX_RETRIES + 1) + LLM_BACKOFF_MARGIN_S
+
+    @field_validator("anthropic_api_key", mode="before")
+    @classmethod
+    def _an_empty_key_is_no_key(cls, value: object) -> object:
+        """``ANTHROPIC_API_KEY=``, as .env.example ships it: the parser alone."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("llm_effort", mode="before")
+    @classmethod
+    def _read_llm_effort(cls, value: object) -> object:
+        """``LLM_EFFORT=Low`` is ``low``; an empty ``LLM_EFFORT=`` sends no effort."""
+        if isinstance(value, str):
+            return value.strip().lower() or None
+        return value
+
+    @field_validator("llm_model")
+    @classmethod
+    def _check_llm_model(cls, value: str) -> str:
+        if not LLM_MODEL_PATTERN.fullmatch(value):
+            raise ValueError(
+                "must be a model id of lower-case letters, digits, '.' and '-', such as "
+                "claude-opus-5, 128 characters at most"
+            )
+        return value
+
+    @field_validator("llm_call_timeout_s")
+    @classmethod
+    def _check_llm_call_timeout_s(cls, value: float) -> float:
+        if not 1 <= value <= MAX_LLM_CALL_TIMEOUT_S:
+            raise ValueError(f"must be from 1 to {MAX_LLM_CALL_TIMEOUT_S} seconds")
+        return value
+
+    @field_validator("llm_max_calls_per_session")
+    @classmethod
+    def _check_llm_max_calls_per_session(cls, value: int) -> int:
+        if not 1 <= value <= MAX_LLM_CALLS_PER_SESSION:
+            raise ValueError(f"must be from 1 to {MAX_LLM_CALLS_PER_SESSION} calls")
+        return value
+
+    @field_validator("llm_daily_budget_usd")
+    @classmethod
+    def _check_llm_daily_budget_usd(cls, value: Decimal) -> Decimal:
+        if not 0 < value <= MAX_LLM_DAILY_BUDGET_USD:
+            raise ValueError(f"must be above 0 and at most {MAX_LLM_DAILY_BUDGET_USD} dollars")
+        return value
+
+    @field_validator("llm_prices", mode="before")
+    @classmethod
+    def _read_llm_prices(cls, value: object) -> object:
+        """LLM_PRICES as JSON; empty, as compose passes it unset, keeps the default table."""
+        if isinstance(value, str):
+            return json.loads(value) if value.strip() else dict(DEFAULT_LLM_PRICES)
+        return value
+
+    @field_validator("llm_prices")
+    @classmethod
+    def _check_llm_prices(cls, value: dict[str, LlmPrice]) -> dict[str, LlmPrice]:
+        for model in value:
+            if not LLM_MODEL_PATTERN.fullmatch(model):
+                raise ValueError(f"{model!r} is no model id")
+        return value
+
+    @field_validator("llm_slot_wait_s")
+    @classmethod
+    def _check_llm_slot_wait_s(cls, value: float) -> float:
+        if not 1 <= value <= MAX_LLM_SLOT_WAIT_S:
+            raise ValueError(f"must be from 1 to {MAX_LLM_SLOT_WAIT_S} seconds")
+        return value
+
+    @model_validator(mode="after")
+    def _the_model_has_a_price(self) -> Self:
+        """With the fallback on, LLM_MODEL in LLM_PRICES: the daily budget counts its calls."""
+        if self.llm_active and self.llm_model not in self.llm_prices:
+            raise ValueError(
+                f"LLM_MODEL={self.llm_model} has no price in LLM_PRICES: the daily budget "
+                "could not count its calls"
+            )
+        return self
+
+
+class Settings(LlmSettings):
     """Runtime settings of the API and the worker.
 
     ``DATABASE_URL`` connects as ``livecart_app``, the least-privileged role
@@ -342,35 +472,6 @@ class Settings(BaseAppSettings):
     # GET /api/v1/live-sessions/{id}/events): each holds a Redis connection
     # blocked in XREAD, so the next one answers 503 with Retry-After.
     sse_max_streams: int = 200
-    # The optional LLM fallback of the worker, for the comments the parser
-    # leaves ambiguous (livecart_worker.llm). Without a key, or with
-    # LLM_ENABLED=false, the worker runs the parser alone: every ambiguity is
-    # then rejected as ambiguous_unresolved. Only the worker needs the key.
-    anthropic_api_key: SecretStr | None = None
-    llm_enabled: bool = True
-    # The model, by the API's id without a date suffix; any change of model
-    # goes through scripts/llm_eval.py first (ADR 0006).
-    llm_model: str = "claude-opus-5"
-    # How much the model may think; None, from an empty LLM_EFFORT, sends no
-    # effort, for a model that does not take one.
-    llm_effort: LlmEffort | None = LlmEffort.LOW
-    # The server-side refusal fallback ("fallbacks": "default"): a request the
-    # model's safety classifiers decline runs again on the model Anthropic
-    # recommends for it, in the same call. Off for a model that does not take it.
-    llm_refusal_fallback: bool = True
-    # The longest one attempt of a call may take; the SDK makes one more
-    # after a transient failure, within what the message deadline has left.
-    llm_call_timeout_s: float = 8.0
-    # The cost guard, shared by every worker through Redis: the calls of one
-    # live session, and the dollars of one UTC day, each checked before a call.
-    llm_max_calls_per_session: int = 200
-    llm_daily_budget_usd: Decimal = Decimal("1.00")
-    llm_prices: Annotated[dict[str, LlmPrice], NoDecode] = Field(
-        default_factory=lambda: dict(DEFAULT_LLM_PRICES)
-    )
-    # How long an ambiguous comment waits for one of the worker's LLM slots
-    # before it is settled as llm_busy, rather than waiting until its deadline.
-    llm_slot_wait_s: float = 7.0
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -383,20 +484,6 @@ class Settings(BaseAppSettings):
     @property
     def db_budget(self) -> timedelta:
         return timedelta(seconds=self.db_budget_s)
-
-    @property
-    def llm_active(self) -> bool:
-        """Whether the worker asks the LLM: a key is set and LLM_ENABLED is not false."""
-        return self.llm_enabled and self.anthropic_api_key is not None
-
-    @property
-    def llm_call_budget_s(self) -> float:
-        """LLM_CALL_BUDGET_S, the longest one call may take: its attempts, and the backoff.
-
-        18 s by default: 2 attempts (LLM_MAX_RETRIES + 1) of LLM_CALL_TIMEOUT_S
-        (8 s), and LLM_BACKOFF_MARGIN_S (2 s) for the SDK's backoff between them.
-        """
-        return self.llm_call_timeout_s * (LLM_MAX_RETRIES + 1) + LLM_BACKOFF_MARGIN_S
 
     @property
     def worker_pool(self) -> PoolSize:
@@ -532,85 +619,16 @@ class Settings(BaseAppSettings):
             )
         return value
 
-    @field_validator("anthropic_api_key", mode="before")
-    @classmethod
-    def _an_empty_key_is_no_key(cls, value: object) -> object:
-        """``ANTHROPIC_API_KEY=``, as .env.example ships it: the parser alone."""
-        return None if isinstance(value, str) and not value.strip() else value
-
-    @field_validator("llm_effort", mode="before")
-    @classmethod
-    def _read_llm_effort(cls, value: object) -> object:
-        """``LLM_EFFORT=Low`` is ``low``; an empty ``LLM_EFFORT=`` sends no effort."""
-        if isinstance(value, str):
-            return value.strip().lower() or None
-        return value
-
-    @field_validator("llm_model")
-    @classmethod
-    def _check_llm_model(cls, value: str) -> str:
-        if not LLM_MODEL_PATTERN.fullmatch(value):
-            raise ValueError(
-                "must be a model id of lower-case letters, digits, '.' and '-', such as "
-                "claude-opus-5, 128 characters at most"
-            )
-        return value
-
-    @field_validator("llm_call_timeout_s")
-    @classmethod
-    def _check_llm_call_timeout_s(cls, value: float) -> float:
-        if not 1 <= value <= MAX_LLM_CALL_TIMEOUT_S:
-            raise ValueError(f"must be from 1 to {MAX_LLM_CALL_TIMEOUT_S} seconds")
-        return value
-
-    @field_validator("llm_max_calls_per_session")
-    @classmethod
-    def _check_llm_max_calls_per_session(cls, value: int) -> int:
-        if not 1 <= value <= MAX_LLM_CALLS_PER_SESSION:
-            raise ValueError(f"must be from 1 to {MAX_LLM_CALLS_PER_SESSION} calls")
-        return value
-
-    @field_validator("llm_daily_budget_usd")
-    @classmethod
-    def _check_llm_daily_budget_usd(cls, value: Decimal) -> Decimal:
-        if not 0 < value <= MAX_LLM_DAILY_BUDGET_USD:
-            raise ValueError(f"must be above 0 and at most {MAX_LLM_DAILY_BUDGET_USD} dollars")
-        return value
-
-    @field_validator("llm_prices", mode="before")
-    @classmethod
-    def _read_llm_prices(cls, value: object) -> object:
-        """LLM_PRICES as JSON; empty, as compose passes it unset, keeps the default table."""
-        if isinstance(value, str):
-            return json.loads(value) if value.strip() else dict(DEFAULT_LLM_PRICES)
-        return value
-
-    @field_validator("llm_prices")
-    @classmethod
-    def _check_llm_prices(cls, value: dict[str, LlmPrice]) -> dict[str, LlmPrice]:
-        for model in value:
-            if not LLM_MODEL_PATTERN.fullmatch(model):
-                raise ValueError(f"{model!r} is no model id")
-        return value
-
-    @field_validator("llm_slot_wait_s")
-    @classmethod
-    def _check_llm_slot_wait_s(cls, value: float) -> float:
-        if not 1 <= value <= MAX_LLM_SLOT_WAIT_S:
-            raise ValueError(f"must be from 1 to {MAX_LLM_SLOT_WAIT_S} seconds")
-        return value
-
     @model_validator(mode="after")
-    def _the_llm_fits_the_deadline_and_has_a_price(self) -> Self:
+    def _the_llm_fits_the_deadline(self) -> Self:
         """With the fallback on: MESSAGE_PROCESS_TIMEOUT_S >= LLM_CALL_BUDGET_S + DB_BUDGET_S +
-        LLM_SLOT_WAIT_S, and a price for LLM_MODEL.
+        LLM_SLOT_WAIT_S.
 
         30 >= 18 + 5 + 7 by default. A comment that waited the longest for a
         slot, then made the longest call, still has the time of its units
         before the consumer cancels it: a deadline cut shorter would cancel
-        deliveries whose call was paid for, and redeliver them. Without a
-        price, the daily budget could not count the model's calls. The
-        parser alone needs neither, so a worker without a key skips both.
+        deliveries whose call was paid for, and redeliver them. The parser
+        alone needs no such time, so a worker without a key skips the rule.
         """
         if not self.llm_active:
             return self
@@ -621,11 +639,6 @@ class Settings(BaseAppSettings):
                 f"LLM_CALL_BUDGET_S ({self.llm_call_budget_s:g}: LLM_CALL_TIMEOUT_S x "
                 f"{LLM_MAX_RETRIES + 1} + {LLM_BACKOFF_MARGIN_S:g}) + DB_BUDGET_S "
                 f"({self.db_budget_s}) + LLM_SLOT_WAIT_S ({self.llm_slot_wait_s:g}) = {needed:g}"
-            )
-        if self.llm_model not in self.llm_prices:
-            raise ValueError(
-                f"LLM_MODEL={self.llm_model} has no price in LLM_PRICES: the daily budget "
-                "could not count its calls"
             )
         return self
 

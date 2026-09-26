@@ -13,6 +13,7 @@ from livecart_core.settings import (
     RATE_LIMITS,
     AppEnv,
     LlmEffort,
+    LlmSettings,
     LogLevel,
     MigrationSettings,
     SeedSettings,
@@ -790,6 +791,22 @@ def test_with_a_key_the_model_needs_a_price() -> None:
     with pytest.raises(ValidationError, match="LLM_MODEL=claude-future-9 has no price"):
         load(ANTHROPIC_API_KEY="sk-ant-test", LLM_MODEL="claude-future-9", **dev_env())
     assert load(LLM_MODEL="claude-future-9", **dev_env()).llm_model == "claude-future-9"
+
+
+def test_the_llm_settings_stand_alone_for_the_eval_script(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No database, no Redis, no signing key: what scripts/llm_eval.py reads.
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+    monkeypatch.setenv("LLM_MODEL", "claude-haiku-4-5")
+
+    settings = LlmSettings(_env_file=None)
+
+    assert settings.llm_active
+    assert settings.llm_prices["claude-haiku-4-5"].output_per_mtok == 5
+    monkeypatch.setenv("LLM_MODEL", "claude-future-9")
+    with pytest.raises(ValidationError, match="has no price"):
+        LlmSettings(_env_file=None)
 
 
 def test_the_buyer_links_open_the_demo_app_by_default() -> None:
