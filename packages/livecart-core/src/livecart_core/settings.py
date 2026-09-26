@@ -39,7 +39,7 @@ class LogLevel(StrEnum):
     ERROR = "ERROR"
 
 
-def _require_scheme(url: SecretStr, *schemes: str) -> SecretStr:
+def require_scheme(url: SecretStr, *schemes: str) -> SecretStr:
     """Check the URL scheme without ever echoing the URL, which holds a password."""
     scheme, separator, _ = url.get_secret_value().partition("://")
     if not separator or scheme not in schemes:
@@ -131,12 +131,12 @@ class Settings(BaseAppSettings):
     @field_validator("database_url")
     @classmethod
     def _check_database_url(cls, value: SecretStr) -> SecretStr:
-        return _require_scheme(value, "postgresql+asyncpg")
+        return require_scheme(value, "postgresql+asyncpg")
 
     @field_validator("redis_url")
     @classmethod
     def _check_redis_url(cls, value: SecretStr) -> SecretStr:
-        return _require_scheme(value, "redis", "rediss")
+        return require_scheme(value, "redis", "rediss")
 
     @field_validator("jwt_secret", "order_token_key")
     @classmethod
@@ -197,4 +197,4 @@ class MigrationSettings(BaseAppSettings):
     @field_validator("migrator_url")
     @classmethod
     def _check_migrator_url(cls, value: SecretStr) -> SecretStr:
-        return _require_scheme(value, "postgresql+asyncpg")
+        return require_scheme(value, "postgresql+asyncpg")

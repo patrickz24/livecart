@@ -13,6 +13,9 @@ dependencies = [
     "uvicorn[standard]==0.54.0",
 ]
 
+[project.scripts]
+livecart-create-seller = "livecart_api.cli.create_seller:main"
+
 [tool.uv.sources]
 livecart-core = { workspace = true }
 

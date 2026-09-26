@@ -95,6 +95,22 @@ Other useful commands:
 - The OpenAPI drift check of CI: `pnpm run check:openapi`. `packages/api-client/openapi.json` and `packages/api-client/src/generated/` are generated: never edit them by hand, run `make gen-api` and commit the result with the API change.
 - The PostgreSQL roles and grants of `infra/postgres` are applied once, when the postgres volume is created. After a change to them, re-apply them to the existing volume with `docker compose exec postgres bash /docker-entrypoint-initdb.d/10-init-roles.sh` (idempotent; in Git Bash, prefix it with `MSYS_NO_PATHCONV=1`), or start over with `make reset`, which deletes the data.
 
+## Seller accounts
+
+There is no public sign-up: a seller account is created with `livecart-create-seller`, installed with the API. It checks the fields (an ASCII e-mail, unique whatever its case; a slug of lower-case words joined by hyphens; a display name), hashes the password with argon2id and connects as `livecart_app` through `DATABASE_URL`. From the repository root, against the database of `.env`:
+
+```bash
+uv run --locked livecart-create-seller --email seller@example.test --slug my-shop --display-name "My shop"
+```
+
+The command asks for the password twice, without echo: 12 to 128 characters, of any kind. It never takes the password as an argument, which would stay in the shell history and show in the process list. For a script, set `LIVECART_SELLER_PASSWORD` in the environment instead; it is read from the environment only, never from `.env`. In the compose stack, the API image ships the command, and `docker compose run` gives it a terminal to ask on; `-e LIVECART_SELLER_PASSWORD`, without a value, passes the variable of your shell instead:
+
+```bash
+docker compose run --rm api livecart-create-seller --email seller@example.test --slug my-shop --display-name "My shop"
+```
+
+It prints the new seller's id and slug. It exits with 1, and a message on standard error, when a field is refused, when the e-mail or the slug is taken, or when the database cannot be reached; with 2 on a usage error.
+
 ## Ports
 
 | Port    | Service  | Bound to         | Override                    |
