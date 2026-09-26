@@ -25,8 +25,7 @@ from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.db.tables import refresh_tokens
-from livecart_core.testing.backends import LOCKED_ACCOUNT
-from livecart_core.testing.fakes import FAKE_CLOCK_START
+from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT
 
 pytestmark = pytest.mark.integration
 

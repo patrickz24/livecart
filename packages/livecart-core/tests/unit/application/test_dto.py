@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError, replace
+from dataclasses import FrozenInstanceError, dataclass, replace
 from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -10,6 +10,11 @@ from livecart_core.application.dto import (
     MAX_BATCH_SIZE,
     MAX_COMMENT_LENGTH,
     MAX_IDENTIFIER_LENGTH,
+    MAX_PAGE_SIZE,
+    MAX_PRICE_MINOR,
+    MAX_PRODUCT_NAME_LENGTH,
+    MAX_STOCK_TOTAL,
+    MAX_TITLE_LENGTH,
     AttemptOpening,
     AttemptOpeningKind,
     BuyerNotification,
@@ -23,12 +28,19 @@ from livecart_core.application.dto import (
     IncomingComment,
     IntentSource,
     IssuedRefreshToken,
+    LiveSessionChanges,
+    LiveSessionRecord,
     LlmProposal,
+    NewLiveSession,
+    NewProduct,
     OrderRecord,
+    Page,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
     Platform,
+    ProductChanges,
+    ProductRecord,
     PurchaseIntentRecord,
     QueuedComment,
     QueueDelivery,
@@ -42,8 +54,10 @@ from livecart_core.application.dto import (
     ShippingAddress,
     StockLevel,
     WebhookOutcome,
+    check_page_size,
+    page_of,
 )
-from livecart_core.domain.codes import NO_VARIANT, ProductCode
+from livecart_core.domain.codes import NO_VARIANT, ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import (
     AmbiguityReason,
@@ -54,7 +68,12 @@ from livecart_core.domain.outcomes import (
 from livecart_core.domain.parser import Ambiguous
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import OrderReference
-from livecart_core.domain.state_machines import CommentStatus, OrderStatus, PaymentStatus
+from livecart_core.domain.state_machines import (
+    CommentStatus,
+    LiveSessionStatus,
+    OrderStatus,
+    PaymentStatus,
+)
 from livecart_core.testing.builders import demo_catalog, incoming_comment, queued_comment
 from livecart_core.testing.fakes import FAKE_CLOCK_START
 
@@ -619,3 +638,127 @@ def test_secrets_of_sellers_stay_out_of_the_repr() -> None:
     assert "demo-seller" in repr(seller)
     assert "refresh-token-value" not in repr(issued)
     assert issued.value == "refresh-token-value"
+
+
+# --- Pages, sessions and products of a seller ------------------------------------------
+
+
+@dataclass(frozen=True)
+class _Row:
+    id: UUID
+
+
+def test_a_page_of_limit_plus_one_rows_names_its_next_cursor() -> None:
+    rows = [_Row(UUID(int=n)) for n in range(1, 5)]
+
+    assert page_of(rows, 3) == Page(tuple(rows[:3]), UUID(int=3))
+    assert page_of(rows[:3], 3) == Page(tuple(rows[:3]), None)
+    assert page_of([], 3) == Page((), None)
+
+
+@pytest.mark.parametrize("limit", [1, MAX_PAGE_SIZE])
+def test_a_page_holds_one_to_the_maximum_items(limit: int) -> None:
+    assert check_page_size(limit) == limit
+
+
+@pytest.mark.parametrize("limit", [0, -1, MAX_PAGE_SIZE + 1])
+def test_a_page_size_outside_its_bounds_is_a_caller_bug(limit: int) -> None:
+    with pytest.raises(ValueError, match="page holds"):
+        check_page_size(limit)
+
+
+TITLE, LIVE_ID = "Friday drop", "fb-1"
+
+
+@pytest.mark.parametrize(
+    ("title", "external_live_id"),
+    [
+        ("", LIVE_ID),
+        (" Friday", LIVE_ID),
+        ("x" * (MAX_TITLE_LENGTH + 1), LIVE_ID),
+        (TITLE, ""),
+        (TITLE, "x" * (MAX_IDENTIFIER_LENGTH + 1)),
+    ],
+)
+def test_a_session_refuses_empty_padded_or_long_labels(title: str, external_live_id: str) -> None:
+    with pytest.raises(ValueError, match="characters"):
+        NewLiveSession(title, Platform.FACEBOOK, external_live_id)
+    with pytest.raises(ValueError, match="characters"):
+        LiveSessionChanges(title=title, external_live_id=external_live_id)
+
+
+@pytest.mark.parametrize(
+    ("changes", "touches"),
+    [
+        (LiveSessionChanges(), False),
+        (LiveSessionChanges(title="Renamed"), False),
+        (LiveSessionChanges(platform=Platform.FACEBOOK, external_live_id=LIVE_ID), False),
+        (LiveSessionChanges(platform=Platform.TIKTOK), True),
+        (LiveSessionChanges(external_live_id="fb-2"), True),
+    ],
+)
+def test_a_session_change_touches_its_keys_only_when_it_moves_them(
+    changes: LiveSessionChanges, touches: bool
+) -> None:
+    session = LiveSessionRecord(
+        id=UUID(int=1),
+        seller_id=UUID(int=2),
+        title=TITLE,
+        platform=Platform.FACEBOOK,
+        external_live_id=LIVE_ID,
+        status=LiveSessionStatus.LIVE,
+        created_at=FAKE_CLOCK_START,
+    )
+
+    assert changes.touches_keys(session) is touches
+
+
+@pytest.mark.parametrize(
+    ("name", "price_minor", "stock_total"),
+    [
+        ("", 1_000, 5),
+        ("x" * (MAX_PRODUCT_NAME_LENGTH + 1), 1_000, 5),
+        ("Robe", -1, 5),
+        ("Robe", MAX_PRICE_MINOR + 1, 5),
+        ("Robe", 1_000, -1),
+        ("Robe", 1_000, MAX_STOCK_TOTAL + 1),
+    ],
+)
+def test_a_new_product_keeps_to_its_bounds(name: str, price_minor: int, stock_total: int) -> None:
+    with pytest.raises(ValueError, match=r"from 0 to|characters"):
+        NewProduct(ProductCode("A12"), NO_VARIANT, name, price_minor, stock_total)
+
+
+def test_a_product_takes_its_bounds_inclusive() -> None:
+    longest = "x" * MAX_PRODUCT_NAME_LENGTH
+    dearest = NewProduct(ProductCode("A12"), NO_VARIANT, longest, MAX_PRICE_MINOR, MAX_STOCK_TOTAL)
+    free = NewProduct(ProductCode("A12"), NO_VARIANT, "Robe", 0, 0)
+
+    assert (dearest.price_minor, dearest.stock_total) == (MAX_PRICE_MINOR, MAX_STOCK_TOTAL)
+    assert (free.price_minor, free.stock_total) == (0, 0)
+
+
+@pytest.mark.parametrize(("name", "price_minor"), [(" Robe", 1), ("Robe", MAX_PRICE_MINOR + 1)])
+def test_product_changes_keep_to_the_same_bounds(name: str, price_minor: int) -> None:
+    with pytest.raises(ValueError, match=r"characters|from 0 to"):
+        ProductChanges(name=name, price_minor=price_minor)
+
+
+def test_a_product_change_touches_its_keys_only_when_it_moves_them() -> None:
+    product = ProductRecord(
+        id=UUID(int=1),
+        session_id=UUID(int=2),
+        code=ProductCode("A12"),
+        variant=Variant("M"),
+        name="Robe",
+        price=Money(1_000, "EUR"),
+        stock=StockLevel(5),
+    )
+
+    assert not ProductChanges(name="Robe longue", price_minor=1).touches_keys(product)
+    assert not ProductChanges(code=ProductCode("A12"), variant=Variant("M")).touches_keys(product)
+    assert ProductChanges(code=ProductCode("A13")).touches_keys(product)
+    assert ProductChanges(variant=Variant("L")).key_of(product) == (
+        ProductCode("A12"),
+        Variant("L"),
+    )

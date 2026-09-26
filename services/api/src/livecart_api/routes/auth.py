@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints
 
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.deps import CurrentSeller, require_same_origin
+from livecart_api.errors import ErrorResponse
 from livecart_core.application.dto import SellerGrant
 from livecart_core.application.ports import Clock, SellerRepository
 from livecart_core.application.seller_auth import (
@@ -72,10 +73,6 @@ class SellerProfile(BaseModel):
     email: str
     slug: str
     display_name: str
-
-
-class ErrorResponse(BaseModel):
-    detail: str
 
 
 @dataclass(frozen=True, slots=True)

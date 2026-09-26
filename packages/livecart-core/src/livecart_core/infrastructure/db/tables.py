@@ -38,6 +38,8 @@ from sqlalchemy.dialects import postgresql
 from livecart_core.application.dto import (
     MAX_COMMENT_LENGTH,
     MAX_IDENTIFIER_LENGTH,
+    MAX_PRODUCT_NAME_LENGTH,
+    MAX_TITLE_LENGTH,
     CarrierName,
     IntentSource,
     PaymentProviderName,
@@ -208,7 +210,7 @@ live_sessions: Final = sa.Table(
     metadata,
     _id(),
     sa.Column("seller_id", sa.Uuid, sa.ForeignKey("sellers.id"), nullable=False),
-    sa.Column("title", sa.String(200), nullable=False),
+    sa.Column("title", sa.String(MAX_TITLE_LENGTH), nullable=False),
     sa.Column("platform", sa.String(16), nullable=False),
     _identifier("external_live_id"),
     sa.Column(
@@ -237,7 +239,7 @@ products: Final = sa.Table(
     # '' rather than NULL for "no variant": the unique index below would let
     # two NULL variants of one code through.
     sa.Column("variant", sa.String(MAX_VARIANT_LENGTH), nullable=False, server_default=""),
-    sa.Column("name", sa.String(200), nullable=False),
+    sa.Column("name", sa.String(MAX_PRODUCT_NAME_LENGTH), nullable=False),
     sa.Column("price_minor", sa.BigInteger, nullable=False),
     sa.Column("stock_total", sa.Integer, nullable=False),
     sa.Column("reserved", sa.Integer, nullable=False, server_default="0"),

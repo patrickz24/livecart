@@ -105,7 +105,10 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.ports" in application
     assert "livecart_core.application.dto" in application
     assert "livecart_core.application.seller_auth" in application
+    assert "livecart_core.application.live_sessions" in application
+    assert "livecart_core.application.products" in application
     assert "livecart_core.domain.sellers" in domain
+    assert "livecart_core.domain.live_sessions" in domain
 
 
 # A module that mixes allowed and forbidden imports, at the top level, relative,
@@ -255,6 +258,7 @@ def test_the_adapters_are_among_the_modules_checked_for_raw_sql() -> None:
     checked = set(_runtime_modules())
 
     assert "livecart_core.infrastructure.db.orders" in checked
+    assert "livecart_core.infrastructure.db.live_sessions" in checked
     assert "livecart_core.infrastructure.db.products" in checked
     assert "livecart_core.infrastructure.db.sellers" in checked
     assert "livecart_core.infrastructure.db.refresh_tokens" in checked

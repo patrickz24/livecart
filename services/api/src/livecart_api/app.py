@@ -10,12 +10,17 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 
+from livecart_api import errors
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.middleware.request_context import RequestContextMiddleware
 from livecart_api.resources import Resources
 from livecart_api.routes.auth import SellerAuth, build_auth_router
 from livecart_api.routes.health import build_health_router
+from livecart_api.routes.live_sessions import build_live_session_router
+from livecart_api.routes.products import build_product_router
+from livecart_core.application.live_sessions import SellerLiveSessions
 from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.application.products import SellerProducts
 from livecart_core.application.seller_auth import (
     AuthenticateSeller,
     RevokeRefreshFamily,
@@ -96,7 +101,12 @@ def create_app(
         build_health_router(resources.readiness_checks, timeout_s=readiness_timeout_s)
     )
     app.include_router(build_auth_router(seller_auth))
+    app.include_router(
+        build_live_session_router(SellerLiveSessions(resources.live_sessions, resources.clock))
+    )
+    app.include_router(build_product_router(SellerProducts(resources.products, resources.clock)))
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)
+    errors.install(app)
 
     # The last middleware added runs first: CorrelationIdMiddleware sets the
     # request id, then RequestContextMiddleware binds it to the logs.

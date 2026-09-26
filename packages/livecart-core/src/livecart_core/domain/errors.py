@@ -40,3 +40,17 @@ class InvalidTransition(DomainError):
         super().__init__(f"{type(current).__name__}: {current} -> {target} is not allowed")
         self.current = current
         self.target = target
+
+
+class EditRefused(DomainError):
+    """A change to a live session or to its catalog that the session's status no longer allows.
+
+    ``keys`` says whether the change touched the keys comments are matched by
+    (the session's platform and live id, a product's code and variant).
+    """
+
+    def __init__(self, status: StrEnum, *, keys: bool) -> None:
+        what = "its platform, live id and product codes" if keys else "anything"
+        super().__init__(f"the session is {status}: it can no longer change {what}")
+        self.status = status
+        self.keys = keys

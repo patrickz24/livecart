@@ -11,12 +11,16 @@ from functools import partial
 
 from livecart_core.application.ports import (
     Clock,
+    LiveSessionRepository,
     PasswordHasher,
+    ProductStockRepository,
     RefreshTokenRepository,
     SellerRepository,
 )
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.db.engine import API_POOL, create_db_engine, ping_database
+from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
+from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
@@ -41,6 +45,8 @@ class Resources:
     refresh_tokens: RefreshTokenRepository
     passwords: PasswordHasher
     clock: Clock
+    live_sessions: LiveSessionRepository
+    products: ProductStockRepository
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -73,4 +79,6 @@ def build_resources(settings: Settings) -> Resources:
         refresh_tokens=SqlRefreshTokenRepository(engine),
         passwords=Argon2PasswordHasher(),
         clock=SystemClock(),
+        live_sessions=SqlLiveSessionRepository(engine),
+        products=SqlProductStockRepository(engine, currency=settings.default_currency),
     )

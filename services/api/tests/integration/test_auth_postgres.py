@@ -19,16 +19,18 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_api.app import create_app
-from livecart_api.resources import Resources
 from livecart_api.routes.auth import REFRESH_COOKIE
-from livecart_api.testing import TEST_ORIGIN, current_time_clock, make_settings, open_client
+from livecart_api.testing import (
+    TEST_ORIGIN,
+    current_time_clock,
+    make_settings,
+    open_client,
+    postgres_resources,
+)
 from livecart_core.application.create_seller import CreateSeller
 from livecart_core.application.dto import SellerRecord
 from livecart_core.application.seller_auth import REFRESH_FAMILY_LIFETIME
-from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
-from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.db.tables import refresh_tokens
-from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.testing.fakes import FakeClock
 
 pytestmark = pytest.mark.integration
@@ -72,21 +74,9 @@ class PostgresApi:
 @pytest.fixture
 async def api(clean_database: None, app_engine: AsyncEngine) -> AsyncIterator[PostgresApi]:
     clock = current_time_clock()
-    sellers, passwords = SqlSellerRepository(app_engine), Argon2PasswordHasher()
-    seller = await CreateSeller(sellers, passwords, clock)(
+    resources = postgres_resources(app_engine, clock=clock)
+    seller = await CreateSeller(resources.sellers, resources.passwords, clock)(
         email=EMAIL, slug="demo-seller", display_name="Demo", password=PASSWORD
-    )
-
-    async def nothing_to_close() -> None:
-        return None
-
-    resources = Resources(
-        readiness_checks=(),
-        aclose=nothing_to_close,
-        sellers=sellers,
-        refresh_tokens=SqlRefreshTokenRepository(app_engine),
-        passwords=passwords,
-        clock=clock,
     )
     async with open_client(create_app(make_settings(), resources)) as client:
         yield PostgresApi(client, clock, seller, app_engine)

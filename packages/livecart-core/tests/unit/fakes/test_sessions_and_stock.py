@@ -2,15 +2,13 @@ from uuid import UUID
 
 import pytest
 
-from livecart_core.application.dto import Platform, StockLevel
+from livecart_core.application.dto import NewLiveSession, NewProduct, Platform, StockLevel
 from livecart_core.application.ports import RecordNotFound
-from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.codes import ProductCode, Variant
-from livecart_core.domain.errors import InvalidTransition
 from livecart_core.domain.money import Money
-from livecart_core.domain.state_machines import LiveSessionStatus, TransitionOutcome
+from livecart_core.domain.state_machines import LiveSessionStatus
 from livecart_core.testing.builders import demo_catalog
-from livecart_core.testing.fakes import FAKE_CLOCK_START, InMemoryDatabase
+from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT, InMemoryDatabase
 
 NOW = FAKE_CLOCK_START
 UNKNOWN = UUID(int=404)
@@ -87,9 +85,10 @@ def test_a_seeded_product_has_a_default_price_and_stock() -> None:
 
 
 # --- Live sessions ---------------------------------------------------------------------
+# The scenarios every backend shares are in tests/contract/test_live_sessions.py.
 
 
-async def test_the_catalog_reads_back_as_it_was_seeded() -> None:
+async def test_the_catalog_helper_seeds_one_row_per_code_and_variant() -> None:
     database = InMemoryDatabase()
     session = database.add_live_session()
     rows = database.add_catalog(session.id, demo_catalog(), price=Money(2_000, "EUR"))
@@ -101,57 +100,38 @@ async def test_the_catalog_reads_back_as_it_was_seeded() -> None:
     assert {row.price for row in rows} == {Money(2_000, "EUR")}
 
 
-async def test_a_catalog_holds_only_its_session_products() -> None:
+def test_a_seeded_seller_has_a_locked_account() -> None:
     database = InMemoryDatabase()
-    session = database.add_live_session()
-    other = database.add_live_session(external_live_id="live-2")
-    database.add_product(other.id, "Z99")
 
-    assert await database.live_sessions.load_catalog(session.id) == Catalog(())
-    with pytest.raises(RecordNotFound):
-        await database.live_sessions.load_catalog(UNKNOWN)
+    seller = database.add_seller(slug="demo-seller", display_name="Demo")
 
-
-async def test_a_session_is_found_by_its_platform_live_id() -> None:
-    database = InMemoryDatabase()
-    session = database.add_live_session(external_live_id="live-9", platform=Platform.INSTAGRAM)
-    sessions = database.live_sessions
-
-    assert await sessions.find_by_live_id(Platform.INSTAGRAM, "live-9") == session
-    assert await sessions.find_by_live_id(Platform.TIKTOK, "live-9") is None
-    assert await sessions.get(session.id) == session
-    assert await sessions.get(UNKNOWN) is None
-
-
-async def test_a_session_starts_then_ends_with_its_timestamps() -> None:
-    database = InMemoryDatabase()
-    session = database.add_live_session(status=LiveSessionStatus.DRAFT)
-    sessions = database.live_sessions
-    later = NOW.replace(hour=13)
-
-    started = await sessions.set_status(session.id, LiveSessionStatus.LIVE, now=NOW)
-    again = await sessions.set_status(session.id, LiveSessionStatus.LIVE, now=later)
-    ended = await sessions.set_status(session.id, LiveSessionStatus.ENDED, now=later)
-
-    row = await sessions.get(session.id)
-    assert (started, again, ended) == (
-        TransitionOutcome.APPLIED,
-        TransitionOutcome.NOOP,
-        TransitionOutcome.APPLIED,
+    assert (seller.slug, seller.display_name, seller.email) == (
+        "demo-seller",
+        "Demo",
+        "demo-seller@example.test",
     )
-    assert row is not None
-    assert (row.status, row.started_at, row.ended_at) == (LiveSessionStatus.ENDED, NOW, later)
+    assert seller.password_hash == LOCKED_ACCOUNT
+    assert database.tables.sellers[seller.id] == seller
+    assert database.add_seller().slug == f"seller-{database.new_id().int - 1}"
 
 
-async def test_an_ended_session_does_not_go_live_again() -> None:
+async def test_every_time_a_session_repository_takes_is_aware() -> None:
     database = InMemoryDatabase()
-    session = database.add_live_session(status=LiveSessionStatus.ENDED)
+    seller = database.add_seller()
+    session = database.add_live_session(seller_id=seller.id, status=LiveSessionStatus.DRAFT)
+    naive = NOW.replace(tzinfo=None)
+    new = NewLiveSession(title="Drop", platform=Platform.TIKTOK, external_live_id="tt-1")
 
-    with pytest.raises(InvalidTransition):
-        await database.live_sessions.set_status(session.id, LiveSessionStatus.LIVE, now=NOW)
-    with pytest.raises(RecordNotFound):
-        await database.live_sessions.set_status(UNKNOWN, LiveSessionStatus.LIVE, now=NOW)
+    with pytest.raises(ValueError, match="naive"):
+        await database.live_sessions.add(seller.id, new, now=naive)
     with pytest.raises(ValueError, match="naive"):
         await database.live_sessions.set_status(
-            session.id, LiveSessionStatus.ENDED, now=NOW.replace(tzinfo=None)
+            seller.id, session.id, LiveSessionStatus.LIVE, now=naive
+        )
+    with pytest.raises(ValueError, match="naive"):
+        await database.products.add(
+            seller.id,
+            session.id,
+            NewProduct(ProductCode("A12"), Variant(), "Robe", price_minor=100, stock_total=1),
+            now=naive,
         )

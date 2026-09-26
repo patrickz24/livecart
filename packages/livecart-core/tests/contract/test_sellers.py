@@ -6,8 +6,8 @@ import pytest
 
 from livecart_core.application.dto import SellerRecord
 from livecart_core.application.ports import SellerConflict
-from livecart_core.testing.backends import LOCKED_ACCOUNT, AuthBackend
-from livecart_core.testing.fakes import FAKE_CLOCK_START
+from livecart_core.testing.backends import AuthBackend
+from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT
 
 NOW = FAKE_CLOCK_START
 UNKNOWN = UUID(int=404)

@@ -11,6 +11,7 @@ fixtures do, while the repositories run as livecart_app.
 """
 
 import secrets
+from dataclasses import replace
 from datetime import timedelta
 from typing import Literal, Protocol
 from uuid import UUID
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import LiveSessionRecord, Platform, ProductRecord, StockLevel
 from livecart_core.application.ports import (
+    LiveSessionRepository,
     OrderReservations,
     ProductStockRepository,
     RefreshTokenRepository,
@@ -32,20 +34,19 @@ from livecart_core.domain.reference import RandomSource
 from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.ids import new_id
+from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.testing.builders import queued_comment
-from livecart_core.testing.fakes import FAKE_CLOCK_START, InMemoryDatabase
+from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT, InMemoryDatabase
 from livecart_core.testing.keys import TEST_ORDER_TOKEN_KEY
 
 CURRENCY = "EUR"
 # Unit 1's lease, as the worker takes it before unit 3 runs.
 LEASE = timedelta(seconds=30)
-# No password verifies against it, as with the "!" of a locked account in /etc/shadow.
-LOCKED_ACCOUNT = "!"
 # The access tokens of the orders the SQL adapter opens.
 ORDER_TOKENS = OrderTokens(TEST_ORDER_TOKEN_KEY)
 
@@ -56,18 +57,26 @@ class ReservationBackend(Protocol):
     """The repositories under test, and the seeding and reading helpers of the scenarios."""
 
     @property
+    def live_sessions(self) -> LiveSessionRepository: ...
+
+    @property
     def products(self) -> ProductStockRepository: ...
 
     @property
     def orders(self) -> OrderReservations: ...
+
+    async def add_seller(self) -> UUID:
+        """A seller whose account no password opens."""
+        ...
 
     async def add_live_session(
         self,
         *,
         external_live_id: str = "live-1",
         status: LiveSessionStatus = LiveSessionStatus.LIVE,
+        seller_id: UUID | None = None,
     ) -> LiveSessionRecord:
-        """A session of a new seller, on the simulator."""
+        """A session on the simulator, of ``seller_id`` or of a new seller, created at the start."""
         ...
 
     async def add_product(
@@ -95,7 +104,9 @@ class ReservationBackend(Protocol):
         """Settle the comment as a ``no_intent`` rejection."""
         ...
 
-    async def set_session_status(self, session_id: UUID, status: LiveSessionStatus) -> None: ...
+    async def set_session_status(self, session_id: UUID, status: LiveSessionStatus) -> None:
+        """Set the status directly, whatever the transitions allow."""
+        ...
 
     async def expire_order(self, order_id: UUID) -> None:
         """Expire a pending order and release its stock, as the sweep does."""
@@ -129,6 +140,10 @@ class InMemoryBackend:
         self.database = InMemoryDatabase(random_source=random_source)
 
     @property
+    def live_sessions(self) -> LiveSessionRepository:
+        return self.database.live_sessions
+
+    @property
     def products(self) -> ProductStockRepository:
         return self.database.products
 
@@ -144,13 +159,21 @@ class InMemoryBackend:
     def refresh_tokens(self) -> RefreshTokenRepository:
         return self.database.refresh_tokens
 
+    async def add_seller(self) -> UUID:
+        return self.database.add_seller().id
+
     async def add_live_session(
         self,
         *,
         external_live_id: str = "live-1",
         status: LiveSessionStatus = LiveSessionStatus.LIVE,
+        seller_id: UUID | None = None,
     ) -> LiveSessionRecord:
-        return self.database.add_live_session(external_live_id=external_live_id, status=status)
+        return self.database.add_live_session(
+            external_live_id=external_live_id,
+            status=status,
+            seller_id=seller_id if seller_id is not None else await self.add_seller(),
+        )
 
     async def add_product(
         self,
@@ -183,7 +206,8 @@ class InMemoryBackend:
         await self.database.comments.reject(comment_id, RejectionReason.NO_INTENT, session_id=None)
 
     async def set_session_status(self, session_id: UUID, status: LiveSessionStatus) -> None:
-        await self.database.live_sessions.set_status(session_id, status, now=FAKE_CLOCK_START)
+        session = self.database.tables.sessions[session_id]
+        self.database.tables.sessions[session_id] = replace(session, status=status)
 
     async def expire_order(self, order_id: UUID) -> None:
         order = self.database.tables.orders[order_id]
@@ -228,6 +252,7 @@ class PostgresBackend:
         random_source: RandomSource = secrets,
     ) -> None:
         self._migrator = migrator_engine
+        self._live_sessions = SqlLiveSessionRepository(app_engine)
         self._products = SqlProductStockRepository(app_engine, currency=CURRENCY)
         self._orders = SqlOrderRepository(
             app_engine,
@@ -237,6 +262,10 @@ class PostgresBackend:
         )
         self._sellers = SqlSellerRepository(app_engine)
         self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
+
+    @property
+    def live_sessions(self) -> LiveSessionRepository:
+        return self._live_sessions
 
     @property
     def products(self) -> ProductStockRepository:
@@ -273,14 +302,16 @@ class PostgresBackend:
         *,
         external_live_id: str = "live-1",
         status: LiveSessionStatus = LiveSessionStatus.LIVE,
+        seller_id: UUID | None = None,
     ) -> LiveSessionRecord:
         session = LiveSessionRecord(
             id=new_id(),
-            seller_id=await self.add_seller(),
+            seller_id=seller_id if seller_id is not None else await self.add_seller(),
             title="Friday drop",
             platform=Platform.SIMULATOR,
             external_live_id=external_live_id,
             status=status,
+            created_at=FAKE_CLOCK_START,
         )
         async with self._migrator.begin() as connection:
             await connection.execute(
@@ -291,6 +322,7 @@ class PostgresBackend:
                     platform=session.platform.value,
                     external_live_id=session.external_live_id,
                     status=session.status.value,
+                    created_at=session.created_at,
                 )
             )
         return session

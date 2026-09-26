@@ -7,7 +7,7 @@ adapters and argon2id.
 import asyncio
 import base64
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from http.cookies import SimpleCookie
 from uuid import UUID
@@ -19,13 +19,13 @@ from fastapi import FastAPI
 from livecart_api.access_tokens import AUDIENCE, ISSUER, AccessTokens
 from livecart_api.app import create_app
 from livecart_api.deps import parse_origin
-from livecart_api.resources import Resources
 from livecart_api.routes.auth import REFRESH_COOKIE
 from livecart_api.testing import (
     TEST_ORIGIN,
     current_time_clock,
     make_app,
     make_settings,
+    memory_resources,
     open_client,
 )
 from livecart_core.application.create_seller import CreateSeller
@@ -397,19 +397,7 @@ class UnavailableSellers:
 
 
 async def test_a_database_outage_answers_503_with_retry_after() -> None:
-    database = InMemoryDatabase()
-
-    async def aclose() -> None:
-        return None
-
-    resources = Resources(
-        readiness_checks=(),
-        aclose=aclose,
-        sellers=UnavailableSellers(),
-        refresh_tokens=database.refresh_tokens,
-        passwords=FakePasswordHasher(),
-        clock=current_time_clock(),
-    )
+    resources = replace(memory_resources(InMemoryDatabase()), sellers=UnavailableSellers())
 
     async with open_client(create_app(make_settings(), resources)) as client:
         response = await client.post(LOGIN, json={"email": EMAIL, "password": PASSWORD})

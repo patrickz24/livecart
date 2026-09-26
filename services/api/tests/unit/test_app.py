@@ -1,18 +1,21 @@
 import uuid
+from dataclasses import replace
 
 import pytest
 import structlog
 from pydantic import SecretStr
 
 from livecart_api.app import create_app
-from livecart_api.resources import ReadinessCheck, Resources, build_resources
-from livecart_api.testing import make_app, open_client
+from livecart_api.resources import ReadinessCheck, build_resources
+from livecart_api.testing import make_app, memory_resources, open_client
 from livecart_core.infrastructure.clock import SystemClock
+from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
+from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.settings import AppEnv, Settings
-from livecart_core.testing.fakes import FakeClock, FakePasswordHasher, InMemoryDatabase
+from livecart_core.testing.fakes import InMemoryDatabase
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 
@@ -92,15 +95,7 @@ async def test_shutdown_closes_the_injected_resources() -> None:
         order_token_key=TEST_ORDER_TOKEN_KEY,
         _env_file=None,
     )
-    database = InMemoryDatabase()
-    resources = Resources(
-        readiness_checks=(),
-        aclose=aclose,
-        sellers=database.sellers,
-        refresh_tokens=database.refresh_tokens,
-        passwords=FakePasswordHasher(),
-        clock=FakeClock(),
-    )
+    resources = replace(memory_resources(InMemoryDatabase()), aclose=aclose)
     app = create_app(settings, resources)
 
     async with app.router.lifespan_context(app):
@@ -124,6 +119,8 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert isinstance(resources.refresh_tokens, SqlRefreshTokenRepository)
     assert isinstance(resources.passwords, Argon2PasswordHasher)
     assert isinstance(resources.clock, SystemClock)
+    assert isinstance(resources.live_sessions, SqlLiveSessionRepository)
+    assert isinstance(resources.products, SqlProductStockRepository)
     await resources.aclose()  # nothing was connected: closing must not fail
 
 

@@ -15,8 +15,8 @@ import pytest
 from livecart_core.application.dto import RefreshTokenRecord
 from livecart_core.application.ports import RecordNotFound
 from livecart_core.application.seller_auth import hash_refresh_token, new_refresh_token
-from livecart_core.testing.backends import LOCKED_ACCOUNT, AuthBackend
-from livecart_core.testing.fakes import FAKE_CLOCK_START
+from livecart_core.testing.backends import AuthBackend
+from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT
 
 NOW = FAKE_CLOCK_START
 EXPIRES_AT = NOW + timedelta(days=30)

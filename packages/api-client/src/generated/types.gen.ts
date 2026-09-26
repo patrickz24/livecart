@@ -55,6 +55,89 @@ export type HealthStatus = {
 };
 
 /**
+ * LiveSessionCreate
+ */
+export type LiveSessionCreate = {
+    /**
+     * External Live Id
+     */
+    external_live_id: string;
+    platform: Platform;
+    /**
+     * Title
+     */
+    title: string;
+};
+
+/**
+ * LiveSessionPage
+ */
+export type LiveSessionPage = {
+    /**
+     * Items
+     */
+    items: Array<LiveSessionResponse>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * LiveSessionResponse
+ */
+export type LiveSessionResponse = {
+    /**
+     * Created At
+     */
+    created_at: string;
+    /**
+     * Ended At
+     */
+    ended_at: string | null;
+    /**
+     * External Live Id
+     */
+    external_live_id: string;
+    /**
+     * Id
+     */
+    id: string;
+    platform: Platform;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    status: LiveSessionStatus;
+    /**
+     * Title
+     */
+    title: string;
+};
+
+/**
+ * LiveSessionStatus
+ */
+export type LiveSessionStatus = 'draft' | 'live' | 'ended';
+
+/**
+ * LiveSessionUpdate
+ *
+ * The fields to change; a field left out, or null, keeps its value.
+ */
+export type LiveSessionUpdate = {
+    /**
+     * External Live Id
+     */
+    external_live_id?: string | null;
+    platform?: Platform | null;
+    /**
+     * Title
+     */
+    title?: string | null;
+};
+
+/**
  * LoginRequest
  */
 export type LoginRequest = {
@@ -62,6 +145,133 @@ export type LoginRequest = {
      * Email
      */
     email: string;
+};
+
+/**
+ * Platform
+ *
+ * Where a live stream runs: ``live_sessions.platform`` and ``comments.platform``.
+ */
+export type Platform = 'simulator' | 'facebook' | 'instagram' | 'tiktok';
+
+/**
+ * ProductCreate
+ */
+export type ProductCreate = {
+    /**
+     * Code
+     *
+     * 1 to 3 letters then 1 to 4 digits, such as A12; case and fullwidth characters are folded.
+     */
+    code: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Price Minor
+     *
+     * Integer minor units (cents for EUR).
+     */
+    price_minor: number;
+    /**
+     * Stock Total
+     */
+    stock_total: number;
+    /**
+     * Variant
+     *
+     * A size or a colour, 32 characters at most; empty for none.
+     */
+    variant?: string;
+};
+
+/**
+ * ProductPage
+ */
+export type ProductPage = {
+    /**
+     * Items
+     */
+    items: Array<ProductResponse>;
+    /**
+     * Next Cursor
+     */
+    next_cursor: string | null;
+};
+
+/**
+ * ProductResponse
+ */
+export type ProductResponse = {
+    /**
+     * Available
+     */
+    available: number;
+    /**
+     * Code
+     */
+    code: string;
+    /**
+     * Currency
+     */
+    currency: string;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Price Minor
+     */
+    price_minor: number;
+    /**
+     * Reserved
+     */
+    reserved: number;
+    /**
+     * Session Id
+     */
+    session_id: string;
+    /**
+     * Sold
+     */
+    sold: number;
+    /**
+     * Stock Total
+     */
+    stock_total: number;
+    /**
+     * Variant
+     */
+    variant: string;
+};
+
+/**
+ * ProductUpdate
+ *
+ * The fields to change; a field left out, or null, keeps its value.
+ */
+export type ProductUpdate = {
+    /**
+     * Code
+     */
+    code?: string | null;
+    /**
+     * Name
+     */
+    name?: string | null;
+    /**
+     * Price Minor
+     */
+    price_minor?: number | null;
+    /**
+     * Variant
+     */
+    variant?: string | null;
 };
 
 /**
@@ -251,6 +461,426 @@ export type RefreshAccessTokenResponses = {
 };
 
 export type RefreshAccessTokenResponse = RefreshAccessTokenResponses[keyof RefreshAccessTokenResponses];
+
+export type ListLiveSessionsData = {
+    body?: never;
+    path?: never;
+    query?: {
+        /**
+         * Limit
+         *
+         * Items per page, 1 to 100.
+         */
+        limit?: number;
+        /**
+         * Cursor
+         *
+         * The next_cursor of the previous page; none for the first.
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/live-sessions';
+};
+
+export type ListLiveSessionsErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListLiveSessionsError = ListLiveSessionsErrors[keyof ListLiveSessionsErrors];
+
+export type ListLiveSessionsResponses = {
+    /**
+     * Successful Response
+     */
+    200: LiveSessionPage;
+};
+
+export type ListLiveSessionsResponse = ListLiveSessionsResponses[keyof ListLiveSessionsResponses];
+
+export type CreateLiveSessionData = {
+    body: LiveSessionCreate;
+    path?: never;
+    query?: never;
+    url: '/api/v1/live-sessions';
+};
+
+export type CreateLiveSessionErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * Another session has this platform and live id
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateLiveSessionError = CreateLiveSessionErrors[keyof CreateLiveSessionErrors];
+
+export type CreateLiveSessionResponses = {
+    /**
+     * Successful Response
+     */
+    201: LiveSessionResponse;
+};
+
+export type CreateLiveSessionResponse = CreateLiveSessionResponses[keyof CreateLiveSessionResponses];
+
+export type GetLiveSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}';
+};
+
+export type GetLiveSessionErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetLiveSessionError = GetLiveSessionErrors[keyof GetLiveSessionErrors];
+
+export type GetLiveSessionResponses = {
+    /**
+     * Successful Response
+     */
+    200: LiveSessionResponse;
+};
+
+export type GetLiveSessionResponse = GetLiveSessionResponses[keyof GetLiveSessionResponses];
+
+export type UpdateLiveSessionData = {
+    body: LiveSessionUpdate;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}';
+};
+
+export type UpdateLiveSessionErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id
+     */
+    404: ErrorResponse;
+    /**
+     * The session's status does not allow it, or the live id is taken
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateLiveSessionError = UpdateLiveSessionErrors[keyof UpdateLiveSessionErrors];
+
+export type UpdateLiveSessionResponses = {
+    /**
+     * Successful Response
+     */
+    200: LiveSessionResponse;
+};
+
+export type UpdateLiveSessionResponse = UpdateLiveSessionResponses[keyof UpdateLiveSessionResponses];
+
+export type EndLiveSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/end';
+};
+
+export type EndLiveSessionErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id
+     */
+    404: ErrorResponse;
+    /**
+     * The session has not started
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type EndLiveSessionError = EndLiveSessionErrors[keyof EndLiveSessionErrors];
+
+export type EndLiveSessionResponses = {
+    /**
+     * Successful Response
+     */
+    200: LiveSessionResponse;
+};
+
+export type EndLiveSessionResponse = EndLiveSessionResponses[keyof EndLiveSessionResponses];
+
+export type ListProductsData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: {
+        /**
+         * Limit
+         *
+         * Items per page, 1 to 100.
+         */
+        limit?: number;
+        /**
+         * Cursor
+         *
+         * The next_cursor of the previous page; none for the first.
+         */
+        cursor?: string | null;
+    };
+    url: '/api/v1/live-sessions/{session_id}/products';
+};
+
+export type ListProductsErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id, or no product of it has this one
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type ListProductsError = ListProductsErrors[keyof ListProductsErrors];
+
+export type ListProductsResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProductPage;
+};
+
+export type ListProductsResponse = ListProductsResponses[keyof ListProductsResponses];
+
+export type CreateProductData = {
+    body: ProductCreate;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/products';
+};
+
+export type CreateProductErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id, or no product of it has this one
+     */
+    404: ErrorResponse;
+    /**
+     * The catalog cannot hold the product, or the session's status forbids it
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type CreateProductError = CreateProductErrors[keyof CreateProductErrors];
+
+export type CreateProductResponses = {
+    /**
+     * Successful Response
+     */
+    201: ProductResponse;
+};
+
+export type CreateProductResponse = CreateProductResponses[keyof CreateProductResponses];
+
+export type GetProductData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+        /**
+         * Product Id
+         */
+        product_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/products/{product_id}';
+};
+
+export type GetProductErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id, or no product of it has this one
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetProductError = GetProductErrors[keyof GetProductErrors];
+
+export type GetProductResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProductResponse;
+};
+
+export type GetProductResponse = GetProductResponses[keyof GetProductResponses];
+
+export type UpdateProductData = {
+    body: ProductUpdate;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+        /**
+         * Product Id
+         */
+        product_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/products/{product_id}';
+};
+
+export type UpdateProductErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id, or no product of it has this one
+     */
+    404: ErrorResponse;
+    /**
+     * The catalog cannot hold the product, or the session's status forbids it
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type UpdateProductError = UpdateProductErrors[keyof UpdateProductErrors];
+
+export type UpdateProductResponses = {
+    /**
+     * Successful Response
+     */
+    200: ProductResponse;
+};
+
+export type UpdateProductResponse = UpdateProductResponses[keyof UpdateProductResponses];
+
+export type StartLiveSessionData = {
+    body?: never;
+    path: {
+        /**
+         * Session Id
+         */
+        session_id: string;
+    };
+    query?: never;
+    url: '/api/v1/live-sessions/{session_id}/start';
+};
+
+export type StartLiveSessionErrors = {
+    /**
+     * Not authenticated, or the access token was refused
+     */
+    401: ErrorResponse;
+    /**
+     * No session of this seller has this id
+     */
+    404: ErrorResponse;
+    /**
+     * The session has ended already
+     */
+    409: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type StartLiveSessionError = StartLiveSessionErrors[keyof StartLiveSessionErrors];
+
+export type StartLiveSessionResponses = {
+    /**
+     * Successful Response
+     */
+    200: LiveSessionResponse;
+};
+
+export type StartLiveSessionResponse = StartLiveSessionResponses[keyof StartLiveSessionResponses];
 
 export type GetHealthData = {
     body?: never;

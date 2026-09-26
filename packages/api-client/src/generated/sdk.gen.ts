@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses } from './types.gen';
+import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -48,6 +48,112 @@ export const getCurrentSeller = <ThrowOnError extends boolean = false>(options?:
  * Trade the refresh cookie for a new access token
  */
 export const refreshAccessToken = <ThrowOnError extends boolean = false>(options?: Options<RefreshAccessTokenData, ThrowOnError>): RequestResult<RefreshAccessTokenResponses, RefreshAccessTokenErrors, ThrowOnError> => (options?.client ?? client).post<RefreshAccessTokenResponses, RefreshAccessTokenErrors, ThrowOnError>({ url: '/api/v1/auth/refresh', ...options });
+
+/**
+ * List the seller's live sessions, newest first
+ */
+export const listLiveSessions = <ThrowOnError extends boolean = false>(options?: Options<ListLiveSessionsData, ThrowOnError>): RequestResult<ListLiveSessionsResponses, ListLiveSessionsErrors, ThrowOnError> => (options?.client ?? client).get<ListLiveSessionsResponses, ListLiveSessionsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions',
+    ...options
+});
+
+/**
+ * Create a draft live session
+ */
+export const createLiveSession = <ThrowOnError extends boolean = false>(options: Options<CreateLiveSessionData, ThrowOnError>): RequestResult<CreateLiveSessionResponses, CreateLiveSessionErrors, ThrowOnError> => (options.client ?? client).post<CreateLiveSessionResponses, CreateLiveSessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read one of the seller's live sessions
+ */
+export const getLiveSession = <ThrowOnError extends boolean = false>(options: Options<GetLiveSessionData, ThrowOnError>): RequestResult<GetLiveSessionResponses, GetLiveSessionErrors, ThrowOnError> => (options.client ?? client).get<GetLiveSessionResponses, GetLiveSessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}',
+    ...options
+});
+
+/**
+ * Change a live session's title, and in a draft its platform and live id
+ */
+export const updateLiveSession = <ThrowOnError extends boolean = false>(options: Options<UpdateLiveSessionData, ThrowOnError>): RequestResult<UpdateLiveSessionResponses, UpdateLiveSessionErrors, ThrowOnError> => (options.client ?? client).patch<UpdateLiveSessionResponses, UpdateLiveSessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * End a live session: it reserves nothing more and becomes read-only
+ */
+export const endLiveSession = <ThrowOnError extends boolean = false>(options: Options<EndLiveSessionData, ThrowOnError>): RequestResult<EndLiveSessionResponses, EndLiveSessionErrors, ThrowOnError> => (options.client ?? client).post<EndLiveSessionResponses, EndLiveSessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}/end',
+    ...options
+});
+
+/**
+ * List the products of a live session, in creation order
+ */
+export const listProducts = <ThrowOnError extends boolean = false>(options: Options<ListProductsData, ThrowOnError>): RequestResult<ListProductsResponses, ListProductsErrors, ThrowOnError> => (options.client ?? client).get<ListProductsResponses, ListProductsErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}/products',
+    ...options
+});
+
+/**
+ * Add a product to a live session
+ */
+export const createProduct = <ThrowOnError extends boolean = false>(options: Options<CreateProductData, ThrowOnError>): RequestResult<CreateProductResponses, CreateProductErrors, ThrowOnError> => (options.client ?? client).post<CreateProductResponses, CreateProductErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}/products',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Read a product of a live session
+ */
+export const getProduct = <ThrowOnError extends boolean = false>(options: Options<GetProductData, ThrowOnError>): RequestResult<GetProductResponses, GetProductErrors, ThrowOnError> => (options.client ?? client).get<GetProductResponses, GetProductErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}/products/{product_id}',
+    ...options
+});
+
+/**
+ * Change a product's name and price, and in a draft its code and variant
+ */
+export const updateProduct = <ThrowOnError extends boolean = false>(options: Options<UpdateProductData, ThrowOnError>): RequestResult<UpdateProductResponses, UpdateProductErrors, ThrowOnError> => (options.client ?? client).patch<UpdateProductResponses, UpdateProductErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}/products/{product_id}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Start a draft session: its comments now reserve stock
+ */
+export const startLiveSession = <ThrowOnError extends boolean = false>(options: Options<StartLiveSessionData, ThrowOnError>): RequestResult<StartLiveSessionResponses, StartLiveSessionErrors, ThrowOnError> => (options.client ?? client).post<StartLiveSessionResponses, StartLiveSessionErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/live-sessions/{session_id}/start',
+    ...options
+});
 
 /**
  * Liveness probe

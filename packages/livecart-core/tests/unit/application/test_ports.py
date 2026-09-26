@@ -13,6 +13,7 @@ from livecart_core.application.ports import (
     EventPublisher,
     IntentFallback,
     InvalidSignature,
+    LiveSessionConflict,
     LiveSessionRepository,
     NullIntentFallback,
     OrderRepository,
@@ -21,6 +22,7 @@ from livecart_core.application.ports import (
     PaymentRepository,
     PlatformAdapter,
     PortError,
+    ProductConflict,
     ProductStockRepository,
     RecordNotFound,
     RefreshTokenRepository,
@@ -31,6 +33,7 @@ from livecart_core.application.ports import (
     StockConflict,
     WebhookEventRegistry,
 )
+from livecart_core.domain.live_sessions import CatalogConflict
 from livecart_core.domain.outcomes import AmbiguityReason, LlmOutcome
 from livecart_core.domain.parser import Ambiguous
 from livecart_core.testing.builders import demo_catalog
@@ -113,7 +116,16 @@ async def test_the_null_fallback_leaves_every_ambiguity_unresolved() -> None:
 
 
 @pytest.mark.parametrize(
-    "error", [RecordNotFound, ServiceUnavailable, InvalidSignature, StockConflict, SellerConflict]
+    "error",
+    [
+        RecordNotFound,
+        ServiceUnavailable,
+        InvalidSignature,
+        StockConflict,
+        SellerConflict,
+        LiveSessionConflict,
+        ProductConflict,
+    ],
 )
 def test_every_port_error_belongs_to_one_family(error: type[PortError]) -> None:
     assert issubclass(error, PortError)
@@ -124,6 +136,13 @@ def test_a_seller_conflict_names_the_taken_field() -> None:
 
     assert conflict.field == "slug"
     assert str(conflict) == "another seller has this slug"
+
+
+def test_a_product_conflict_names_what_the_catalog_refused() -> None:
+    conflict = ProductConflict(CatalogConflict.VARIANT_MIX)
+
+    assert conflict.conflict is CatalogConflict.VARIANT_MIX
+    assert str(conflict) == "the catalog cannot hold this product: variant_mix"
 
 
 def test_a_missing_record_is_also_a_lookup_error() -> None:

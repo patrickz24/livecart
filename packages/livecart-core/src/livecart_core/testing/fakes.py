@@ -39,14 +39,20 @@ from livecart_core.application.dto import (
     FallbackRequest,
     InboxComment,
     IncomingComment,
+    LiveSessionChanges,
     LiveSessionRecord,
+    LiveSessionTransition,
     LlmProposal,
+    NewLiveSession,
+    NewProduct,
     OrderRecord,
     OrderTransition,
+    Page,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
     Platform,
+    ProductChanges,
     ProductRecord,
     PurchaseIntentRecord,
     QueuedComment,
@@ -65,11 +71,14 @@ from livecart_core.application.dto import (
     StockLevel,
     TrackingUpdate,
     WebhookOutcome,
+    page_of,
 )
 from livecart_core.application.ports import (
     REFERENCE_DRAWS,
     Clock,
     InvalidSignature,
+    LiveSessionConflict,
+    ProductConflict,
     RecordNotFound,
     SellerConflict,
     ServiceUnavailable,
@@ -77,6 +86,12 @@ from livecart_core.application.ports import (
 )
 from livecart_core.domain.catalog import Catalog, CatalogProduct
 from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.domain.live_sessions import (
+    MAX_PRODUCTS_PER_SESSION,
+    CatalogConflict,
+    check_session_edit,
+    variant_conflict,
+)
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome, RejectionReason
 from livecart_core.domain.reference import (
@@ -101,6 +116,8 @@ from livecart_core.domain.state_machines import (
 
 # The day milestone 2 landed, at noon UTC: any fixed instant would do.
 FAKE_CLOCK_START: Final = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+# No password verifies against it, as with the "!" of a locked account in /etc/shadow.
+LOCKED_ACCOUNT: Final = "!"
 # The header the fake adapters read their signature from.
 FAKE_SIGNATURE_HEADER: Final = "x-fake-signature"
 
@@ -560,11 +577,13 @@ class InMemoryDatabase:
     """One database behind all the in-memory repositories, with helpers to seed it.
 
     ``random_source`` draws the order references, as in the SQL adapter: pass
-    a ``SequenceRandomSource`` to force a collision.
+    a ``SequenceRandomSource`` to force a collision. ``currency`` prices the
+    products the repositories add, as ``DEFAULT_CURRENCY`` does in production.
     """
 
-    def __init__(self, *, random_source: RandomSource = secrets) -> None:
+    def __init__(self, *, random_source: RandomSource = secrets, currency: str = "EUR") -> None:
         self.random_source = random_source
+        self.currency = currency
         self.tables = InMemoryTables()
         self._last_id = 0
         self.sellers = InMemorySellerRepository(self)
@@ -582,6 +601,21 @@ class InMemoryDatabase:
         self._last_id += 1
         return UUID(int=self._last_id)
 
+    def add_seller(self, *, slug: str | None = None, display_name: str = "Seller") -> SellerRecord:
+        """A seller whose account no password opens, as a seed would create one."""
+        seller_id = self.new_id()
+        slug = slug if slug is not None else f"seller-{seller_id.int}"
+        seller = SellerRecord(
+            id=seller_id,
+            email=f"{slug}@example.test",
+            slug=slug,
+            display_name=display_name,
+            password_hash=LOCKED_ACCOUNT,
+            created_at=FAKE_CLOCK_START,
+        )
+        self.tables.sellers[seller.id] = seller
+        return seller
+
     def add_live_session(
         self,
         *,
@@ -591,6 +625,7 @@ class InMemoryDatabase:
         title: str = "Friday drop",
         seller_id: UUID | None = None,
     ) -> LiveSessionRecord:
+        """A session of ``seller_id``, or of a seller without an account row: seeding only."""
         if any(
             known.platform is platform and known.external_live_id == external_live_id
             for known in self.tables.sessions.values()
@@ -603,6 +638,7 @@ class InMemoryDatabase:
             platform=platform,
             external_live_id=external_live_id,
             status=status,
+            created_at=FAKE_CLOCK_START,
         )
         self.tables.sessions[session.id] = session
         return session
@@ -664,6 +700,11 @@ class InMemoryDatabase:
             for product in catalog
             for variant in product.variants or (Variant(),)
         ]
+
+    def session_of(self, seller_id: UUID, session_id: UUID) -> LiveSessionRecord | None:
+        """The session if ``seller_id`` owns it: the seller filter of every seller-scoped query."""
+        session = self.tables.sessions.get(session_id)
+        return session if session is not None and session.seller_id == seller_id else None
 
     def find_product(
         self, session_id: UUID, code: ProductCode, variant: Variant
@@ -872,8 +913,65 @@ class InMemoryCommentInbox(_Repository):
 
 
 class InMemoryLiveSessionRepository(_Repository):
+    async def add(
+        self, seller_id: UUID, session: NewLiveSession, *, now: datetime
+    ) -> LiveSessionRecord:
+        _require_aware(now)
+        # fk_live_sessions_seller_id_sellers, then the platform's unique live id.
+        _row(self._tables.sellers, seller_id, "seller")
+        self._check_live_id_free(session.platform, session.external_live_id, keep=None)
+        record = LiveSessionRecord(
+            id=self._db.new_id(),
+            seller_id=seller_id,
+            title=session.title,
+            platform=session.platform,
+            external_live_id=session.external_live_id,
+            status=LiveSessionStatus.DRAFT,
+            created_at=now,
+        )
+        self._tables.sessions[record.id] = record
+        return record
+
     async def get(self, session_id: UUID) -> LiveSessionRecord | None:
         return self._tables.sessions.get(session_id)
+
+    async def get_for_seller(self, seller_id: UUID, session_id: UUID) -> LiveSessionRecord | None:
+        return self._db.session_of(seller_id, session_id)
+
+    async def list_for_seller(
+        self, seller_id: UUID, *, limit: int, cursor: UUID | None = None
+    ) -> Page[LiveSessionRecord]:
+        rows = sorted(
+            (
+                session
+                for session in self._tables.sessions.values()
+                if session.seller_id == seller_id and (cursor is None or session.id < cursor)
+            ),
+            key=lambda session: session.id,
+            reverse=True,
+        )
+        return page_of(rows[: limit + 1], limit)
+
+    async def update(
+        self, seller_id: UUID, session_id: UUID, changes: LiveSessionChanges
+    ) -> LiveSessionRecord:
+        session = self._db.session_of(seller_id, session_id)
+        if session is None:
+            raise RecordNotFound(f"no live session {session_id} for seller {seller_id}")
+        check_session_edit(session.status, keys=changes.touches_keys(session))
+        updated = replace(
+            session,
+            title=changes.title if changes.title is not None else session.title,
+            platform=changes.platform if changes.platform is not None else session.platform,
+            external_live_id=(
+                changes.external_live_id
+                if changes.external_live_id is not None
+                else session.external_live_id
+            ),
+        )
+        self._check_live_id_free(updated.platform, updated.external_live_id, keep=session.id)
+        self._tables.sessions[session_id] = updated
+        return updated
 
     async def find_by_live_id(
         self, platform: Platform, external_live_id: str
@@ -905,10 +1003,12 @@ class InMemoryLiveSessionRepository(_Repository):
         )
 
     async def set_status(
-        self, session_id: UUID, target: LiveSessionStatus, *, now: datetime
-    ) -> TransitionOutcome:
+        self, seller_id: UUID, session_id: UUID, target: LiveSessionStatus, *, now: datetime
+    ) -> LiveSessionTransition:
         _require_aware(now)
-        session = _row(self._tables.sessions, session_id, "live session")
+        session = self._db.session_of(seller_id, session_id)
+        if session is None:
+            raise RecordNotFound(f"no live session {session_id} for seller {seller_id}")
         outcome = transition(LIVE_SESSION_TRANSITIONS, session.status, target)
         if outcome is TransitionOutcome.APPLIED:
             # Only draft -> live and live -> ended exist.
@@ -917,15 +1017,105 @@ class InMemoryLiveSessionRepository(_Repository):
             else:
                 session = replace(session, status=target, ended_at=now)
             self._tables.sessions[session_id] = session
-        return outcome
+        return LiveSessionTransition(session, outcome)
+
+    def _check_live_id_free(
+        self, platform: Platform, external_live_id: str, *, keep: UUID | None
+    ) -> None:
+        """uq_live_sessions_platform_external_live_id, whatever the seller of the other session."""
+        if any(
+            session.id != keep
+            and session.platform is platform
+            and session.external_live_id == external_live_id
+            for session in self._tables.sessions.values()
+        ):
+            raise LiveSessionConflict(f"another session has {platform}/{external_live_id}")
 
 
 class InMemoryProductStockRepository(_Repository):
+    async def add(
+        self, seller_id: UUID, session_id: UUID, product: NewProduct, *, now: datetime
+    ) -> ProductRecord:
+        _require_aware(now)
+        session = self._db.session_of(seller_id, session_id)
+        if session is None:
+            raise RecordNotFound(f"no live session {session_id} for seller {seller_id}")
+        check_session_edit(session.status)
+        catalog = self._rows_of(session_id)
+        self._check_fits(catalog, product.code, product.variant)
+        if len(catalog) >= MAX_PRODUCTS_PER_SESSION:
+            raise ProductConflict(CatalogConflict.FULL)
+        record = ProductRecord(
+            id=self._db.new_id(),
+            session_id=session_id,
+            code=product.code,
+            variant=product.variant,
+            name=product.name,
+            price=Money(product.price_minor, self._db.currency),
+            stock=StockLevel(product.stock_total),
+        )
+        self._tables.products[record.id] = record
+        return record
+
     async def get(self, product_id: UUID) -> ProductRecord | None:
         return self._tables.products.get(product_id)
 
+    async def get_for_seller(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID
+    ) -> ProductRecord | None:
+        product = self._tables.products.get(product_id)
+        if product is None or product.session_id != session_id:
+            return None
+        return product if self._db.session_of(seller_id, session_id) is not None else None
+
     async def list_for_session(self, session_id: UUID) -> list[ProductRecord]:
+        return self._rows_of(session_id)
+
+    async def list_for_seller(
+        self, seller_id: UUID, session_id: UUID, *, limit: int, cursor: UUID | None = None
+    ) -> Page[ProductRecord]:
+        if self._db.session_of(seller_id, session_id) is None:
+            raise RecordNotFound(f"no live session {session_id} for seller {seller_id}")
+        rows = [row for row in self._rows_of(session_id) if cursor is None or row.id > cursor]
+        return page_of(rows[: limit + 1], limit)
+
+    async def update(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID, changes: ProductChanges
+    ) -> ProductRecord:
+        session = self._db.session_of(seller_id, session_id)
+        product = self._tables.products.get(product_id)
+        if session is None or product is None or product.session_id != session_id:
+            raise RecordNotFound(f"no product {product_id} in session {session_id}")
+        keys = changes.touches_keys(product)
+        check_session_edit(session.status, keys=keys)
+        code, variant = changes.key_of(product)
+        if keys:
+            others = [row for row in self._rows_of(session_id) if row.id != product_id]
+            self._check_fits(others, code, variant)
+        updated = replace(
+            product,
+            code=code,
+            variant=variant,
+            name=changes.name if changes.name is not None else product.name,
+            price=(
+                Money(changes.price_minor, product.price.currency)
+                if changes.price_minor is not None
+                else product.price
+            ),
+        )
+        self._tables.products[product_id] = updated
+        return updated
+
+    def _rows_of(self, session_id: UUID) -> list[ProductRecord]:
+        """The session's products, in creation order."""
         return [row for row in self._tables.products.values() if row.session_id == session_id]
+
+    @staticmethod
+    def _check_fits(catalog: Sequence[ProductRecord], code: ProductCode, variant: Variant) -> None:
+        same_code = [row.variant for row in catalog if row.code == code]
+        conflict = variant_conflict(same_code, variant)
+        if conflict is not None:
+            raise ProductConflict(conflict)
 
     async def restock(self, product_id: UUID, delta: int) -> ProductRecord:
         product = _row(self._tables.products, product_id, "product")

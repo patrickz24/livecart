@@ -45,13 +45,19 @@ from livecart_core.application.dto import (
     FallbackRequest,
     InboxComment,
     IncomingComment,
+    LiveSessionChanges,
     LiveSessionRecord,
+    LiveSessionTransition,
+    NewLiveSession,
+    NewProduct,
     OrderRecord,
     OrderTransition,
+    Page,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
     Platform,
+    ProductChanges,
     ProductRecord,
     QueuedComment,
     QueueDelivery,
@@ -69,6 +75,7 @@ from livecart_core.application.dto import (
     WebhookOutcome,
 )
 from livecart_core.domain.catalog import Catalog
+from livecart_core.domain.live_sessions import CatalogConflict
 from livecart_core.domain.outcomes import LlmOutcome, RejectionReason
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import (
@@ -107,6 +114,22 @@ class SellerConflict(PortError):
     def __init__(self, field: Literal["email", "slug"]) -> None:
         super().__init__(f"another seller has this {field}")
         self.field: Literal["email", "slug"] = field
+
+
+class LiveSessionConflict(PortError):
+    """A session whose platform and live id another session has already, whatever its seller.
+
+    ``uq_live_sessions_platform_external_live_id``: the pair is how a comment
+    finds its session, so it names one session on the whole platform.
+    """
+
+
+class ProductConflict(PortError):
+    """A product the session's catalog cannot hold; ``conflict`` says why."""
+
+    def __init__(self, conflict: CatalogConflict) -> None:
+        super().__init__(f"the catalog cannot hold this product: {conflict}")
+        self.conflict = conflict
 
 
 # --- Time ------------------------------------------------------------------------------
@@ -443,10 +466,52 @@ class CommentInbox(Protocol):
 
 
 class LiveSessionRepository(Protocol):
-    """Live sessions, and the catalog of their products as the parser reads it."""
+    """Live sessions, and the catalog of their products as the parser reads it.
+
+    The methods that take a ``seller_id`` serve that seller's own requests:
+    they filter every query by it, so another seller's session is
+    ``RecordNotFound`` or ``None``, exactly as a session that does not exist.
+    What a session in each status still takes is ``domain.live_sessions``'
+    rule, checked in the unit that writes, with the session's row locked.
+    """
+
+    async def add(
+        self, seller_id: UUID, session: NewLiveSession, *, now: datetime
+    ) -> LiveSessionRecord:
+        """Create a draft session.
+
+        Raises ``LiveSessionConflict`` when another session has the platform
+        and the live id, and ``RecordNotFound`` when no seller has ``seller_id``.
+        """
 
     async def get(self, session_id: UUID) -> LiveSessionRecord | None:
         """The row, or ``None``."""
+
+    async def get_for_seller(self, seller_id: UUID, session_id: UUID) -> LiveSessionRecord | None:
+        """The seller's session, or ``None``."""
+
+    async def list_for_seller(
+        self, seller_id: UUID, *, limit: int, cursor: UUID | None = None
+    ) -> Page[LiveSessionRecord]:
+        """The seller's sessions, newest first, from ``cursor``: a previous ``next_cursor``."""
+
+    async def update(
+        self, seller_id: UUID, session_id: UUID, changes: LiveSessionChanges
+    ) -> LiveSessionRecord:
+        """Apply the changes to the seller's session.
+
+        Raises ``RecordNotFound``, ``EditRefused`` when the session's status
+        no longer takes the change, and ``LiveSessionConflict``.
+        """
+
+    async def set_status(
+        self, seller_id: UUID, session_id: UUID, target: LiveSessionStatus, *, now: datetime
+    ) -> LiveSessionTransition:
+        """Start or end the seller's session (draft, live, ended), stamping its time.
+
+        A compare-and-set: ``APPLIED``, ``NOOP`` when the session is there
+        already, ``InvalidTransition`` otherwise, ``RecordNotFound``.
+        """
 
     async def find_by_live_id(
         self, platform: Platform, external_live_id: str
@@ -454,26 +519,58 @@ class LiveSessionRepository(Protocol):
         """The session a comment belongs to (``uq_live_sessions_platform_external_live_id``)."""
 
     async def load_catalog(self, session_id: UUID) -> Catalog:
-        """The session's products grouped by code, each code's variants in creation order."""
+        """The session's products grouped by code, each code's variants in creation order.
 
-    async def set_status(
-        self, session_id: UUID, target: LiveSessionStatus, *, now: datetime
-    ) -> TransitionOutcome:
-        """Start or end a session (draft, live, ended), stamping ``started_at`` or ``ended_at``."""
+        Raises ``RecordNotFound`` when no session has ``session_id``.
+        """
 
 
 class ProductStockRepository(Protocol):
     """The products of the sessions and their stock counters.
 
     Reservations, sales and releases change the counters only through the
-    order methods of ``OrderRepository``, in the same unit as the order.
+    order methods of ``OrderRepository``, in the same unit as the order. The
+    methods that take a ``seller_id`` filter by it, as those of
+    ``LiveSessionRepository`` do, and write under the session's row lock:
+    two writes to one catalog never interleave, while reservations, which
+    never lock the session, go on.
     """
+
+    async def add(
+        self, seller_id: UUID, session_id: UUID, product: NewProduct, *, now: datetime
+    ) -> ProductRecord:
+        """Add a product to the seller's session.
+
+        Raises ``RecordNotFound``, ``EditRefused`` for an ended session, and
+        ``ProductConflict`` when the catalog cannot hold it.
+        """
 
     async def get(self, product_id: UUID) -> ProductRecord | None:
         """The row, or ``None``."""
 
+    async def get_for_seller(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID
+    ) -> ProductRecord | None:
+        """The product of the seller's session, or ``None``."""
+
     async def list_for_session(self, session_id: UUID) -> list[ProductRecord]:
         """The session's products, in creation order."""
+
+    async def list_for_seller(
+        self, seller_id: UUID, session_id: UUID, *, limit: int, cursor: UUID | None = None
+    ) -> Page[ProductRecord]:
+        """The products of the seller's session, in creation order.
+
+        Raises ``RecordNotFound`` when the session is not the seller's.
+        """
+
+    async def update(
+        self, seller_id: UUID, session_id: UUID, product_id: UUID, changes: ProductChanges
+    ) -> ProductRecord:
+        """Apply the changes to a product of the seller's session.
+
+        Raises ``RecordNotFound``, ``EditRefused`` and ``ProductConflict``.
+        """
 
     async def restock(self, product_id: UUID, delta: int) -> ProductRecord:
         """Add ``delta`` (negative to remove) to the stock total.
