@@ -5,9 +5,11 @@ on every run, so a failure is reproducible from the seed and the index.
 """
 
 import random
+import string
 
 import pytest
 
+from livecart_core.application.dto import MAX_COMMENT_LENGTH
 from livecart_core.domain.parser import Ambiguous, Match, ParseResult, parse_comment
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, demo_catalog
 
@@ -101,6 +103,27 @@ def test_random_unicode_never_raises_and_never_matches() -> None:
         text = random_unicode(rng, rng.randrange(0, 200))
         result = parse(text)
         assert not isinstance(result, Match), (index, text, result)
+
+
+@pytest.mark.parametrize("round_number", range(20))
+def test_1000_random_characters_never_raise_and_never_match(round_number: int) -> None:
+    # The plan's "1 000 caracteres aleatoires": a comment of the largest size
+    # the webhook accepts, drawn from every code point.
+    rng = random.Random(SEED + 1000 + round_number)  # noqa: S311 - reproducible test data
+    text = random_unicode(rng, MAX_COMMENT_LENGTH)
+
+    assert len(text) == MAX_COMMENT_LENGTH
+    assert not isinstance(parse(text), Match), text
+
+
+@pytest.mark.parametrize("round_number", range(20))
+def test_1000_random_ascii_characters_keep_every_invariant(round_number: int) -> None:
+    # Letters and digits come far more often than in the whole of Unicode, so
+    # codes, verbs and numbers do appear: whatever the result, it must hold.
+    rng = random.Random(SEED + 2000 + round_number)  # noqa: S311 - reproducible test data
+    text = "".join(rng.choice(string.printable) for _ in range(MAX_COMMENT_LENGTH))
+
+    check_invariants(text, parse(text))
 
 
 def test_lone_surrogates_and_control_characters_never_raise() -> None:
