@@ -344,6 +344,9 @@ comments: Final = sa.Table(
         "rejection_reason",
         postgresql_where=sa.column("status", sa.String) == CommentStatus.REJECTED.value,
     ),
+    # Every comment of a session: the reset of a session deletes them by it, and
+    # so does the ON DELETE SET NULL of the foreign key when a session row goes.
+    sa.Index("ix_comments_session_id", "session_id"),
 )
 
 purchase_intents: Final = sa.Table(

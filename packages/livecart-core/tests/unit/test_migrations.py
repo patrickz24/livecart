@@ -14,13 +14,16 @@ def test_the_packaged_migrations_form_one_line_from_the_baseline() -> None:
     scripts = ScriptDirectory.from_config(build_config(MIGRATOR_URL))
 
     assert Path(scripts.dir).name == "migrations"
-    assert scripts.get_heads() == ["0002"]
+    assert scripts.get_heads() == ["0003"]
     baseline = scripts.get_revision("0001")
     assert baseline is not None
     assert baseline.down_revision is None
     schema = scripts.get_revision("0002")
     assert schema is not None
     assert schema.down_revision == "0001"
+    comments_index = scripts.get_revision("0003")
+    assert comments_index is not None
+    assert comments_index.down_revision == "0002"
 
 
 def test_without_arguments_the_command_upgrades_to_head() -> None:
@@ -50,14 +53,20 @@ def test_offline_upgrade_renders_the_baseline_sql(capsys: pytest.CaptureFixture[
         " (session_id, product_id, buyer_platform_user_id) WHERE status = 'pending_payment'"
     ) in sql
     assert "GENERATED ALWAYS AS ((stock_total - reserved) - sold) STORED" in sql
+    assert "CREATE INDEX ix_comments_session_id ON comments (session_id)" in sql
+    assert (
+        "UPDATE alembic_version SET version_num='0003' WHERE alembic_version.version_num = '0002'"
+        in sql
+    )
 
 
 def test_offline_downgrade_renders_the_reverse_sql(capsys: pytest.CaptureFixture[str]) -> None:
-    cli, options = parse_args(["downgrade", "0002:base", "--sql"])
+    cli, options = parse_args(["downgrade", "0003:base", "--sql"])
 
     execute(cli, options, MIGRATOR_URL)
 
     sql = capsys.readouterr().out
+    assert sql.index("DROP INDEX ix_comments_session_id;") < sql.index("DROP TABLE comments;")
     for table in metadata.tables:
         assert f"DROP TABLE {table};" in sql
     # Children before parents, so that every foreign key is gone before its target.
