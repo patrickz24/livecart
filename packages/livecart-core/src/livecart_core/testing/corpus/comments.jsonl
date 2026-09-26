@@ -113,6 +113,7 @@
 {"text": "I take two B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "number-word"}
 {"text": "je prends B07 x1 x50", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "quantity"}
 {"text": "je prends le C3 noir en 2 exemplaires", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
+{"text": "je prends A12 M en 2", "kind": "match", "code": "A12", "variant": "M", "quantity": 2, "confidence": "1.00", "tag": "quantity"}
 {"text": "je prends B07 à 15€", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}
 {"text": "B07 15 euros", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "0.90", "tag": "price"}
 {"text": "je prends le B07 à -50%", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "price"}

@@ -11,8 +11,9 @@ gets, so that the catalog always wins over the generic vocabulary:
    colour ("blue" for "Bleu"); then a ``t38``-style size, read as "taille 38";
 3. the word after a variant keyword ("taille", "size", "couleur"...), a size
    or colour even when it looks like a quantity ("taille 2"); likewise the
-   number after "en" ("en 38"), unless a quantity word follows it ("en 2
-   exemplaires") or the product has no variants;
+   number after "en" ("en 38"), while no variant is named yet and the product
+   comes in numbered sizes, unless a quantity word follows it ("en 2
+   exemplaires"): "A12 M en 2" and "C3 rouge en 2" are quantities;
 4. phrases: "sold out" and "out of stock" (doubts), "i'd like" and "would like"
    (buy signals);
 5. the unknown codes left: product references too;
@@ -306,9 +307,12 @@ class _Grammar:
         return True
 
     def _read_variant_keywords(self, product: CatalogProduct | None) -> None:
-        # "en 38" is a size too, unless the product has none: then "en 2" can
-        # only be a quantity. "en 2 exemplaires" stays a quantity either way.
-        sized = product is None or product.has_variants
+        # "en 38" names a size only while the size is still open and the
+        # product comes in numbered sizes: after "A12 M", or for a T-shirt in
+        # colours, "en 2" can only be a quantity. Without a single product the
+        # sizes are unknown, so the number stays a size rather than a quantity
+        # of 38. "en 2 exemplaires" stays a quantity either way.
+        sized = product is None or (not self._variants and _has_numbered_sizes(product))
         for i in range(len(self._tokens)):
             if (word := self._free_word(i)) is None:
                 continue
@@ -435,6 +439,13 @@ class _Grammar:
             if hits:
                 named.append(NamedProduct(product.code, hits))
         return tuple(named)
+
+
+def _has_numbered_sizes(product: CatalogProduct) -> bool:
+    """A label of the product starts with a number: "38", "2 ans"."""
+    return any(
+        (words := label_words(variant.value)) and words[0].isdigit() for variant in product.variants
+    )
 
 
 def _word_role(word: str, own_name: frozenset[str]) -> Role:

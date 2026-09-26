@@ -281,6 +281,47 @@ def test_after_en_a_product_without_sizes_can_only_take_a_quantity() -> None:
     assert parse("je prends Z99 en 2") == match(Z99, "", 2, Confidence.EXACT, "prends", "Z99", "2")
 
 
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # The size is already named: the number after "en" can only be a quantity.
+        ("je prends A12 M en 2", match(A12, "M", 2, Confidence.EXACT, "prends", "A12", "M", "2")),
+        (
+            "je prends A12 M en 2 svp",
+            match(A12, "M", 2, Confidence.EXACT, "prends", "A12", "M", "2"),
+        ),
+        (
+            "je prends A12 taille M en 2",
+            match(A12, "M", 2, Confidence.EXACT, "prends", "A12", "M", "2"),
+        ),
+        (
+            "je prends C3 rouge en 2",
+            match(C3, "Rouge", 2, Confidence.EXACT, "prends", "C3", "rouge", "2"),
+        ),
+        ("je prends D4 38 en 2", match(D4, "38", 2, Confidence.EXACT, "prends", "D4", "38", "2")),
+        # Colours, or a single variant: no size can be a number.
+        (
+            "je prends E15 en 2",
+            match(E15, "Unique", 2, Confidence.EXACT, "prends", "E15", "2"),
+        ),
+        (
+            "je prends C3 en 2",
+            Ambiguous(AmbiguityReason.UNRESOLVED_VARIANT, (C3,), ("prends", "C3", "2")),
+        ),
+        (
+            "je prends A12 en 3 svp",
+            Ambiguous(AmbiguityReason.UNRESOLVED_VARIANT, (A12,), ("prends", "A12", "3")),
+        ),
+        # Numbered sizes and none named yet: the number is a size.
+        ("je prends D4 en 2", Rejected(RejectionReason.VARIANT_NOT_FOUND)),
+    ],
+)
+def test_after_en_a_number_is_a_size_only_while_a_numbered_size_is_open(
+    text: str, expected: ParseResult
+) -> None:
+    assert parse(text) == expected
+
+
 def test_a_product_with_a_single_variant_takes_it() -> None:
     assert parse("je prends E15 x3") == match(
         E15, "Unique", 3, Confidence.EXACT, "prends", "E15", "x3"
