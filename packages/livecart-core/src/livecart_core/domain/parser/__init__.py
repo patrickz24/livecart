@@ -43,7 +43,8 @@ read into the comment, so that ambiguities stay rare:
    negation ("je prends C3 ?"), two different quantities, a bare number above
    the bound, a number written in words or with look-alike letters ("1O")
    (unless it repeats the quantity in digits: "x2 (deux)"), or two different
-   variants;
+   variants, as when a label that begins a longer one comes with a qualifier
+   ("bleu fonce" for "Bleu" or "Bleu nuit");
 9. ``unresolved_variant`` (ambiguous): the product has several variants and
    none is named (a product with a single variant takes it);
 10. ``Match``, with quantity 1 unless one is given.

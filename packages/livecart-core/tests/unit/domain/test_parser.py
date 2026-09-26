@@ -498,6 +498,40 @@ def test_an_elided_letter_typed_without_its_apostrophe_is_not_a_size(
     assert parse(text) == expected
 
 
+@pytest.mark.parametrize(
+    ("text", "quoted"),
+    [
+        (f"je prends C3 bleu fonc{SMALL_E_ACUTE}", ("bleu", f"fonc{SMALL_E_ACUTE}")),
+        ("je prends C3 dark blue", ("dark", "blue")),
+        ("je prends C3 bleu marine", ("bleu", "marine")),
+        ("C3 bleu clair", ("bleu", "clair")),
+    ],
+)
+def test_a_qualified_colour_may_be_the_longer_label(text: str, quoted: tuple[str, str]) -> None:
+    # "Bleu" or "Bleu nuit": the fallback, or the buyer, knows which.
+    result = ambiguous(text)
+
+    assert result.reason is AmbiguityReason.CONFLICTING_SIGNALS
+    assert result.candidates == (C3,)
+    assert result.evidence[-2:] == quoted
+
+
+@pytest.mark.parametrize(
+    "text", ["je prends C3 bleu svp", "je prends C3 bleu coton", "je prends C3 bleu x2 merci"]
+)
+def test_a_colour_next_to_a_filler_or_the_name_is_that_colour(text: str) -> None:
+    result = parse(text)
+
+    assert isinstance(result, Match), result
+    assert result.variant == Variant("Bleu")
+
+
+def test_a_qualifier_only_matters_when_a_longer_label_exists() -> None:
+    assert parse("je prends C3 rouge fonce") == match(
+        C3, "Rouge", 1, Confidence.EXACT, "prends", "C3", "rouge"
+    )
+
+
 def test_a_product_with_a_single_variant_takes_it() -> None:
     assert parse("je prends E15 x3") == match(
         E15, "Unique", 3, Confidence.EXACT, "prends", "E15", "x3"

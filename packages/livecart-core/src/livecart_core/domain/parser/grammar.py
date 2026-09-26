@@ -12,7 +12,9 @@ gets, so that the catalog always wins over the generic vocabulary:
    that product, longest first ("bleu nuit" before "bleu"), matched on words,
    numbers and code-shaped tokens alike ("38", "T2"), allowing a plural or
    feminine ending ("bleue") and the English or French synonym of a size or
-   colour ("blue" for "Bleu"); then a ``t38``-style size, read as "taille 38";
+   colour ("blue" for "Bleu"); a label that begins a longer one ("Bleu" of
+   "Bleu nuit") next to a qualifier ("bleu fonce", "dark blue") may be either,
+   and is read as both; then a ``t38``-style size, read as "taille 38";
 4. the word after a variant keyword ("taille", "size", "couleur"...), a size
    or colour even when it looks like a quantity ("taille 2"); likewise the
    number after "en" ("en 38"), while no variant is named yet and the product
@@ -297,6 +299,7 @@ class _Grammar:
             ((label_words(variant.value), variant) for variant in product.variants),
             key=lambda entry: -len(entry[0]),
         )
+        found: list[tuple[int, int, tuple[str, ...]]] = []
         i = 0
         while i < len(self._tokens):
             matched = next(
@@ -314,7 +317,22 @@ class _Grammar:
             last = i + len(words) - 1
             self._assign_all(range(i, last + 1), Role.VARIANT)
             self._variants.append(VariantMention(variant, self._mention(i, last)))
+            found.append((i, last, words))
             i = last + 1
+        own_name = name_words(product.name)
+        for first, last, words in found:
+            longer = [v for w, v in labels if len(w) > len(words) and w[: len(words)] == words]
+            qualifier = next(
+                (j for j in (last + 1, first - 1) if _qualifies(self._free_word(j), own_name)),
+                None,
+            )
+            if longer and qualifier is not None:
+                # "bleu fonce": "Bleu", or "Bleu nuit"? Both, so that it is a
+                # conflict; the qualifier alone quotes the longer label, since
+                # the evidence never quotes one stretch of the comment twice.
+                self._roles[qualifier] = Role.VARIANT
+                mention = self._mention(qualifier, qualifier)
+                self._variants.extend(VariantMention(variant, mention) for variant in longer)
         # "T38" is "taille 38": a size of this product, or a size it does not have.
         for i, token in enumerate(self._tokens):
             if not (isinstance(token, UnknownCode) and self._roles[i] is None):
@@ -492,6 +510,15 @@ def _has_numbered_sizes(product: CatalogProduct) -> bool:
     return any(
         (words := label_words(variant.value)) and words[0].isdigit() for variant in product.variants
     )
+
+
+def _qualifies(word: str | None, own_name: frozenset[str]) -> bool:
+    """A word that may qualify a colour: another colour ("marine"), or content ("fonce")."""
+    if word is None or not word.isalpha() or not lexicon.word_forms(word).isdisjoint(own_name):
+        return False
+    if lexicon.in_vocabulary(word, lexicon.COLOUR_WORDS):
+        return True
+    return word not in lexicon.GRAMMAR_WORDS and not lexicon.typo_of_buy_verb(word)
 
 
 def _untrusted_number(word: str) -> int | None:
