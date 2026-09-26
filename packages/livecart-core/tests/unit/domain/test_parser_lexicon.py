@@ -48,7 +48,8 @@ def test_not_one_edit_apart(typed: str, reference: str) -> None:
 
 
 @pytest.mark.parametrize(
-    "typed", ["slod", "prend", "prnds", "tkae", "wnat", "achte", "veu", "sodl"]
+    "typed",
+    ["slod", "prend", "prnds", "tkae", "wnat", "achte", "veu", "sodl", "odrer", "reprend"],
 )
 def test_a_buy_verb_with_one_typo_is_recognised(typed: str) -> None:
     assert typo_of_buy_verb(typed)
@@ -69,6 +70,10 @@ def test_a_buy_verb_with_one_typo_is_recognised(typed: str) -> None:
         ("taken", "a real word one edit away"),
         ("reserved", "someone else's reservation"),
         ("achetez", "a call to the other viewers"),
+        ("older", "a real word one edit away"),
+        ("purchased", "a purchase already made"),
+        ("jprendss", "slang tolerates no typo"),
+        ("mind", "slang tolerates no typo"),
         ("me", "a word of the grammar"),
         ("ta2e", "not a word"),
         ("slodd", "two edits away"),

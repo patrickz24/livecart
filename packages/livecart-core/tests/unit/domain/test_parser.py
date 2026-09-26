@@ -34,6 +34,7 @@ FULLWIDTH_C3 = chr(0xFF23) + chr(0xFF13)
 SMALL_E_GRAVE = chr(0x00E8)
 SMALL_E_ACUTE = chr(0x00E9)
 SMALL_A_GRAVE = chr(0x00E0)
+SMALL_O_CIRCUMFLEX = chr(0x00F4)
 RIGHT_SINGLE_QUOTE = chr(0x2019)
 EURO = chr(0x20AC)
 HEART = chr(0x2764) + VS16
@@ -143,6 +144,49 @@ def test_two_products_in_one_comment_are_rejected() -> None:
 )
 def test_french_and_english_buy_signals(text: str, expected: Match) -> None:
     assert parse(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "signals"),
+    [
+        ("jprends B07", ("jprends",)),
+        ("jveux le B07", ("jveux",)),
+        (f"jach{SMALL_E_GRAVE}te B07", (f"jach{SMALL_E_GRAVE}te",)),
+        (f"mets-moi le B07 de c{SMALL_O_CIRCUMFLEX}t{SMALL_E_ACUTE}", ("mets-moi",)),
+        ("mettez-moi B07 svp", ("mettez-moi",)),
+        ("je reprends un B07", ("reprends",)),
+        ("order B07", ("order",)),
+        ("I'll have B07", ("I'll have",)),
+        ("purchase B07 please", ("purchase",)),
+        ("gimme B07", ("gimme",)),
+        ("B07 mine!", ("mine",)),
+        ("dibs on B07", ("dibs",)),
+    ],
+)
+def test_phone_spellings_colloquial_and_english_buy_signals(
+    text: str, signals: tuple[str, ...]
+) -> None:
+    result = parse(text)
+
+    assert isinstance(result, Match), result
+    assert result.product_code == B07
+    assert result.confidence is Confidence.EXACT
+    assert set(signals) <= set(result.evidence)
+
+
+def test_set_aside_quotes_both_phrases() -> None:
+    text = f"mets-moi le B07 de c{SMALL_O_CIRCUMFLEX}t{SMALL_E_ACUTE}"
+
+    assert parse(text) == match(
+        B07, "", 1, Confidence.EXACT, "mets-moi", "B07", f"de c{SMALL_O_CIRCUMFLEX}t{SMALL_E_ACUTE}"
+    )
+
+
+@pytest.mark.parametrize(
+    "text", ["cancel my order B07", "I ordered B07", "I purchased B07", "do you have B07"]
+)
+def test_an_order_already_placed_or_a_question_is_not_a_new_order(text: str) -> None:
+    assert rejected(text) is RejectionReason.NO_INTENT
 
 
 @pytest.mark.parametrize(

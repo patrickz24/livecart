@@ -5,6 +5,7 @@
 {"text": "j’achète B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "apostrophe"}
 {"text": "je réserve Z99", "kind": "match", "code": "Z99", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
 {"text": "je commande A12 en S", "kind": "match", "code": "A12", "variant": "S", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
+{"text": "jprends B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
 {"text": "je vais prendre le D4 en 40", "kind": "match", "code": "D4", "variant": "40", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
 {"text": "je prends A12 taille M", "kind": "match", "code": "A12", "variant": "M", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
 {"text": "Je prends la A12 en L s'il vous plaît", "kind": "match", "code": "A12", "variant": "L", "quantity": 1, "confidence": "1.00", "tag": "fr-verb"}
@@ -22,6 +23,7 @@
 {"text": "take C3 black", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 1, "confidence": "1.00", "tag": "synonym"}
 {"text": "buy D4 36", "kind": "match", "code": "D4", "variant": "36", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
 {"text": "I want B07", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "en-verb"}
+{"text": "I'll order B07 x2", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "1.00", "tag": "en-verb"}
 {"text": "i'd like A12 small", "kind": "match", "code": "A12", "variant": "S", "quantity": 1, "confidence": "1.00", "tag": "synonym"}
 {"text": "I would like C3 red x2", "kind": "match", "code": "C3", "variant": "Rouge", "quantity": 2, "confidence": "1.00", "tag": "synonym"}
 {"text": "i take A12 large", "kind": "match", "code": "A12", "variant": "L", "quantity": 1, "confidence": "1.00", "tag": "synonym"}

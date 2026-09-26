@@ -13,6 +13,8 @@ verbs: the verb has at least four letters (a typo of "buy" would accept
 "by" and "guy"), the first letter is right (so "gold", "deux" and "make" are
 not typos of "sold", "veux" and "take"), and the word is not itself a word of
 this vocabulary or of ``NOT_A_TYPO``, the real words one edit away from a verb.
+The phone spellings and the slang of ``BUY_SLANG`` ("jprends", "gimme",
+"mine") are buy signals as typed only: a typo of slang is noise.
 """
 
 import re
@@ -30,16 +32,45 @@ BUY_VERBS: Final = frozenset(
         "acheter",
         "reserve",
         "commande",
+        "reprends",
+        "reprendre",
         "sold",
         "take",
         "want",
         "wanna",
         "buy",
+        "order",
+        "purchase",
+    }
+)
+# Without the apostrophe a phone drops ("jprends" for "j'prends"), and slang.
+BUY_SLANG: Final = frozenset(
+    {
+        "jprends",
+        "jprend",
+        "jveux",
+        "jachete",
+        "jvoudrais",
+        "jcommande",
+        "gimme",
+        "dibs",
+        "mine",
     }
 )
 TYPO_MIN_LENGTH: Final = 4
-# "i'd like" and "would like": "like" alone is a compliment, not an order.
-BUY_PHRASES: Final = frozenset({("id", "like"), ("would", "like")})
+# "like" alone is a compliment and "have" alone a question ("do you have B07"),
+# not an order; "mets-moi" and "de cote" set the product aside for the buyer.
+BUY_PHRASES: Final = frozenset(
+    {
+        ("id", "like"),
+        ("would", "like"),
+        ("ill", "have"),
+        ("will", "have"),
+        ("mets", "moi"),
+        ("mettez", "moi"),
+        ("de", "cote"),
+    }
+)
 
 NOT_A_TYPO: Final = frozenset(
     {
@@ -66,6 +97,13 @@ NOT_A_TYPO: Final = frozenset(
         # Someone else's reservation, or a call to the other viewers.
         "reserved",
         "achetez",
+        "older",
+        "odder",
+        "ordre",
+        "orders",
+        "purchased",
+        "purchases",
+        "purchaser",
     }
 )
 
@@ -149,6 +187,9 @@ NEUTRAL_PHRASES: Final = frozenset(
         ("votre", "commande"),
         ("mes", "commandes"),
         ("vos", "commandes"),
+        ("my", "order"),
+        ("your", "order"),
+        ("my", "orders"),
     }
 )
 
@@ -403,6 +444,7 @@ VARIANT_SYNONYMS: Final = (
 # Every word the grammar gives a meaning to; none of them is ever a typo.
 GRAMMAR_WORDS: Final = (
     BUY_VERBS
+    | BUY_SLANG
     | DOUBT_WORDS
     | QUANTITY_PREFIXES
     | QUANTITY_SUFFIXES

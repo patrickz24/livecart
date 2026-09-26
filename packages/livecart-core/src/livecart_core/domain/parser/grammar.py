@@ -15,7 +15,8 @@ gets, so that the catalog always wins over the generic vocabulary:
    comes in numbered sizes, unless a quantity word follows it ("en 2
    exemplaires"): "A12 M en 2" and "C3 rouge en 2" are quantities;
 4. phrases: "sold out", "out of stock" and "is sold" (doubts), "i'd like" and
-   "would like" (buy signals), "ma commande" (the noun, no role);
+   "would like", "i'll have", "mets-moi", "de cote" (buy signals), "ma
+   commande" and "my order" (the noun, no role);
 5. the unknown codes left: product references too;
 6. quantities: a number next to a currency, ``%``, a time unit or a decimal
    separator is a price, a discount, a time or a decimal and is ignored
@@ -468,7 +469,7 @@ def _has_numbered_sizes(product: CatalogProduct) -> bool:
 
 
 def _word_role(word: str, own_name: frozenset[str]) -> Role:
-    if word in lexicon.BUY_VERBS:
+    if word in lexicon.BUY_VERBS or word in lexicon.BUY_SLANG:
         return Role.SIGNAL
     if word in lexicon.DOUBT_WORDS:
         return Role.DOUBT
