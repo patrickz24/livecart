@@ -8,6 +8,7 @@ import pytest
 from livecart_core.healthcheck import check_heartbeat
 from livecart_core.settings import Settings
 from livecart_core.testing.database import IntegrationSettings
+from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 from livecart_worker.main import serve
 
 pytestmark = pytest.mark.integration
@@ -20,6 +21,8 @@ async def test_a_real_ping_keeps_the_heartbeat_fresh(
     settings = Settings(
         database_url=integration_settings.database_url,
         redis_url=integration_settings.redis_url,
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
         worker_heartbeat_file=heartbeat,
         _env_file=None,
     )

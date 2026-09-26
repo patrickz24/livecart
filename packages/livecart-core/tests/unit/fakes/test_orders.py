@@ -12,23 +12,19 @@ from livecart_core.application.dto import (
     ShippingAddress,
     StockLevel,
 )
-from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
+from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import (
-    REFERENCE_SPACE,
     RandomSource,
-    encode_reference,
 )
 from livecart_core.domain.state_machines import (
-    CommentStatus,
     OrderStatus,
     TransitionOutcome,
 )
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import FAKE_CLOCK_START, InMemoryDatabase
-from livecart_core.testing.randomness import SequenceRandomSource
 
 NOW = FAKE_CLOCK_START
 TTL = timedelta(seconds=900)
@@ -78,48 +74,7 @@ def _database(
     return database, session.id, b07.id
 
 
-# --- Unit 3: reference draws (the other scenarios run on every backend, tests/contract) ---
-
-
-async def test_a_colliding_reference_is_drawn_again() -> None:
-    source = SequenceRandomSource([5, 5, 6])
-    database, session_id, _ = _database(random_source=source)
-
-    first = await database.orders.reserve(
-        _request(await _claimed(database, "comment-1"), session_id)
-    )
-    second = await database.orders.reserve(
-        _request(await _claimed(database, "comment-2", author="buyer-2"), session_id)
-    )
-
-    assert first is not None
-    assert second is not None
-    assert first.order is not None
-    assert second.order is not None
-    assert first.order.reference == encode_reference(5)
-    assert second.order.reference == encode_reference(6)
-    assert source.requested_bounds == [REFERENCE_SPACE] * 3
-
-
-async def test_three_collisions_leave_everything_as_it_was() -> None:
-    database, session_id, product_id = _database(random_source=SequenceRandomSource([5, 5, 5, 5]))
-    await database.orders.reserve(_request(await _claimed(database, "comment-1"), session_id))
-    comment_id = await _claimed(database, "comment-2", author="buyer-2")
-
-    with pytest.raises(ServiceUnavailable, match="collided"):
-        await database.orders.reserve(_request(comment_id, session_id))
-
-    comment = await database.comments.get(comment_id)
-    assert comment is not None
-    assert comment.status is CommentStatus.RECEIVED
-    assert await database.orders.find_reservation(comment_id) is None
-    assert len(database.tables.intents) == 1
-    product = await database.products.get(product_id)
-    assert product is not None
-    assert product.stock == StockLevel(10, reserved=1)
-
-
-# --- After the reservation -------------------------------------------------------------
+# --- After the reservation (unit 3 itself runs on every backend: tests/contract) -----
 
 
 async def _order_id(database: InMemoryDatabase, session_id: UUID, comment: str) -> UUID:

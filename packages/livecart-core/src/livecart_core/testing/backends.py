@@ -28,21 +28,20 @@ from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
+from livecart_core.order_tokens import OrderTokens
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import FAKE_CLOCK_START, InMemoryDatabase
+from livecart_core.testing.keys import TEST_ORDER_TOKEN_KEY
 
 CURRENCY = "EUR"
 # Unit 1's lease, as the worker takes it before unit 3 runs.
 LEASE = timedelta(seconds=30)
 # No password verifies against it, as with the "!" of a locked account in /etc/shadow.
 LOCKED_ACCOUNT = "!"
+# The access tokens of the orders the SQL adapter opens.
+ORDER_TOKENS = OrderTokens(TEST_ORDER_TOKEN_KEY)
 
 type CountedTable = Literal["purchase_intents", "orders"]
-
-
-def stand_in_token_hash(order_id: UUID) -> bytes:
-    """32 bytes derived from the order id, standing in for the order token's SHA-256."""
-    return order_id.bytes * 2
 
 
 class ReservationBackend(Protocol):
@@ -203,7 +202,7 @@ class PostgresBackend:
         self._orders = SqlOrderRepository(
             app_engine,
             currency=CURRENCY,
-            access_token_hash=stand_in_token_hash,
+            access_token_hash=ORDER_TOKENS.stored_hash,
             random_source=random_source,
         )
 
@@ -379,3 +378,9 @@ class PostgresBackend:
                 select(func.count()).select_from(tables.metadata.tables[table])
             )
         return int(counted or 0)
+
+
+class BackendFactory(Protocol):
+    """Builds a backend whose SQL adapter draws order references from ``random_source``."""
+
+    def __call__(self, *, random_source: RandomSource = secrets) -> ReservationBackend: ...

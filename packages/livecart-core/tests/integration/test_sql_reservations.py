@@ -23,7 +23,8 @@ from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import CommentStatus
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.units import transaction
-from livecart_core.testing.backends import PostgresBackend, stand_in_token_hash
+from livecart_core.order_tokens import OrderTokens
+from livecart_core.testing.backends import ORDER_TOKENS, PostgresBackend
 from livecart_core.testing.fakes import FAKE_CLOCK_START
 
 pytestmark = pytest.mark.integration
@@ -94,8 +95,11 @@ async def test_the_stock_is_reserved_by_one_conditional_update(
     # Nothing is locked ahead of the write, and the per-buyer rule is left to its index.
     assert not any("FOR UPDATE" in statement for statement in sent)
     assert not any(statement.startswith("SELECT orders") for statement in sent)
+    # The reservation's savepoint, and inside it the savepoint of the reference draw.
     assert [statement.split()[0] for statement in sent if "SAVEPOINT" in statement] == [
         "SAVEPOINT",
+        "SAVEPOINT",
+        "RELEASE",
         "RELEASE",
     ]
 
@@ -132,7 +136,7 @@ async def test_a_lock_held_too_long_is_a_transient_failure_with_nothing_written(
     assert await backend.orders.find_reservation(comment_id) is None
 
 
-async def test_an_order_stores_the_hash_its_token_scheme_gives(
+async def test_an_order_stores_the_hash_of_its_token_and_never_the_token(
     seeded: tuple[PostgresBackend, UUID, UUID], app_engine: AsyncEngine
 ) -> None:
     backend, session_id, comment_id = seeded
@@ -142,10 +146,17 @@ async def test_an_order_stores_the_hash_its_token_scheme_gives(
     assert result is not None
     assert result.order is not None
     async with app_engine.connect() as connection:
-        stored = await connection.scalar(
-            select(tables.orders.c.access_token_hash).where(tables.orders.c.id == result.order.id)
-        )
-    assert stored == stand_in_token_hash(result.order.id)
+        row = (
+            await connection.execute(
+                select(tables.orders).where(tables.orders.c.id == result.order.id)
+            )
+        ).one()
+    token = ORDER_TOKENS.token_for(result.order.id)
+    assert OrderTokens.verify(token, row.access_token_hash)
+    assert not OrderTokens.verify(ORDER_TOKENS.token_for(comment_id), row.access_token_hash)
+    assert token.encode() not in b"".join(
+        value if isinstance(value, bytes) else str(value).encode() for value in row
+    )
     # UUID v7: the application generated the ids, in creation order.
     assert result.order.id.version == 7
     assert result.intent.id.version == 7

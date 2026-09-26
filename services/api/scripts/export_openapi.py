@@ -46,6 +46,9 @@ def export_settings() -> Settings:
         log_level=LogLevel.WARNING,
         database_url=SecretStr(f"postgresql+asyncpg://{EXPORT_HOST}/openapi_export"),
         redis_url=SecretStr(f"redis://{EXPORT_HOST}/0"),
+        # Keys that sign nothing: the export never serves a request.
+        jwt_secret=SecretStr("openapi-export-jwt-" * 2),
+        order_token_key=SecretStr("openapi-export-order-token-" * 2),
         _env_file=None,
     )
 

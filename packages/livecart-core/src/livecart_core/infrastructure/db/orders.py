@@ -23,7 +23,14 @@
    buyer already holds a pending order for the product, the partial unique
    index ``uq_orders_pending_buyer_product`` refuses the order: the unit goes
    back to the savepoint, which undoes the reservation and the intent, and
-   records the intent as ``already_reserved`` instead.
+   records the intent as ``already_reserved`` instead;
+5. the order's reference is drawn at random, so two orders may draw the
+   same one: each ``INSERT orders`` runs under a nested savepoint, and when
+   ``uq_orders_reference`` refuses it, only that savepoint is rolled back
+   and a new reference is drawn, the reservation kept. After
+   ``REFERENCE_DRAWS`` (3) collisions the unit raises ``ServiceUnavailable``
+   and the whole transaction rolls back: the comment stays received and its
+   redelivery tries again. No ``IntegrityError`` ever reaches the caller.
 
 Locks are taken in one order, the comment then the product, so two units
 cannot deadlock. Every deadline comes from the request's ``now`` (the
@@ -49,7 +56,7 @@ from livecart_core.application.dto import (
     ShippingAddress,
     StockLevel,
 )
-from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
+from livecart_core.application.ports import REFERENCE_DRAWS, RecordNotFound, ServiceUnavailable
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome
 from livecart_core.domain.quantity import Quantity
@@ -337,31 +344,43 @@ class SqlOrderRepository:
         buyer: str,
         unit_price: Money,
     ) -> OrderRecord:
-        order = OrderRecord(
-            id=new_id(),
-            reference=generate_order_reference(self._random_source),
-            seller_id=seller_id,
-            session_id=request.session_id,
-            intent_id=intent.id,
-            product_id=intent.product_id,
-            quantity=request.quantity,
-            unit_price=unit_price,
-            total=unit_price * request.quantity.value,
-            status=OrderStatus.PENDING_PAYMENT,
-            reserved_until=request.reserved_until,
-            buyer_platform_user_id=buyer,
-            created_at=request.now,
-        )
-        try:
-            await connection.execute(insert(orders).values(self._order_values(order)))
-        except IntegrityError as error:
-            constraint = violated_constraint(error)
-            if constraint == PENDING_ORDER_INDEX:
-                raise _PendingOrderExists from error
-            if constraint == REFERENCE_INDEX:
-                raise ServiceUnavailable("the order reference collided") from error
-            raise
-        return order
+        """Insert the pending order, drawing its reference again after a collision.
+
+        Each draw runs under a savepoint of its own, nested in the
+        reservation's: a colliding reference undoes that insert only, not
+        the stock reserved before it.
+        """
+        order_id = new_id()
+        for _ in range(REFERENCE_DRAWS):
+            order = OrderRecord(
+                id=order_id,
+                reference=generate_order_reference(self._random_source),
+                seller_id=seller_id,
+                session_id=request.session_id,
+                intent_id=intent.id,
+                product_id=intent.product_id,
+                quantity=request.quantity,
+                unit_price=unit_price,
+                total=unit_price * request.quantity.value,
+                status=OrderStatus.PENDING_PAYMENT,
+                reserved_until=request.reserved_until,
+                buyer_platform_user_id=buyer,
+                created_at=request.now,
+            )
+            draw = await connection.begin_nested()
+            try:
+                await connection.execute(insert(orders).values(self._order_values(order)))
+            except IntegrityError as error:
+                await draw.rollback()
+                constraint = violated_constraint(error)
+                if constraint == REFERENCE_INDEX:
+                    continue
+                if constraint == PENDING_ORDER_INDEX:
+                    raise _PendingOrderExists from error
+                raise
+            await draw.commit()
+            return order
+        raise ServiceUnavailable(f"{REFERENCE_DRAWS} order reference draws collided")
 
     def _order_values(self, order: OrderRecord) -> dict[str, Any]:
         return {

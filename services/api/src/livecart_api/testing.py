@@ -17,6 +17,7 @@ from pydantic import SecretStr
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
 from livecart_core.settings import AppEnv, Settings
+from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 
 class FakeProbe:
@@ -37,6 +38,8 @@ def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT) -> Settings:
         app_env=app_env,
         database_url=SecretStr("postgresql+asyncpg://livecart_app:unit@db.invalid/livecart"),
         redis_url=SecretStr("redis://:unit@redis.invalid:6379/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
         _env_file=None,
     )
 

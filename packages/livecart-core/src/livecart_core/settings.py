@@ -18,6 +18,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
+from livecart_core.order_tokens import MIN_KEY_BYTES
 
 # Marker of the development placeholders shipped in .env.example.
 PLACEHOLDER_MARKER = "change-me"
@@ -108,6 +109,10 @@ class Settings(BaseAppSettings):
 
     database_url: SecretStr
     redis_url: SecretStr
+    # Signs the sellers' access tokens (HS256).
+    jwt_secret: SecretStr
+    # Derives the buyers' order access tokens (livecart_core.order_tokens).
+    order_token_key: SecretStr
     # Touched by the worker heartbeat, read by `livecart-healthcheck heartbeat`.
     worker_heartbeat_file: Path = DEFAULT_HEARTBEAT_FILE
     # Business bound on the quantity of one purchase intent. The domain never
@@ -132,6 +137,21 @@ class Settings(BaseAppSettings):
     @classmethod
     def _check_redis_url(cls, value: SecretStr) -> SecretStr:
         return _require_scheme(value, "redis", "rediss")
+
+    @field_validator("jwt_secret", "order_token_key")
+    @classmethod
+    def _check_key_length(cls, value: SecretStr) -> SecretStr:
+        """An HMAC key shorter than its SHA-256 output weakens it; the length alone is reported."""
+        if len(value.get_secret_value().encode()) < MIN_KEY_BYTES:
+            raise ValueError(f"must be at least {MIN_KEY_BYTES} bytes long")
+        return value
+
+    @model_validator(mode="after")
+    def _keys_are_distinct(self) -> Self:
+        """One key per purpose: a leaked JWT secret must not also give every order's token."""
+        if self.jwt_secret.get_secret_value() == self.order_token_key.get_secret_value():
+            raise ValueError("ORDER_TOKEN_KEY must differ from JWT_SECRET")
+        return self
 
     @field_validator("max_quantity_per_comment")
     @classmethod

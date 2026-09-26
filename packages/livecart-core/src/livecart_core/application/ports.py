@@ -31,7 +31,7 @@ with its fake, in the same commit.
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Protocol
+from typing import Final, Protocol
 from uuid import UUID
 
 from livecart_core.application.dto import (
@@ -392,6 +392,13 @@ class ProductStockRepository(Protocol):
         Raises ``StockConflict`` when the total would fall below the reserved
         and sold units.
         """
+
+
+# How many order references unit 3 draws before it gives up with ServiceUnavailable.
+# With a million orders among the 2**30 references, three draws all collide
+# about once in a billion reservations, so running out means a bug, or a
+# nearly full space: the comment is redelivered rather than lost.
+REFERENCE_DRAWS: Final = 3
 
 
 class OrderReservations(Protocol):

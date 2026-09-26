@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr
 
 from livecart_core.settings import Settings
+from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 from livecart_worker.main import install_stop_handlers, serve
 
 
@@ -28,6 +29,8 @@ async def test_serve_returns_once_stopped_and_releases_redis(tmp_path: Path) -> 
         database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
         # A closed port: the stop event is already set, so no PING is attempted.
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
         worker_heartbeat_file=heartbeat,
         _env_file=None,
     )

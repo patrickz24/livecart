@@ -12,16 +12,23 @@ from uuid import UUID
 
 import pytest
 
-from livecart_core.application.dto import IntentSource, ReservationRequest, StockLevel
-from livecart_core.application.ports import RecordNotFound
+from livecart_core.application.dto import (
+    IntentSource,
+    ReservationRequest,
+    ResolvedIntent,
+    StockLevel,
+)
+from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
+from livecart_core.application.reserve_stock import ReserveStock
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome
 from livecart_core.domain.quantity import Quantity
-from livecart_core.domain.reference import OrderReference
+from livecart_core.domain.reference import REFERENCE_SPACE, OrderReference, encode_reference
 from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
-from livecart_core.testing.backends import ReservationBackend
-from livecart_core.testing.fakes import FAKE_CLOCK_START
+from livecart_core.testing.backends import BackendFactory, ReservationBackend
+from livecart_core.testing.fakes import FAKE_CLOCK_START, FakeClock
+from livecart_core.testing.randomness import SequenceRandomSource
 
 NOW = FAKE_CLOCK_START
 TTL = timedelta(seconds=900)
@@ -266,6 +273,66 @@ async def test_an_out_of_stock_reservation_reads_back_without_order(
     assert stored.intent.outcome is IntentOutcome.OUT_OF_STOCK
     assert stored.order is None
     assert stored.stock == StockLevel(0)
+
+
+# --- Reference draws, through the use case -----------------------------------------------
+
+B07 = ResolvedIntent(
+    product_code=ProductCode("B07"),
+    variant=Variant(),
+    quantity=Quantity(1),
+    source=IntentSource.PARSER,
+    confidence=Decimal("1.00"),
+    evidence=("je prends", "B07"),
+)
+
+
+async def test_a_colliding_reference_is_drawn_again(make_backend: BackendFactory) -> None:
+    # The second order draws the first one's reference, then a free one.
+    source = SequenceRandomSource([5, 5, 6])
+    backend = make_backend(random_source=source)
+    session_id, _, product_id = await _seed(backend)
+    reserve = ReserveStock(backend.orders, FakeClock(), reservation_ttl=TTL)
+
+    first = await reserve(await backend.add_comment("comment-1"), session_id, B07)
+    # No IntegrityError reaches the use case: the collision is retried inside the unit.
+    second = await reserve(
+        await backend.add_comment("comment-2", author="buyer-2"), session_id, B07
+    )
+
+    assert first is not None
+    assert second is not None
+    assert first.order is not None
+    assert second.order is not None
+    assert first.order.reference == encode_reference(5)
+    assert second.order.reference == encode_reference(6)
+    assert source.requested_bounds == [REFERENCE_SPACE] * 3
+    # The retry kept the reservation made before it.
+    assert second.intent.outcome is IntentOutcome.RESERVED
+    assert await backend.orders.get_by_reference(encode_reference(6)) == second.order
+    product = await backend.products.get(product_id)
+    assert product is not None
+    assert product.stock == StockLevel(10, reserved=2)
+    assert (await backend.count("orders"), await backend.count("purchase_intents")) == (2, 2)
+
+
+async def test_three_collisions_leave_everything_as_it_was(make_backend: BackendFactory) -> None:
+    backend = make_backend(random_source=SequenceRandomSource([5, 5, 5, 5]))
+    session_id, _, product_id = await _seed(backend)
+    reserve = ReserveStock(backend.orders, FakeClock(), reservation_ttl=TTL)
+    await reserve(await backend.add_comment("comment-1"), session_id, B07)
+    comment_id = await backend.add_comment("comment-2", author="buyer-2")
+
+    with pytest.raises(ServiceUnavailable, match="3 order reference draws collided"):
+        await reserve(comment_id, session_id, B07)
+
+    # A transient failure: the comment stays received, for its redelivery to try again.
+    assert await backend.comment_state(comment_id) == (CommentStatus.RECEIVED, None)
+    assert await backend.orders.find_reservation(comment_id) is None
+    assert (await backend.count("orders"), await backend.count("purchase_intents")) == (1, 1)
+    product = await backend.products.get(product_id)
+    assert product is not None
+    assert product.stock == StockLevel(10, reserved=1)
 
 
 async def test_an_already_reserved_intent_reads_back_without_order(

@@ -8,6 +8,7 @@ from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources, build_resources
 from livecart_api.testing import make_app, open_client
 from livecart_core.settings import AppEnv, Settings
+from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 
 async def test_a_request_id_is_generated_and_returned() -> None:
@@ -82,6 +83,8 @@ async def test_shutdown_closes_the_injected_resources() -> None:
     settings = Settings(
         database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
         redis_url=SecretStr("redis://redis.invalid:6379/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
         _env_file=None,
     )
     app = create_app(settings, Resources(readiness_checks=(), aclose=aclose))
@@ -95,6 +98,8 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     settings = Settings(
         database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
         redis_url=SecretStr("redis://redis.invalid:6379/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
         _env_file=None,
     )
 
@@ -109,6 +114,8 @@ async def test_unreachable_dependencies_answer_503() -> None:
     settings = Settings(
         database_url=SecretStr("postgresql+asyncpg://u:p@127.0.0.1:1/livecart"),
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
         _env_file=None,
     )
     resources = build_resources(settings)

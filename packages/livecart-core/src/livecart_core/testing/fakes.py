@@ -65,6 +65,7 @@ from livecart_core.application.dto import (
     WebhookOutcome,
 )
 from livecart_core.application.ports import (
+    REFERENCE_DRAWS,
     Clock,
     InvalidSignature,
     RecordNotFound,
@@ -99,8 +100,6 @@ from livecart_core.domain.state_machines import (
 FAKE_CLOCK_START: Final = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
 # The header the fake adapters read their signature from.
 FAKE_SIGNATURE_HEADER: Final = "x-fake-signature"
-# Unit 3 draws a reference at most this many times before giving up.
-REFERENCE_DRAWS: Final = 3
 
 
 def _require_aware(moment: datetime) -> datetime:

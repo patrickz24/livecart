@@ -70,6 +70,8 @@ docker compose up -d --wait postgres redis  # servers of the integration tests
 
 Every command runs from the repository root: the Python processes read `.env` from the working directory.
 
+When `.env.example` gains a variable without a default (`JWT_SECRET` and `ORDER_TOKEN_KEY` in milestone 3), an older `.env` lacks it and `docker compose` refuses to start, naming it: copy its lines from `.env.example` into `.env`.
+
 ## Make targets and their raw commands
 
 `make` targets are thin wrappers, run from Git Bash. In PowerShell, run the raw commands one by one, in the same order (Windows PowerShell 5.1 has no `&&`; use one line per command, or `;`).

@@ -6,9 +6,15 @@ from pydantic import SecretStr, ValidationError
 
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.settings import AppEnv, LogLevel, MigrationSettings, Settings
+from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 APP_URL = "postgresql+asyncpg://livecart_app:{password}@localhost:55432/livecart"
 REDIS_URL = "redis://:{password}@localhost:56379/0"
+# Signing keys that pass every check, in production too.
+KEYS = {
+    "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
+    "ORDER_TOKEN_KEY": TEST_ORDER_TOKEN_KEY.get_secret_value(),
+}
 
 
 @pytest.fixture(autouse=True)
@@ -16,7 +22,8 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts from an environment without any LiveCart variable."""
     names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
     extra = ("WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT", "RESERVATION_TTL_SECONDS")
-    for name in (*names, *extra, "DEFAULT_CURRENCY"):
+    keys = ("JWT_SECRET", "ORDER_TOKEN_KEY")
+    for name in (*names, *extra, *keys, "DEFAULT_CURRENCY"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -34,7 +41,12 @@ def dev_env(
     return {
         "DATABASE_URL": APP_URL.format(password=password),
         "REDIS_URL": REDIS_URL.format(password=redis_password),
+        **KEYS,
     }
+
+
+def _key_lines() -> str:
+    return "".join(f"{name}={value}\n" for name, value in KEYS.items())
 
 
 def test_defaults_and_types() -> None:
@@ -102,7 +114,7 @@ def test_production_starts_with_real_secrets() -> None:
 )
 def test_database_url_must_use_asyncpg(database_url: str) -> None:
     with pytest.raises(ValidationError) as excinfo:
-        load(DATABASE_URL=database_url, REDIS_URL=REDIS_URL.format(password="x"))
+        load(DATABASE_URL=database_url, REDIS_URL=REDIS_URL.format(password="x"), **KEYS)
 
     assert "postgresql+asyncpg" in str(excinfo.value)
     assert "s3cr3t" not in str(excinfo.value)
@@ -110,11 +122,13 @@ def test_database_url_must_use_asyncpg(database_url: str) -> None:
 
 def test_redis_url_must_use_a_redis_scheme() -> None:
     with pytest.raises(ValidationError, match="redis or rediss"):
-        load(DATABASE_URL=APP_URL.format(password="x"), REDIS_URL="http://localhost:6379")
+        load(DATABASE_URL=APP_URL.format(password="x"), REDIS_URL="http://localhost:6379", **KEYS)
 
 
 def test_tls_redis_is_accepted() -> None:
-    settings = load(DATABASE_URL=APP_URL.format(password="x"), REDIS_URL="rediss://:x@cache:6380/0")
+    settings = load(
+        DATABASE_URL=APP_URL.format(password="x"), REDIS_URL="rediss://:x@cache:6380/0", **KEYS
+    )
 
     assert settings.redis_url.get_secret_value().startswith("rediss://")
 
@@ -131,7 +145,7 @@ def test_reads_dotenv_and_ignores_foreign_variables(tmp_path: Path) -> None:
         f"DATABASE_URL={APP_URL.format(password='from-file')}\n"
         f"REDIS_URL={REDIS_URL.format(password='from-file')}\n"
         "LOG_LEVEL=warning\n"
-        "SOME_OTHER_PROCESS_VARIABLE=ignored\n",
+        "SOME_OTHER_PROCESS_VARIABLE=ignored\n" + _key_lines(),
         encoding="utf-8",
     )
 
@@ -144,7 +158,8 @@ def test_reads_dotenv_and_ignores_foreign_variables(tmp_path: Path) -> None:
 def test_environment_overrides_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text(
-        f"DATABASE_URL={APP_URL.format(password='x')}\nREDIS_URL=redis://file:6379/0\n",
+        f"DATABASE_URL={APP_URL.format(password='x')}\nREDIS_URL=redis://file:6379/0\n"
+        + _key_lines(),
         encoding="utf-8",
     )
     monkeypatch.setenv("REDIS_URL", "redis://environment:6379/0")
@@ -224,6 +239,63 @@ def test_the_deployment_currency_is_the_euro_by_default() -> None:
 def test_the_deployment_currency_is_an_iso_4217_code(value: str) -> None:
     with pytest.raises(ValidationError, match="ISO 4217"):
         load(DEFAULT_CURRENCY=value, **dev_env())
+
+
+def test_the_signing_keys_are_secrets() -> None:
+    settings = load(**dev_env())
+
+    assert settings.jwt_secret == TEST_JWT_SECRET
+    assert settings.order_token_key == TEST_ORDER_TOKEN_KEY
+    assert TEST_JWT_SECRET.get_secret_value() not in repr(settings)
+    assert TEST_ORDER_TOKEN_KEY.get_secret_value() not in repr(settings)
+
+
+@pytest.mark.parametrize("name", ["JWT_SECRET", "ORDER_TOKEN_KEY"])
+def test_each_signing_key_is_required(name: str) -> None:
+    env = dev_env()
+    del env[name]
+
+    with pytest.raises(ValidationError, match=name.lower()):
+        load(**env)
+
+
+@pytest.mark.parametrize("name", ["JWT_SECRET", "ORDER_TOKEN_KEY"])
+def test_a_signing_key_needs_32_bytes(name: str) -> None:
+    short = "s3cr3t-" * 4 + "abc"  # 31 bytes
+
+    with pytest.raises(ValidationError, match="at least 32 bytes long") as excinfo:
+        load(**{**dev_env(), name: short})
+
+    assert name.lower() in str(excinfo.value)
+    assert short not in str(excinfo.value)
+    # Bytes, not characters: 16 two-byte characters are enough.
+    assert load(**{**dev_env(), name: "é" * 16})
+
+
+def test_the_order_token_key_differs_from_the_jwt_secret() -> None:
+    shared = TEST_JWT_SECRET.get_secret_value()
+
+    with pytest.raises(ValidationError, match="ORDER_TOKEN_KEY must differ from JWT_SECRET") as exc:
+        load(**{**dev_env(), "ORDER_TOKEN_KEY": shared})
+
+    assert shared not in str(exc.value)
+
+
+def test_placeholder_signing_keys_are_rejected_in_production() -> None:
+    env = {
+        **dev_env(password="p4ss", redis_password="p4ss"),
+        "JWT_SECRET": "change-me-jwt-change-me-jwt-change-me-jwt",
+        "ORDER_TOKEN_KEY": "change-me-order-change-me-order-change-me",
+    }
+
+    assert load(**env)  # accepted in development
+    with pytest.raises(ValidationError) as excinfo:
+        load(APP_ENV="production", **env)
+
+    message = str(excinfo.value)
+    assert "JWT_SECRET" in message
+    assert "ORDER_TOKEN_KEY" in message
+    assert "change-me-jwt" not in message
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

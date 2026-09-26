@@ -11,7 +11,6 @@ revision.
 
 import secrets
 from collections.abc import AsyncIterator
-from typing import Protocol
 
 import pytest
 from redis.asyncio import Redis
@@ -20,7 +19,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.redis_client import create_redis_client
-from livecart_core.testing.backends import InMemoryBackend, PostgresBackend, ReservationBackend
+from livecart_core.testing.backends import (
+    BackendFactory,
+    InMemoryBackend,
+    PostgresBackend,
+    ReservationBackend,
+)
 from livecart_core.testing.database import (
     IntegrationSettings,
     IntegrationSettingsError,
@@ -93,10 +97,6 @@ def database_schema(integration_settings: IntegrationSettings) -> None:
 async def clean_database(database_schema: None, migrator_engine: AsyncEngine) -> None:
     """Every table of the schema, empty: earlier tests' rows are truncated as the migrator."""
     await truncate_all(migrator_engine)
-
-
-class BackendFactory(Protocol):
-    def __call__(self, *, random_source: RandomSource = secrets) -> ReservationBackend: ...
 
 
 @pytest.fixture(params=["memory", pytest.param("postgres", marks=pytest.mark.integration)])
