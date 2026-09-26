@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-26. Milestone 1 put nginx, the PostgreSQL roles and the hardened containers in place; milestone 3 added the security headers of the API, the trusted hosts, the body limit and the rate limits; milestone 4a added the limit per platform of the comment webhook.
+Accepted, 2026-09-26. Milestone 1 put nginx, the PostgreSQL roles and the hardened containers in place; milestone 3 added the security headers of the API, the trusted hosts, the body limit and the rate limits; milestone 4a added the limit per platform of the comment webhook; milestone 5 the limit of the checkout and the CSP of the API's HTML pages.
 
 ## Context
 
@@ -24,7 +24,7 @@ LiveCart is a public portfolio project that must hold up as if it were in produc
 
 ### Headers and hosts of the API
 
-- Every answer, the refusals of the perimeter included, carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`: a JSON answer is never sniffed, framed or rendered. `HSTS_ENABLED` adds `Strict-Transport-Security: max-age=31536000; includeSubDomains`, once the API is only reached over HTTPS. The Swagger UI page of development keeps every header but the CSP; production serves neither `/docs` nor `/openapi.json`.
+- Every answer, the refusals of the perimeter included, carries `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`: a JSON answer is never sniffed, framed or rendered. `HSTS_ENABLED` adds `Strict-Transport-Security: max-age=31536000; includeSubDomains`, once the API is only reached over HTTPS. The Swagger UI page of development keeps every header but the CSP; production serves neither `/docs` nor `/openapi.json`. The API's few HTML pages (`livecart_api.pages`: the payment bridge, and the mock provider's hosted page in development) run no script and set a CSP of their own, `default-src 'none'` with their one stylesheet allowed by its SHA-256, no base URL, no frame, and forms towards the API's own origin or none, which the middleware keeps.
 - `TrustedHostMiddleware` answers 400 to a `Host` outside `ALLOWED_HOSTS` (`localhost,127.0.0.1,api` by default; 127.0.0.1 for the container healthcheck, api for the other containers), without redirecting. The settings refuse `*` and anything that is no host name.
 
 ### Rate limits in Redis
@@ -40,6 +40,9 @@ LiveCart is a public portfolio project that must hold up as if it were in produc
   | `GET /api/v1/orders/{reference}`            | 30 a minute, and 20 not-found answers | client address                                            |
   | `GET /api/v1/orders/{reference}/details`    | 60 a minute                           | SHA-256 of the order token, or client address without one |
   | its not-found answers                       | the 20 of the lookup, shared with it  | client address                                            |
+  | `PUT .../{reference}/shipping-address`      | the details' 60, shared with them     | SHA-256 of the order token, or client address without one |
+  | `POST .../{reference}/checkout`             | that 60, and 5 checkouts a minute     | SHA-256 of the order token, or client address without one |
+  | `GET /api/v1/payments/return`               | the lookup's 30 and 20 not-found      | client address                                            |
   | `GET /api/v1/storefronts/{seller_slug}`     | 120 a minute                          | client address                                            |
   | `POST /api/v1/webhooks/comments/{platform}` | 6000 a minute                         | platform, once its signature holds                        |
   | its refused signatures                      | 60 a minute                           | client address                                            |

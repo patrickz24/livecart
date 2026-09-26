@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-26. Milestone 3 implemented the reference, the token and the two tiers of `GET /api/v1/orders/{reference}`; milestone 4a the notice that delivers them to the buyer, through the simulated notifier of development. The routes that pay, take the address and follow the delivery join the token tier with the milestones that implement them.
+Accepted, 2026-09-26. Milestone 3 implemented the reference, the token and the two tiers of `GET /api/v1/orders/{reference}`; milestone 4a the notice that delivers them to the buyer, through the simulated notifier of development. Milestone 5 added the routes that take the address and start the payment to the token tier; the one that follows the delivery joins it with milestone 6.
 
 ## Context
 
