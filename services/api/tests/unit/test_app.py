@@ -16,6 +16,7 @@ from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
@@ -139,6 +140,11 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert list(resources.platforms) == [Platform.SIMULATOR]
     assert isinstance(resources.platforms[Platform.SIMULATOR], SimulatorPlatformAdapter)
     assert isinstance(resources.comment_queue, RedisCommentQueue)
+    # The streams read through a client of their own, the events are published
+    # through the shared one: two adapters, over two pools.
+    assert isinstance(resources.session_events, RedisSessionEvents)
+    assert isinstance(resources.event_streams, RedisSessionEvents)
+    assert resources.event_streams is not resources.session_events
     await resources.aclose()  # nothing was connected: closing must not fail
 
 

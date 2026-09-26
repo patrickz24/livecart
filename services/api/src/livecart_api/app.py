@@ -195,7 +195,7 @@ def create_app(
     watch = WatchLiveSession(
         resources.live_sessions,
         resources.activity,
-        resources.session_events,
+        resources.event_streams,
         resources.clock,
         snapshot_limit=SNAPSHOT_LIMIT,
     )

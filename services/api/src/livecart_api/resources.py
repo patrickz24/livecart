@@ -24,6 +24,7 @@ from livecart_core.application.ports import (
     RefreshTokenRepository,
     SellerRepository,
     SessionEventLog,
+    SessionEventStream,
 )
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
@@ -73,15 +74,29 @@ class Resources:
     # publisher of a session's start and end.
     activity: LiveSessionActivity
     session_events: SessionEventLog
+    # What the SSE streams read the events through: on a Redis client of their
+    # own in build_resources, so that the streams, each blocked in XREAD, never
+    # take a connection from the webhook, the login or /ready.
+    event_streams: SessionEventStream
 
 
 def build_resources(settings: Settings) -> Resources:
-    """Create the engine, the Redis client and the adapters; nothing connects until first use.
+    """Create the engine, the Redis clients and the adapters; nothing connects until first use.
 
     The password hasher computes its dummy hash here, once: one argon2 run
     when the process starts. The platform adapters are built here too, so an
     enabled stub or a missing webhook secret stops the process before it
     listens (``livecart_core.infrastructure.platforms``).
+
+    Two Redis clients: the shared one, of redis-py's default 100
+    connections, for every short command (the rate limits, the queue,
+    idempotency, the events published, /ready), and the event streams' own,
+    of ``SSE_MAX_STREAMS`` connections. A stream holds one connection at
+    most at a time, since its reads follow one another and each gives its
+    connection back before the next, and ``StreamSlots`` caps the streams:
+    their pool never runs out before the slots do. On the shared pool, 100
+    streams in ``XREAD BLOCK`` would take every connection, and every other
+    use of Redis would fail with ``MaxConnectionsError`` until they closed.
     """
     clock = SystemClock()
     platforms = build_platform_adapters(settings, clock)
@@ -92,10 +107,14 @@ def build_resources(settings: Settings) -> Resources:
         max_overflow=API_POOL.max_overflow,
     )
     redis = create_redis_client(settings.redis_url)
+    stream_redis = create_redis_client(settings.redis_url, max_connections=settings.sse_max_streams)
 
     async def aclose() -> None:
         try:
-            await redis.aclose()
+            try:
+                await redis.aclose()
+            finally:
+                await stream_redis.aclose()
         finally:
             await engine.dispose()
 
@@ -122,4 +141,5 @@ def build_resources(settings: Settings) -> Resources:
         comment_queue=RedisCommentQueue(redis, prefix=settings.redis_key_prefix),
         activity=SqlLiveSessionActivity(engine, currency=settings.default_currency),
         session_events=RedisSessionEvents(redis, prefix=settings.redis_key_prefix),
+        event_streams=RedisSessionEvents(stream_redis, prefix=settings.redis_key_prefix),
     )

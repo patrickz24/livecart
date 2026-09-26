@@ -22,9 +22,11 @@ no``, so that nginx relays every message at once. What the stream says is
   with its last id.
 
 Each instance serves at most ``SSE_MAX_STREAMS`` (200) streams at once, each
-holding one Redis connection in ``XREAD BLOCK``: the next one answers 503
-with ``Retry-After``. A stream counts once against the seller's rate limit,
-when it opens.
+holding one Redis connection in ``XREAD BLOCK``, from a pool of as many
+connections that only the streams use (``Resources.event_streams``), so that
+they never take the shared pool's from the webhook, the login or ``/ready``:
+the next one answers 503 with ``Retry-After``. A stream counts once against
+the seller's rate limit, when it opens.
 """
 
 from collections.abc import AsyncIterator, Sequence

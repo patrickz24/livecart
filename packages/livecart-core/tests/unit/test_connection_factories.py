@@ -8,7 +8,7 @@ from livecart_core.infrastructure.db.engine import (
     create_db_engine,
     worker_pool,
 )
-from livecart_core.infrastructure.redis_client import create_redis_client
+from livecart_core.infrastructure.redis_client import SHARED_POOL_CONNECTIONS, create_redis_client
 
 
 async def test_engine_is_pooled_and_hides_bound_parameters() -> None:
@@ -37,6 +37,19 @@ async def test_redis_client_uses_the_url_credentials_and_database() -> None:
         assert kwargs["password"] == "s3cr3t"
     finally:
         await client.aclose()
+
+
+async def test_a_redis_client_holds_at_most_the_connections_it_is_given() -> None:
+    shared = create_redis_client(SecretStr("redis://cache.invalid:6379/0"))
+    streams = create_redis_client(SecretStr("redis://cache.invalid:6379/0"), max_connections=7)
+    try:
+        assert shared.connection_pool.max_connections == SHARED_POOL_CONNECTIONS == 100
+        assert streams.connection_pool.max_connections == 7
+    finally:
+        await shared.aclose()
+        await streams.aclose()
+    with pytest.raises(ValueError, match="one connection at least"):
+        create_redis_client(SecretStr("redis://cache.invalid:6379/0"), max_connections=0)
 
 
 # PostgreSQL's 100 connections, less its 3 reserved for superusers.

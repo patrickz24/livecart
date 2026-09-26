@@ -132,9 +132,12 @@ def memory_resources(
     rate limiter's windows are timed by ``clock``, and the comment webhook
     serves the simulator only, signed with ``TEST_COMMENT_WEBHOOK_SECRET``,
     into a fake queue, unless ``platforms`` and ``comment_queue`` say otherwise.
-    The session events go to in-memory streams unless ``session_events`` does.
+    The session events go to in-memory streams unless ``session_events`` does,
+    and the event streams read them there: one adapter for both, as a single
+    Redis would be.
     """
     clock = clock if clock is not None else current_time_clock()
+    events = session_events if session_events is not None else InMemorySessionEvents(clock)
     return Resources(
         readiness_checks=checks,
         aclose=_noop,
@@ -150,9 +153,8 @@ def memory_resources(
         platforms=platforms if platforms is not None else simulator_only(clock),
         comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
         activity=database.activity,
-        session_events=(
-            session_events if session_events is not None else InMemorySessionEvents(clock)
-        ),
+        session_events=events,
+        event_streams=events,
     )
 
 
@@ -175,6 +177,7 @@ def postgres_resources(
     The integration tests own the engine, and the Redis client of the store,
     the queue or the session streams they may pass: nothing is closed with the app.
     """
+    events = session_events if session_events is not None else InMemorySessionEvents(clock)
     return Resources(
         readiness_checks=(),
         aclose=_noop,
@@ -192,9 +195,8 @@ def postgres_resources(
         platforms=simulator_only(clock),
         comment_queue=comment_queue if comment_queue is not None else FakeCommentQueue(clock),
         activity=SqlLiveSessionActivity(engine, currency=CURRENCY),
-        session_events=(
-            session_events if session_events is not None else InMemorySessionEvents(clock)
-        ),
+        session_events=events,
+        event_streams=events,
     )
 
 

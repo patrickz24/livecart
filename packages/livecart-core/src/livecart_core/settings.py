@@ -105,7 +105,9 @@ MAX_QUEUE_RECLAIM_MIN_IDLE_MS: Final = 3_600_000
 # and the clocks of Redis and of the worker.
 RECLAIM_IDLE_MARGIN: Final = 2
 MAX_PORT: Final = 65_535
-# Redis's default maxclients is 10000: the streams of an instance stay far below.
+# Each stream of an instance holds a connection of a Redis pool the streams
+# alone use, sized to SSE_MAX_STREAMS, beside the 100 of the process's shared
+# pool: 5000 of them stay far below Redis's default maxclients of 10000.
 MAX_SSE_STREAMS: Final = 5_000
 # The LLM fallback (livecart_worker.llm). A model id as the API names it, such
 # as claude-opus-5, which comments.llm_model holds in 128 characters.
@@ -469,8 +471,10 @@ class Settings(LlmSettings):
     # METRICS_PORT, serves no endpoint: the tests, a second process on one host.
     metrics_port: int | None = DEFAULT_METRICS_PORT
     # The streams of session events one API instance serves at once (SSE,
-    # GET /api/v1/live-sessions/{id}/events): each holds a Redis connection
-    # blocked in XREAD, so the next one answers 503 with Retry-After.
+    # GET /api/v1/live-sessions/{id}/events): each holds a connection blocked
+    # in XREAD, from a Redis pool of this many connections that only the streams
+    # use, so that they never starve the shared pool's 100 (the webhook, the
+    # login, /ready); the next one answers 503 with Retry-After.
     sse_max_streams: int = 200
 
     @property
