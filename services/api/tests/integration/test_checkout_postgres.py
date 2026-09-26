@@ -1,8 +1,9 @@
 """The buyer's checkout on the SQL adapters and livecart_test, with the mock provider on Redis.
 
 The journey of the buyer app: the address, the checkout, the mock's hosted
-page opened from the answer, then Pay, which sends the buyer to the bridge
-page and posts the signed webhook, recorded here by a fake transport.
+page opened from the answer, then Pay, which posts the signed webhook,
+recorded here by a fake transport, and sends the buyer to the bridge page,
+whose button opens the app again.
 """
 
 from collections.abc import AsyncIterator
@@ -172,6 +173,14 @@ async def test_the_buyer_pays_through_the_mock_from_the_address_to_the_bridge(
     assert event.checkout_ref == payment["provider_ref"]
     session = await api.mock.get_checkout(str(payment["provider_ref"]))
     assert session.status is CheckoutStatus.COMPLETE
+
+    # The bridge page, from the attempt's stored return URL: a button back to the app.
+    bridge = await api.client.get(paid.headers["location"].removeprefix(ORIGIN))
+
+    assert bridge.status_code == 200
+    assert (
+        f'href="livecart://payment-return?status=success&amp;reference={api.order.reference}"'
+    ) in bridge.text
 
 
 async def test_a_second_click_answers_the_same_url_from_the_recorded_attempt(

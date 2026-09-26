@@ -52,6 +52,7 @@ from livecart_api.routes.health import build_health_router
 from livecart_api.routes.live_sessions import build_live_session_router
 from livecart_api.routes.mock_payments import MockWebhookSender, build_mock_payment_router
 from livecart_api.routes.orders import build_order_router
+from livecart_api.routes.payments import build_payment_bridge_router
 from livecart_api.routes.products import build_product_router
 from livecart_api.routes.session_events import (
     EVENTS_ROUTE,
@@ -240,6 +241,8 @@ def create_app(
     app.include_router(
         build_order_router(lookup, SetShippingAddress(lookup, resources.orders), checkout, limits)
     )
+    # Where the provider sends the buyer's browser back, to reopen the app.
+    app.include_router(build_payment_bridge_router(lookup, resources.payments, limits))
     ingest = IngestComments(
         resources.comment_queue,
         resources.clock,
