@@ -13,6 +13,7 @@ from livecart_core.application.ports import (
     Clock,
     IdempotencyStore,
     LiveSessionRepository,
+    OrderLookup,
     PasswordHasher,
     ProductStockRepository,
     RefreshTokenRepository,
@@ -21,12 +22,14 @@ from livecart_core.application.ports import (
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.db.engine import API_POOL, create_db_engine, ping_database
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
+from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
+from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
 
 
@@ -50,6 +53,7 @@ class Resources:
     live_sessions: LiveSessionRepository
     products: ProductStockRepository
     idempotency: IdempotencyStore
+    orders: OrderLookup
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -85,4 +89,9 @@ def build_resources(settings: Settings) -> Resources:
         live_sessions=SqlLiveSessionRepository(engine),
         products=SqlProductStockRepository(engine, currency=settings.default_currency),
         idempotency=RedisIdempotencyStore(redis, prefix=settings.redis_key_prefix),
+        orders=SqlOrderRepository(
+            engine,
+            currency=settings.default_currency,
+            access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
+        ),
     )

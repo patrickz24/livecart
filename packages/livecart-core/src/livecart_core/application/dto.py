@@ -663,6 +663,20 @@ class OrderRecord:
 
 
 @dataclass(frozen=True, slots=True)
+class BuyerOrderRecord:
+    """An order, the product it holds, and the hash of its access token: what a buyer may read.
+
+    The hash only proves a token the buyer shows; it is never answered.
+    """
+
+    order: OrderRecord
+    product_code: ProductCode
+    product_variant: Variant
+    product_name: str
+    access_token_hash: bytes = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
 class ReservationResult:
     """What unit 3 recorded: the intent, its order if the stock was reserved, the stock after it."""
 
@@ -862,6 +876,22 @@ class ShipmentRecord:
     ref: ShipmentRef
     status: ShipmentStatus
     last_event_at: datetime | None = None
+
+
+# --- Storefront ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class Storefront:
+    """A seller's public page: the seller, their current live session and its products."""
+
+    seller: SellerRecord
+    session: LiveSessionRecord | None = None
+    products: tuple[ProductRecord, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.session is None and self.products:
+            raise ValueError("a storefront without a live session shows no products")
 
 
 # --- Idempotent requests ---------------------------------------------------------------

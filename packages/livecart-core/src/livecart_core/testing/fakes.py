@@ -18,7 +18,7 @@ import hashlib
 import hmac
 import secrets
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -30,6 +30,7 @@ from livecart_core.application.dto import (
     AttemptOpening,
     AttemptOpeningKind,
     BuyerNotification,
+    BuyerOrderRecord,
     CarrierName,
     CheckoutRequest,
     CheckoutSession,
@@ -116,9 +117,15 @@ from livecart_core.domain.state_machines import (
     TransitionOutcome,
     transition,
 )
+from livecart_core.order_tokens import OrderTokens
+from livecart_core.testing.keys import TEST_ORDER_TOKEN_KEY
 
 # The day milestone 2 landed, at noon UTC: any fixed instant would do.
 FAKE_CLOCK_START: Final = datetime(2026, 9, 26, 12, 0, tzinfo=UTC)
+# Before every time a fake records: what an absent time sorts as.
+_EARLIEST: Final = datetime.min.replace(tzinfo=UTC)
+# The access tokens of the orders the fakes open, under the key of the tests.
+TEST_ORDER_TOKENS: Final = OrderTokens(TEST_ORDER_TOKEN_KEY)
 # No password verifies against it, as with the "!" of a locked account in /etc/shadow.
 LOCKED_ACCOUNT: Final = "!"
 # The header the fake adapters read their signature from.
@@ -596,6 +603,8 @@ class InMemoryTables:
     products: dict[UUID, ProductRecord] = field(default_factory=dict)
     intents: dict[UUID, PurchaseIntentRecord] = field(default_factory=dict)
     orders: dict[UUID, OrderRecord] = field(default_factory=dict)
+    # orders.access_token_hash, beside the records, which never carry it.
+    order_token_hashes: dict[UUID, bytes] = field(default_factory=dict)
     payments: dict[UUID, PaymentRecord] = field(default_factory=dict)
     shipments: dict[UUID, ShipmentRecord] = field(default_factory=dict)
     webhook_events: dict[tuple[PaymentProviderName, str], RegisteredEvent] = field(
@@ -608,12 +617,21 @@ class InMemoryDatabase:
 
     ``random_source`` draws the order references, as in the SQL adapter: pass
     a ``SequenceRandomSource`` to force a collision. ``currency`` prices the
-    products the repositories add, as ``DEFAULT_CURRENCY`` does in production.
+    products the repositories add, as ``DEFAULT_CURRENCY`` does in production;
+    ``access_token_hash`` gives the stored hash of an order's token, derived
+    from ``TEST_ORDER_TOKEN_KEY`` unless a test passes another derivation.
     """
 
-    def __init__(self, *, random_source: RandomSource = secrets, currency: str = "EUR") -> None:
+    def __init__(
+        self,
+        *,
+        random_source: RandomSource = secrets,
+        currency: str = "EUR",
+        access_token_hash: Callable[[UUID], bytes] = TEST_ORDER_TOKENS.stored_hash,
+    ) -> None:
         self.random_source = random_source
         self.currency = currency
+        self.access_token_hash = access_token_hash
         self.tables = InMemoryTables()
         self._last_id = 0
         self.sellers = InMemorySellerRepository(self)
@@ -791,6 +809,9 @@ class InMemorySellerRepository(_Repository):
 
     async def find_by_email(self, email: str) -> SellerRecord | None:
         return self._find(email)
+
+    async def find_by_slug(self, slug: str) -> SellerRecord | None:
+        return next((row for row in self._tables.sellers.values() if row.slug == slug), None)
 
     def _find(self, email: str) -> SellerRecord | None:
         # lower(), as the unique index uq_sellers_email: the e-mails are ASCII.
@@ -1049,6 +1070,23 @@ class InMemoryLiveSessionRepository(_Repository):
             self._tables.sessions[session_id] = session
         return LiveSessionTransition(session, outcome)
 
+    async def find_current(self, seller_id: UUID) -> LiveSessionRecord | None:
+        live = [
+            session
+            for session in self._tables.sessions.values()
+            if session.seller_id == seller_id and session.status is LiveSessionStatus.LIVE
+        ]
+        # The latest start first, a session without one last, then the newest id: as in SQL.
+        return max(
+            live,
+            key=lambda session: (
+                session.started_at is not None,
+                session.started_at or _EARLIEST,
+                session.id,
+            ),
+            default=None,
+        )
+
     def _check_live_id_free(
         self, platform: Platform, external_live_id: str, *, keep: UUID | None
     ) -> None:
@@ -1225,6 +1263,7 @@ class InMemoryOrderRepository(_Repository):
                 created_at=request.now,
             )
             self._tables.orders[order.id] = order
+            self._tables.order_token_hashes[order.id] = self._db.access_token_hash(order.id)
             self._tables.products[product.id] = replace(product, stock=stock)
         self._tables.comments[comment.id] = replace(
             comment, status=CommentStatus.PROCESSED, session_id=session.id
@@ -1249,6 +1288,21 @@ class InMemoryOrderRepository(_Repository):
     async def get_by_reference(self, reference: OrderReference) -> OrderRecord | None:
         return next(
             (row for row in self._tables.orders.values() if row.reference == reference), None
+        )
+
+    async def find_by_reference(self, reference: OrderReference) -> BuyerOrderRecord | None:
+        order = next(
+            (row for row in self._tables.orders.values() if row.reference == reference), None
+        )
+        if order is None:
+            return None
+        product = self._tables.products[order.product_id]
+        return BuyerOrderRecord(
+            order=order,
+            product_code=product.code,
+            product_variant=product.variant,
+            product_name=product.name,
+            access_token_hash=self._tables.order_token_hashes[order.id],
         )
 
     async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:

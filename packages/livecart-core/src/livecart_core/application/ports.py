@@ -37,6 +37,7 @@ from uuid import UUID
 from livecart_core.application.dto import (
     AttemptOpening,
     BuyerNotification,
+    BuyerOrderRecord,
     CarrierName,
     CheckoutRequest,
     CheckoutSession,
@@ -396,6 +397,9 @@ class SellerRepository(Protocol):
     async def find_by_email(self, email: str) -> SellerRecord | None:
         """The seller whose e-mail equals ``email`` ignoring case, or ``None``."""
 
+    async def find_by_slug(self, slug: str) -> SellerRecord | None:
+        """The seller whose storefront has this slug (``uq_sellers_slug``), or ``None``."""
+
 
 class RefreshTokenRepository(Protocol):
     """The sellers' refresh tokens, stored as SHA-256 hashes, in one family per login.
@@ -533,6 +537,12 @@ class LiveSessionRepository(Protocol):
         Raises ``RecordNotFound`` when no session has ``session_id``.
         """
 
+    async def find_current(self, seller_id: UUID) -> LiveSessionRecord | None:
+        """The seller's live session that started last, what the storefront shows, or ``None``.
+
+        A seller may run several at once, one per platform: the latest wins.
+        """
+
 
 class ProductStockRepository(Protocol):
     """The products of the sessions and their stock counters.
@@ -661,7 +671,19 @@ class OrderReservations(Protocol):
         """The order with this reference, or ``None``."""
 
 
-class OrderRepository(OrderReservations, Protocol):
+class OrderLookup(Protocol):
+    """An order as its buyer reads it, found by the reference read aloud on the live.
+
+    The record carries the hash of the order's access token: the reference
+    alone shows the order's status, and whatever needs more is checked
+    against that hash first (``livecart_core.order_tokens``).
+    """
+
+    async def find_by_reference(self, reference: OrderReference) -> BuyerOrderRecord | None:
+        """The order with this reference and the product it holds, or ``None``."""
+
+
+class OrderRepository(OrderReservations, OrderLookup, Protocol):
     """Purchase intents and orders, with the stock effects of their transitions."""
 
     async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:

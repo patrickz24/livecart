@@ -225,6 +225,23 @@ class SqlLiveSessionRepository:
             return LiveSessionTransition(live_session_record(row), TransitionOutcome.APPLIED)
         raise RuntimeError(f"live session {session_id} kept changing status")
 
+    async def find_current(self, seller_id: UUID) -> LiveSessionRecord | None:
+        async with transaction(self._engine) as connection:
+            row = (
+                await connection.execute(
+                    select(live_sessions)
+                    .where(
+                        live_sessions.c.seller_id == seller_id,
+                        live_sessions.c.status == LiveSessionStatus.LIVE.value,
+                    )
+                    .order_by(
+                        live_sessions.c.started_at.desc().nulls_last(), live_sessions.c.id.desc()
+                    )
+                    .limit(1)
+                )
+            ).one_or_none()
+        return None if row is None else live_session_record(row)
+
     async def find_by_live_id(
         self, platform: Platform, external_live_id: str
     ) -> LiveSessionRecord | None:

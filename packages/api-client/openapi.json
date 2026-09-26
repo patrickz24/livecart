@@ -264,6 +264,167 @@
         "title": "LoginRequest",
         "type": "object"
       },
+      "OrderDetailsResponse": {
+        "description": "What the order's access token adds to the public projection.",
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "expired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expired At"
+          },
+          "paid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paid At"
+          },
+          "product": {
+            "$ref": "#/components/schemas/OrderProduct"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "reserved_until": {
+            "format": "date-time",
+            "title": "Reserved Until",
+            "type": "string"
+          },
+          "shipping_address": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShippingAddress"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "total_minor": {
+            "title": "Total Minor",
+            "type": "integer"
+          },
+          "unit_price_minor": {
+            "title": "Unit Price Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reference",
+          "status",
+          "product",
+          "quantity",
+          "total_minor",
+          "currency",
+          "reserved_until",
+          "unit_price_minor",
+          "shipping_address",
+          "paid_at",
+          "expired_at"
+        ],
+        "title": "OrderDetailsResponse",
+        "type": "object"
+      },
+      "OrderProduct": {
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "variant": {
+            "title": "Variant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "variant",
+          "name"
+        ],
+        "title": "OrderProduct",
+        "type": "object"
+      },
+      "OrderStatus": {
+        "enum": [
+          "pending_payment",
+          "paid",
+          "expired",
+          "paid_after_expiry"
+        ],
+        "title": "OrderStatus",
+        "type": "string"
+      },
+      "OrderStatusResponse": {
+        "description": "What the reference alone shows of an order.",
+        "properties": {
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "product": {
+            "$ref": "#/components/schemas/OrderProduct"
+          },
+          "quantity": {
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "reserved_until": {
+            "format": "date-time",
+            "title": "Reserved Until",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "total_minor": {
+            "title": "Total Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "reference",
+          "status",
+          "product",
+          "quantity",
+          "total_minor",
+          "currency",
+          "reserved_until"
+        ],
+        "title": "OrderStatusResponse",
+        "type": "object"
+      },
       "Platform": {
         "description": "Where a live stream runs: ``live_sessions.platform`` and ``comments.platform``.",
         "enum": [
@@ -563,6 +724,161 @@
         "title": "SellerProfile",
         "type": "object"
       },
+      "ShippingAddress": {
+        "additionalProperties": false,
+        "description": "A buyer's delivery address, typed in the buyer app and validated here.",
+        "properties": {
+          "city": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "City",
+            "type": "string"
+          },
+          "country": {
+            "pattern": "^[A-Z]{2}$",
+            "title": "Country",
+            "type": "string"
+          },
+          "full_name": {
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Full Name",
+            "type": "string"
+          },
+          "line1": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Line1",
+            "type": "string"
+          },
+          "line2": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Line2",
+            "type": "string"
+          },
+          "postal_code": {
+            "maxLength": 16,
+            "minLength": 1,
+            "title": "Postal Code",
+            "type": "string"
+          }
+        },
+        "required": [
+          "full_name",
+          "line1",
+          "postal_code",
+          "city",
+          "country"
+        ],
+        "title": "ShippingAddress",
+        "type": "object"
+      },
+      "StorefrontProduct": {
+        "properties": {
+          "available": {
+            "title": "Available",
+            "type": "integer"
+          },
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "currency": {
+            "title": "Currency",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "price_minor": {
+            "title": "Price Minor",
+            "type": "integer"
+          },
+          "variant": {
+            "title": "Variant",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "variant",
+          "name",
+          "price_minor",
+          "currency",
+          "available"
+        ],
+        "title": "StorefrontProduct",
+        "type": "object"
+      },
+      "StorefrontResponse": {
+        "properties": {
+          "display_name": {
+            "title": "Display Name",
+            "type": "string"
+          },
+          "live_session": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/StorefrontSession"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "display_name",
+          "live_session"
+        ],
+        "title": "StorefrontResponse",
+        "type": "object"
+      },
+      "StorefrontSession": {
+        "properties": {
+          "platform": {
+            "$ref": "#/components/schemas/Platform"
+          },
+          "products": {
+            "items": {
+              "$ref": "#/components/schemas/StorefrontProduct"
+            },
+            "title": "Products",
+            "type": "array"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "platform",
+          "started_at",
+          "products"
+        ],
+        "title": "StorefrontSession",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -605,6 +921,11 @@
       }
     },
     "securitySchemes": {
+      "OrderAccessToken": {
+        "description": "The order's access token, delivered to the buyer with its reference.",
+        "scheme": "bearer",
+        "type": "http"
+      },
       "SellerAccessToken": {
         "description": "The access_token of POST /api/v1/auth/login or /api/v1/auth/refresh.",
         "scheme": "bearer",
@@ -1695,6 +2016,180 @@
         "summary": "Start a draft session: its comments now reserve stock",
         "tags": [
           "live-sessions"
+        ]
+      }
+    },
+    "/api/v1/orders/{reference}": {
+      "get": {
+        "operationId": "get_order",
+        "parameters": [
+          {
+            "description": "LC- then six symbols, in any case, the hyphen optional.",
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "description": "LC- then six symbols, in any case, the hyphen optional.",
+              "examples": [
+                "LC-7K3F9Q"
+              ],
+              "maxLength": 32,
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderStatusResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No order has this reference"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "An order's status, product and total, from its reference alone",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{reference}/details": {
+      "get": {
+        "operationId": "get_order_details",
+        "parameters": [
+          {
+            "description": "LC- then six symbols, in any case, the hyphen optional.",
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "description": "LC- then six symbols, in any case, the hyphen optional.",
+              "examples": [
+                "LC-7K3F9Q"
+              ],
+              "maxLength": 32,
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OrderDetailsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No order has this reference, or the token is missing or not its own"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OrderAccessToken": []
+          }
+        ],
+        "summary": "An order in full, shipping address included, with its access token",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/storefronts/{seller_slug}": {
+      "get": {
+        "operationId": "get_storefront",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "seller_slug",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "title": "Seller Slug",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorefrontResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No seller has this slug"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "A seller's storefront: the current live session and its products",
+        "tags": [
+          "storefronts"
         ]
       }
     },

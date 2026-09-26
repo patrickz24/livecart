@@ -26,7 +26,11 @@ from livecart_core.domain.outcomes import IntentOutcome
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import REFERENCE_SPACE, OrderReference, encode_reference
 from livecart_core.domain.state_machines import CommentStatus, LiveSessionStatus, OrderStatus
-from livecart_core.testing.backends import BackendFactory, ReservationBackend
+from livecart_core.testing.backends import (
+    ORDER_TOKENS,
+    BackendFactory,
+    ReservationBackend,
+)
 from livecart_core.testing.fakes import FAKE_CLOCK_START, FakeClock
 from livecart_core.testing.randomness import SequenceRandomSource
 
@@ -349,3 +353,34 @@ async def test_an_already_reserved_intent_reads_back_without_order(
     assert stored is not None
     assert stored.intent.outcome is IntentOutcome.ALREADY_RESERVED
     assert stored.order is None
+
+
+# --- What the buyer reads --------------------------------------------------------------
+
+
+async def test_a_buyer_finds_an_order_by_its_reference_with_its_product(
+    backend: ReservationBackend,
+) -> None:
+    session_id, _, _ = await _seed(backend)
+    comment_id = await backend.add_comment("comment-1")
+    result = await backend.orders.reserve(
+        _request(comment_id, session_id, "A12", variant="M", quantity=2)
+    )
+    assert result is not None
+    assert result.order is not None
+    order = result.order
+
+    found = await backend.orders.find_by_reference(order.reference)
+
+    assert found is not None
+    assert found.order == order
+    assert (found.product_code, found.product_variant, found.product_name) == (
+        ProductCode("A12"),
+        Variant("M"),
+        "Produit",
+    )
+    # The stored hash proves the order's own token, and no other.
+    assert ORDER_TOKENS.verify(ORDER_TOKENS.token_for(order.id), found.access_token_hash)
+    assert not ORDER_TOKENS.verify(ORDER_TOKENS.token_for(UNKNOWN), found.access_token_hash)
+    assert "access_token_hash" not in repr(found)
+    assert await backend.orders.find_by_reference(OrderReference("LC-000000")) is None

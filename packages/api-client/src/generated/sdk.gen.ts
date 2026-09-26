@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
+import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -39,7 +39,11 @@ export const logout = <ThrowOnError extends boolean = false>(options?: Options<L
  * The profile of the seller the access token names
  */
 export const getCurrentSeller = <ThrowOnError extends boolean = false>(options?: Options<GetCurrentSellerData, ThrowOnError>): RequestResult<GetCurrentSellerResponses, GetCurrentSellerErrors, ThrowOnError> => (options?.client ?? client).get<GetCurrentSellerResponses, GetCurrentSellerErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/auth/me',
     ...options
 });
@@ -53,7 +57,11 @@ export const refreshAccessToken = <ThrowOnError extends boolean = false>(options
  * List the seller's live sessions, newest first
  */
 export const listLiveSessions = <ThrowOnError extends boolean = false>(options?: Options<ListLiveSessionsData, ThrowOnError>): RequestResult<ListLiveSessionsResponses, ListLiveSessionsErrors, ThrowOnError> => (options?.client ?? client).get<ListLiveSessionsResponses, ListLiveSessionsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions',
     ...options
 });
@@ -62,7 +70,11 @@ export const listLiveSessions = <ThrowOnError extends boolean = false>(options?:
  * Create a draft live session
  */
 export const createLiveSession = <ThrowOnError extends boolean = false>(options: Options<CreateLiveSessionData, ThrowOnError>): RequestResult<CreateLiveSessionResponses, CreateLiveSessionErrors, ThrowOnError> => (options.client ?? client).post<CreateLiveSessionResponses, CreateLiveSessionErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions',
     ...options,
     headers: {
@@ -75,7 +87,11 @@ export const createLiveSession = <ThrowOnError extends boolean = false>(options:
  * Read one of the seller's live sessions
  */
 export const getLiveSession = <ThrowOnError extends boolean = false>(options: Options<GetLiveSessionData, ThrowOnError>): RequestResult<GetLiveSessionResponses, GetLiveSessionErrors, ThrowOnError> => (options.client ?? client).get<GetLiveSessionResponses, GetLiveSessionErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}',
     ...options
 });
@@ -84,7 +100,11 @@ export const getLiveSession = <ThrowOnError extends boolean = false>(options: Op
  * Change a live session's title, and in a draft its platform and live id
  */
 export const updateLiveSession = <ThrowOnError extends boolean = false>(options: Options<UpdateLiveSessionData, ThrowOnError>): RequestResult<UpdateLiveSessionResponses, UpdateLiveSessionErrors, ThrowOnError> => (options.client ?? client).patch<UpdateLiveSessionResponses, UpdateLiveSessionErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}',
     ...options,
     headers: {
@@ -97,7 +117,11 @@ export const updateLiveSession = <ThrowOnError extends boolean = false>(options:
  * End a live session: it reserves nothing more and becomes read-only
  */
 export const endLiveSession = <ThrowOnError extends boolean = false>(options: Options<EndLiveSessionData, ThrowOnError>): RequestResult<EndLiveSessionResponses, EndLiveSessionErrors, ThrowOnError> => (options.client ?? client).post<EndLiveSessionResponses, EndLiveSessionErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/end',
     ...options
 });
@@ -106,7 +130,11 @@ export const endLiveSession = <ThrowOnError extends boolean = false>(options: Op
  * List the products of a live session, in creation order
  */
 export const listProducts = <ThrowOnError extends boolean = false>(options: Options<ListProductsData, ThrowOnError>): RequestResult<ListProductsResponses, ListProductsErrors, ThrowOnError> => (options.client ?? client).get<ListProductsResponses, ListProductsErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/products',
     ...options
 });
@@ -115,7 +143,11 @@ export const listProducts = <ThrowOnError extends boolean = false>(options: Opti
  * Add a product to a live session
  */
 export const createProduct = <ThrowOnError extends boolean = false>(options: Options<CreateProductData, ThrowOnError>): RequestResult<CreateProductResponses, CreateProductErrors, ThrowOnError> => (options.client ?? client).post<CreateProductResponses, CreateProductErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/products',
     ...options,
     headers: {
@@ -128,7 +160,11 @@ export const createProduct = <ThrowOnError extends boolean = false>(options: Opt
  * Read a product of a live session
  */
 export const getProduct = <ThrowOnError extends boolean = false>(options: Options<GetProductData, ThrowOnError>): RequestResult<GetProductResponses, GetProductErrors, ThrowOnError> => (options.client ?? client).get<GetProductResponses, GetProductErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/products/{product_id}',
     ...options
 });
@@ -137,7 +173,11 @@ export const getProduct = <ThrowOnError extends boolean = false>(options: Option
  * Change a product's name and price, and in a draft its code and variant
  */
 export const updateProduct = <ThrowOnError extends boolean = false>(options: Options<UpdateProductData, ThrowOnError>): RequestResult<UpdateProductResponses, UpdateProductErrors, ThrowOnError> => (options.client ?? client).patch<UpdateProductResponses, UpdateProductErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/products/{product_id}',
     ...options,
     headers: {
@@ -150,7 +190,11 @@ export const updateProduct = <ThrowOnError extends boolean = false>(options: Opt
  * Add or remove stock units, once per Idempotency-Key
  */
 export const restockProduct = <ThrowOnError extends boolean = false>(options: Options<RestockProductData, ThrowOnError>): RequestResult<RestockProductResponses, RestockProductErrors, ThrowOnError> => (options.client ?? client).post<RestockProductResponses, RestockProductErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/products/{product_id}/restock',
     ...options,
     headers: {
@@ -163,10 +207,37 @@ export const restockProduct = <ThrowOnError extends boolean = false>(options: Op
  * Start a draft session: its comments now reserve stock
  */
 export const startLiveSession = <ThrowOnError extends boolean = false>(options: Options<StartLiveSessionData, ThrowOnError>): RequestResult<StartLiveSessionResponses, StartLiveSessionErrors, ThrowOnError> => (options.client ?? client).post<StartLiveSessionResponses, StartLiveSessionErrors, ThrowOnError>({
-    security: [{ scheme: 'bearer', type: 'http' }],
+    security: [{
+            key: 'SellerAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
     url: '/api/v1/live-sessions/{session_id}/start',
     ...options
 });
+
+/**
+ * An order's status, product and total, from its reference alone
+ */
+export const getOrder = <ThrowOnError extends boolean = false>(options: Options<GetOrderData, ThrowOnError>): RequestResult<GetOrderResponses, GetOrderErrors, ThrowOnError> => (options.client ?? client).get<GetOrderResponses, GetOrderErrors, ThrowOnError>({ url: '/api/v1/orders/{reference}', ...options });
+
+/**
+ * An order in full, shipping address included, with its access token
+ */
+export const getOrderDetails = <ThrowOnError extends boolean = false>(options: Options<GetOrderDetailsData, ThrowOnError>): RequestResult<GetOrderDetailsResponses, GetOrderDetailsErrors, ThrowOnError> => (options.client ?? client).get<GetOrderDetailsResponses, GetOrderDetailsErrors, ThrowOnError>({
+    security: [{
+            key: 'OrderAccessToken',
+            scheme: 'bearer',
+            type: 'http'
+        }],
+    url: '/api/v1/orders/{reference}/details',
+    ...options
+});
+
+/**
+ * A seller's storefront: the current live session and its products
+ */
+export const getStorefront = <ThrowOnError extends boolean = false>(options: Options<GetStorefrontData, ThrowOnError>): RequestResult<GetStorefrontResponses, GetStorefrontErrors, ThrowOnError> => (options.client ?? client).get<GetStorefrontResponses, GetStorefrontErrors, ThrowOnError>({ url: '/api/v1/storefronts/{seller_slug}', ...options });
 
 /**
  * Liveness probe

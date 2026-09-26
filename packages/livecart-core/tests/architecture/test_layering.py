@@ -108,6 +108,8 @@ def test_the_walk_finds_the_packages_and_their_modules() -> None:
     assert "livecart_core.application.live_sessions" in application
     assert "livecart_core.application.products" in application
     assert "livecart_core.application.idempotency" in application
+    assert "livecart_core.application.storefront" in application
+    assert "livecart_core.application.buyer_orders" in application
     assert "livecart_core.domain.sellers" in domain
     assert "livecart_core.domain.live_sessions" in domain
 

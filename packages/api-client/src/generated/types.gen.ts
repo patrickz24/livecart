@@ -148,6 +148,102 @@ export type LoginRequest = {
 };
 
 /**
+ * OrderDetailsResponse
+ *
+ * What the order's access token adds to the public projection.
+ */
+export type OrderDetailsResponse = {
+    /**
+     * Currency
+     */
+    currency: string;
+    /**
+     * Expired At
+     */
+    expired_at: string | null;
+    /**
+     * Paid At
+     */
+    paid_at: string | null;
+    product: OrderProduct;
+    /**
+     * Quantity
+     */
+    quantity: number;
+    /**
+     * Reference
+     */
+    reference: string;
+    /**
+     * Reserved Until
+     */
+    reserved_until: string;
+    shipping_address: ShippingAddress | null;
+    status: OrderStatus;
+    /**
+     * Total Minor
+     */
+    total_minor: number;
+    /**
+     * Unit Price Minor
+     */
+    unit_price_minor: number;
+};
+
+/**
+ * OrderProduct
+ */
+export type OrderProduct = {
+    /**
+     * Code
+     */
+    code: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Variant
+     */
+    variant: string;
+};
+
+/**
+ * OrderStatus
+ */
+export type OrderStatus = 'pending_payment' | 'paid' | 'expired' | 'paid_after_expiry';
+
+/**
+ * OrderStatusResponse
+ *
+ * What the reference alone shows of an order.
+ */
+export type OrderStatusResponse = {
+    /**
+     * Currency
+     */
+    currency: string;
+    product: OrderProduct;
+    /**
+     * Quantity
+     */
+    quantity: number;
+    /**
+     * Reference
+     */
+    reference: string;
+    /**
+     * Reserved Until
+     */
+    reserved_until: string;
+    status: OrderStatus;
+    /**
+     * Total Minor
+     */
+    total_minor: number;
+};
+
+/**
  * Platform
  *
  * Where a live stream runs: ``live_sessions.platform`` and ``comments.platform``.
@@ -322,6 +418,102 @@ export type SellerProfile = {
      * Slug
      */
     slug: string;
+};
+
+/**
+ * ShippingAddress
+ *
+ * A buyer's delivery address, typed in the buyer app and validated here.
+ */
+export type ShippingAddress = {
+    /**
+     * City
+     */
+    city: string;
+    /**
+     * Country
+     */
+    country: string;
+    /**
+     * Full Name
+     */
+    full_name: string;
+    /**
+     * Line1
+     */
+    line1: string;
+    /**
+     * Line2
+     */
+    line2?: string;
+    /**
+     * Postal Code
+     */
+    postal_code: string;
+};
+
+/**
+ * StorefrontProduct
+ */
+export type StorefrontProduct = {
+    /**
+     * Available
+     */
+    available: number;
+    /**
+     * Code
+     */
+    code: string;
+    /**
+     * Currency
+     */
+    currency: string;
+    /**
+     * Name
+     */
+    name: string;
+    /**
+     * Price Minor
+     */
+    price_minor: number;
+    /**
+     * Variant
+     */
+    variant: string;
+};
+
+/**
+ * StorefrontResponse
+ */
+export type StorefrontResponse = {
+    /**
+     * Display Name
+     */
+    display_name: string;
+    live_session: StorefrontSession | null;
+    /**
+     * Slug
+     */
+    slug: string;
+};
+
+/**
+ * StorefrontSession
+ */
+export type StorefrontSession = {
+    platform: Platform;
+    /**
+     * Products
+     */
+    products: Array<StorefrontProduct>;
+    /**
+     * Started At
+     */
+    started_at: string | null;
+    /**
+     * Title
+     */
+    title: string;
 };
 
 /**
@@ -947,6 +1139,112 @@ export type StartLiveSessionResponses = {
 };
 
 export type StartLiveSessionResponse = StartLiveSessionResponses[keyof StartLiveSessionResponses];
+
+export type GetOrderData = {
+    body?: never;
+    path: {
+        /**
+         * Reference
+         *
+         * LC- then six symbols, in any case, the hyphen optional.
+         */
+        reference: string;
+    };
+    query?: never;
+    url: '/api/v1/orders/{reference}';
+};
+
+export type GetOrderErrors = {
+    /**
+     * No order has this reference
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetOrderError = GetOrderErrors[keyof GetOrderErrors];
+
+export type GetOrderResponses = {
+    /**
+     * Successful Response
+     */
+    200: OrderStatusResponse;
+};
+
+export type GetOrderResponse = GetOrderResponses[keyof GetOrderResponses];
+
+export type GetOrderDetailsData = {
+    body?: never;
+    path: {
+        /**
+         * Reference
+         *
+         * LC- then six symbols, in any case, the hyphen optional.
+         */
+        reference: string;
+    };
+    query?: never;
+    url: '/api/v1/orders/{reference}/details';
+};
+
+export type GetOrderDetailsErrors = {
+    /**
+     * No order has this reference, or the token is missing or not its own
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetOrderDetailsError = GetOrderDetailsErrors[keyof GetOrderDetailsErrors];
+
+export type GetOrderDetailsResponses = {
+    /**
+     * Successful Response
+     */
+    200: OrderDetailsResponse;
+};
+
+export type GetOrderDetailsResponse = GetOrderDetailsResponses[keyof GetOrderDetailsResponses];
+
+export type GetStorefrontData = {
+    body?: never;
+    path: {
+        /**
+         * Seller Slug
+         */
+        seller_slug: string;
+    };
+    query?: never;
+    url: '/api/v1/storefronts/{seller_slug}';
+};
+
+export type GetStorefrontErrors = {
+    /**
+     * No seller has this slug
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type GetStorefrontError = GetStorefrontErrors[keyof GetStorefrontErrors];
+
+export type GetStorefrontResponses = {
+    /**
+     * Successful Response
+     */
+    200: StorefrontResponse;
+};
+
+export type GetStorefrontResponse = GetStorefrontResponses[keyof GetStorefrontResponses];
 
 export type GetHealthData = {
     body?: never;

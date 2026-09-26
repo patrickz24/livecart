@@ -10,7 +10,8 @@ their types, from an installed module instead of receiving untyped fixtures.
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from uuid import UUID
 
 import httpx2
@@ -21,15 +22,22 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
+from livecart_core.application.dto import IntentSource, OrderRecord, ReservationRequest
 from livecart_core.application.ports import Clock, IdempotencyStore, PasswordHasher
+from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.domain.quantity import Quantity
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
+from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.settings import AppEnv, Settings
 from livecart_core.testing.backends import CURRENCY
+from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import (
+    FAKE_CLOCK_START,
+    TEST_ORDER_TOKENS,
     FakeClock,
     FakePasswordHasher,
     InMemoryDatabase,
@@ -96,6 +104,7 @@ def memory_resources(
         live_sessions=database.live_sessions,
         products=database.products,
         idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
+        orders=database.orders,
     )
 
 
@@ -117,6 +126,9 @@ def postgres_resources(
         live_sessions=SqlLiveSessionRepository(engine),
         products=SqlProductStockRepository(engine, currency=CURRENCY),
         idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
+        orders=SqlOrderRepository(
+            engine, currency=CURRENCY, access_token_hash=TEST_ORDER_TOKENS.stored_hash
+        ),
     )
 
 
@@ -207,3 +219,38 @@ def seller_routes(app: FastAPI) -> set[tuple[str, str]]:
         for method, operation in operations.items()
         if {"SellerAccessToken": []} in operation.get("security", [])
     }
+
+
+async def open_order(
+    database: InMemoryDatabase,
+    session_id: UUID,
+    code: str = "B07",
+    *,
+    variant: str = "",
+    buyer: str = "buyer-1",
+    quantity: int = 1,
+) -> OrderRecord:
+    """A pending order of an existing product, opened through unit 3 as the worker will open it."""
+    claim = await database.comments.claim(
+        queued_comment(external_comment_id=f"comment-{buyer}-{code}", author=buyer),
+        consumer="worker-1",
+        now=FAKE_CLOCK_START,
+        lease=timedelta(seconds=30),
+    )
+    result = await database.orders.reserve(
+        ReservationRequest(
+            comment_id=claim.comment.id,
+            session_id=session_id,
+            product_code=ProductCode(code),
+            variant=Variant(variant),
+            quantity=Quantity(quantity),
+            source=IntentSource.PARSER,
+            confidence=Decimal("1.00"),
+            evidence=(code,),
+            now=FAKE_CLOCK_START,
+            reserved_until=FAKE_CLOCK_START + timedelta(seconds=900),
+        )
+    )
+    if result is None or result.order is None:
+        raise RuntimeError(f"no order opened for {code}: {result}")
+    return result.order

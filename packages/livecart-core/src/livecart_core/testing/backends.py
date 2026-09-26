@@ -22,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from livecart_core.application.dto import LiveSessionRecord, Platform, ProductRecord, StockLevel
 from livecart_core.application.ports import (
     LiveSessionRepository,
+    OrderLookup,
     OrderReservations,
     ProductStockRepository,
     RefreshTokenRepository,
@@ -39,18 +40,25 @@ from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
-from livecart_core.order_tokens import OrderTokens
 from livecart_core.testing.builders import queued_comment
-from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT, InMemoryDatabase
-from livecart_core.testing.keys import TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.fakes import (
+    FAKE_CLOCK_START,
+    LOCKED_ACCOUNT,
+    TEST_ORDER_TOKENS,
+    InMemoryDatabase,
+)
 
 CURRENCY = "EUR"
 # Unit 1's lease, as the worker takes it before unit 3 runs.
 LEASE = timedelta(seconds=30)
-# The access tokens of the orders the SQL adapter opens.
-ORDER_TOKENS = OrderTokens(TEST_ORDER_TOKEN_KEY)
+# The access tokens of the orders both backends open.
+ORDER_TOKENS = TEST_ORDER_TOKENS
 
 type CountedTable = Literal["purchase_intents", "orders"]
+
+
+class BackendOrders(OrderReservations, OrderLookup, Protocol):
+    """The order ports both backends implement so far: unit 3, its reads and the buyer's."""
 
 
 class ReservationBackend(Protocol):
@@ -63,7 +71,7 @@ class ReservationBackend(Protocol):
     def products(self) -> ProductStockRepository: ...
 
     @property
-    def orders(self) -> OrderReservations: ...
+    def orders(self) -> BackendOrders: ...
 
     async def add_seller(self) -> UUID:
         """A seller whose account no password opens."""
@@ -148,7 +156,7 @@ class InMemoryBackend:
         return self.database.products
 
     @property
-    def orders(self) -> OrderReservations:
+    def orders(self) -> BackendOrders:
         return self.database.orders
 
     @property
@@ -272,7 +280,7 @@ class PostgresBackend:
         return self._products
 
     @property
-    def orders(self) -> SqlOrderRepository:
+    def orders(self) -> BackendOrders:
         return self._orders
 
     @property

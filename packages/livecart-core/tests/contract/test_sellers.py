@@ -66,3 +66,14 @@ async def test_a_slug_is_unique(auth_backend: AuthBackend) -> None:
 
     assert excinfo.value.field == "slug"
     assert await auth_backend.sellers.find_by_email("other@example.test") is None
+
+
+async def test_a_seller_is_found_by_the_slug_of_their_storefront(
+    auth_backend: AuthBackend,
+) -> None:
+    seller = await _add(auth_backend)
+    await _add(auth_backend, "other@example.test", "other-shop")
+
+    assert await auth_backend.sellers.find_by_slug("demo-seller") == seller
+    assert await auth_backend.sellers.find_by_slug("Demo-Seller") is None
+    assert await auth_backend.sellers.find_by_slug("unknown-shop") is None

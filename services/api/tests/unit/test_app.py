@@ -10,6 +10,7 @@ from livecart_api.resources import ReadinessCheck, build_resources
 from livecart_api.testing import make_app, memory_resources, open_client
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
+from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
@@ -123,6 +124,7 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert isinstance(resources.live_sessions, SqlLiveSessionRepository)
     assert isinstance(resources.products, SqlProductStockRepository)
     assert isinstance(resources.idempotency, RedisIdempotencyStore)
+    assert isinstance(resources.orders, SqlOrderRepository)
     await resources.aclose()  # nothing was connected: closing must not fail
 
 

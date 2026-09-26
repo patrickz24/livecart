@@ -297,3 +297,29 @@ async def test_a_catalog_holds_only_its_session_products(backend: ReservationBac
     assert await backend.live_sessions.load_catalog(session.id) == Catalog(())
     with pytest.raises(RecordNotFound):
         await backend.live_sessions.load_catalog(UNKNOWN)
+
+
+# --- What the storefront reads ---------------------------------------------------------
+
+
+async def test_the_current_session_is_the_live_one_that_started_last(
+    backend: ReservationBackend,
+) -> None:
+    seller_id = await backend.add_seller()
+    sessions = backend.live_sessions
+    first = await sessions.add(seller_id, _new("fb-1"), now=NOW)
+    second = await sessions.add(seller_id, _new("tt-1", Platform.TIKTOK), now=NOW)
+    await sessions.add(seller_id, _new("ig-1", Platform.INSTAGRAM), now=NOW)
+
+    assert await sessions.find_current(seller_id) is None
+    await sessions.set_status(seller_id, second.id, LIVE, now=NOW)
+    await sessions.set_status(seller_id, first.id, LIVE, now=LATER)
+    latest = await sessions.find_current(seller_id)
+    await sessions.set_status(seller_id, first.id, ENDED, now=LATER)
+    remaining = await sessions.find_current(seller_id)
+
+    assert latest is not None
+    assert (latest.id, latest.started_at) == (first.id, LATER)
+    assert remaining is not None
+    assert remaining.id == second.id
+    assert await sessions.find_current(await backend.add_seller()) is None

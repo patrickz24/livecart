@@ -17,7 +17,10 @@ from livecart_api.resources import Resources
 from livecart_api.routes.auth import SellerAuth, build_auth_router
 from livecart_api.routes.health import build_health_router
 from livecart_api.routes.live_sessions import build_live_session_router
+from livecart_api.routes.orders import build_order_router
 from livecart_api.routes.products import build_product_router
+from livecart_api.routes.storefronts import build_storefront_router
+from livecart_core.application.buyer_orders import LookUpOrder
 from livecart_core.application.idempotency import IdempotentRequests
 from livecart_core.application.live_sessions import SellerLiveSessions
 from livecart_core.application.ports import ServiceUnavailable
@@ -27,6 +30,8 @@ from livecart_core.application.seller_auth import (
     RevokeRefreshFamily,
     RotateRefreshToken,
 )
+from livecart_core.application.storefront import ViewStorefront
+from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
 
 logger = structlog.get_logger(__name__)
@@ -111,6 +116,13 @@ def create_app(
             IdempotentRequests(resources.idempotency),
         )
     )
+    app.include_router(
+        build_storefront_router(
+            ViewStorefront(resources.sellers, resources.live_sessions, resources.products)
+        )
+    )
+    # Checking a token needs its stored hash only, never ORDER_TOKEN_KEY.
+    app.include_router(build_order_router(LookUpOrder(resources.orders, OrderTokens.verify)))
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)
     errors.install(app)
 

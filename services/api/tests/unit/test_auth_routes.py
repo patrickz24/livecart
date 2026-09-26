@@ -395,6 +395,9 @@ class UnavailableSellers:
     async def find_by_email(self, email: str) -> SellerRecord | None:
         raise ServiceUnavailable("database unavailable: TimeoutError")
 
+    async def find_by_slug(self, slug: str) -> SellerRecord | None:
+        raise ServiceUnavailable("database unavailable: TimeoutError")
+
 
 async def test_a_database_outage_answers_503_with_retry_after() -> None:
     resources = replace(memory_resources(InMemoryDatabase()), sellers=UnavailableSellers())

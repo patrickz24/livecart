@@ -76,6 +76,13 @@ class SqlSellerRepository:
             ).one_or_none()
         return None if row is None else seller_record(row)
 
+    async def find_by_slug(self, slug: str) -> SellerRecord | None:
+        async with transaction(self._engine) as connection:
+            row = (
+                await connection.execute(select(sellers).where(sellers.c.slug == slug))
+            ).one_or_none()
+        return None if row is None else seller_record(row)
+
     async def find_by_email(self, email: str) -> SellerRecord | None:
         async with transaction(self._engine) as connection:
             row = (

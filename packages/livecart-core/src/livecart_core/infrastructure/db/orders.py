@@ -48,6 +48,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from livecart_core.application.dto import (
+    BuyerOrderRecord,
     IntentSource,
     OrderRecord,
     PurchaseIntentRecord,
@@ -57,6 +58,7 @@ from livecart_core.application.dto import (
     StockLevel,
 )
 from livecart_core.application.ports import REFERENCE_DRAWS, RecordNotFound, ServiceUnavailable
+from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome
 from livecart_core.domain.quantity import Quantity
@@ -187,6 +189,30 @@ class SqlOrderRepository:
                 )
             ).one_or_none()
         return None if row is None else order_record(row)
+
+    async def find_by_reference(self, reference: OrderReference) -> BuyerOrderRecord | None:
+        async with transaction(self._engine) as connection:
+            row = (
+                await connection.execute(
+                    select(
+                        orders,
+                        products.c.code.label("product_code"),
+                        products.c.variant.label("product_variant"),
+                        products.c.name.label("product_name"),
+                    )
+                    .join(products, orders.c.product_id == products.c.id)
+                    .where(orders.c.reference == reference.value)
+                )
+            ).one_or_none()
+        if row is None:
+            return None
+        return BuyerOrderRecord(
+            order=order_record(row),
+            product_code=ProductCode(row.product_code),
+            product_variant=Variant(row.product_variant),
+            product_name=row.product_name,
+            access_token_hash=row.access_token_hash,
+        )
 
     # --- The steps of unit 3 -----------------------------------------------------------
 
