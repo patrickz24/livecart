@@ -68,12 +68,21 @@ describe("serviceProblems", () => {
   });
 
   it("reports missing, unhealthy and uncovered services", () => {
-    const containers = [migrate, running("api", "unhealthy"), running("simulator")];
+    const containers = [migrate, running("api", "unhealthy"), running("k6")];
     assert.deepEqual(serviceProblems(containers, expected), [
       "livecart-api-1: unhealthy, expected healthy",
       "worker: no container",
-      "simulator: not covered by this smoke test",
+      "k6: not covered by this smoke test",
     ]);
+  });
+
+  it("expects the simulator running, since it has no healthcheck", () => {
+    const simulator = { ...running("simulator"), Health: "" };
+    assert.deepEqual(serviceProblems([simulator], { simulator: EXPECTED_SERVICES.simulator }), []);
+    assert.deepEqual(
+      serviceProblems([{ ...simulator, State: "restarting" }], { simulator: "running" }),
+      ["livecart-simulator-1: restarting, expected running"],
+    );
   });
 });
 

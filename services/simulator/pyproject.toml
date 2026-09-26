@@ -1,0 +1,20 @@
+[project]
+name = "livecart-simulator"
+version = "0.1.0"
+description = "LiveCart comment simulator: Poisson arrivals of signed live comments, and the buyers' messages."
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "httpx2==2.13.1",
+    "livecart-core",
+]
+
+[project.scripts]
+livecart-simulate = "livecart_simulator.main:main"
+
+[tool.uv.sources]
+livecart-core = { workspace = true }
+
+[build-system]
+requires = ["uv_build>=0.12.19,<0.13.0"]
+build-backend = "uv_build"

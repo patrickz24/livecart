@@ -104,6 +104,19 @@ Other useful commands:
 
 Both sign in with `SEED_DEMO_PASSWORD` from `.env`, set when the seed first creates them: after changing it, `make reset` starts over, as it does for a demo session a seller has ended, which the seed reports and leaves ended. `docker compose run --rm seed --reset-loadtest` also deletes the comments, intents and orders of the `loadtest` session and puts its stock back to 200, before a load test. From the host, against the database of `.env`: `uv run --locked livecart-seed`.
 
+## Comment simulator
+
+`docker compose up` also starts `simulator`, a live audience on the seeded `friday-drop` session: `livecart-simulate` posts signed comments to the comment webhook as a Poisson process, one every 5 s on average (`SIMULATOR_RATE=0.2`), from twelve fake buyers. About three comments in four are purchases in French or English ("je prends A12 M", "SOLD C3 rouge x2", "B07 🛒"), which the parser reads as exactly the product, variant and quantity meant; the others are noise ("prix ?") and ambiguous comments ("je prends C3", "je prends la robe fleurie"), which the parser leaves to the LLM fallback, and which are rejected as `ambiguous_unresolved` without it. The stock of the demo session runs out within minutes, and comes back as the unpaid reservations expire (`RESERVATION_TTL_SECONDS`).
+
+```bash
+docker compose stop simulator                       # pause the audience; `docker compose start simulator` resumes it
+docker compose run --rm simulator --text            # the buyers' messages: reference, token and link of each order (Ctrl+C stops)
+docker compose run --rm simulator --text --no-follow
+uv run --locked livecart-simulate --rate 2 --count 50 --exclude-codes B07,E15   # from the host, against 127.0.0.1:8000
+```
+
+`--exclude-codes` keeps products out of the comments, to buy them by hand meanwhile; `--seed` repeats a run; `--help` lists the rest, each option with the `SIMULATOR_*` variable it overrides (`.env.example`). From the host, the simulator reads `COMMENT_WEBHOOK_SECRET_SIMULATOR` and, for `--text`, `REDIS_URL` from `.env`. It refuses to run with `APP_ENV=production`, where it would open fake orders.
+
 ## Seller accounts
 
 There is no public sign-up: a seller account is created with `livecart-create-seller`, installed with the API. It checks the fields (an ASCII e-mail, unique whatever its case; a slug of lower-case words joined by hyphens; a display name), hashes the password with argon2id and connects as `livecart_app` through `DATABASE_URL`. From the repository root, against the database of `.env`:

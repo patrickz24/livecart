@@ -1,6 +1,6 @@
 # LiveCart local stack, limited to what exists so far: PostgreSQL and Redis,
-# the one-shot migrate and seed jobs, then the API, the worker and the web
-# container.
+# the one-shot migrate and seed jobs, then the API, the worker, the comment
+# simulator and the web container.
 #
 #   cp .env.example .env      # once: secrets have no default here
 #   docker compose up --build
@@ -12,7 +12,7 @@
 
 name: livecart
 
-# Shared by api, worker and migrate: one image, several commands.
+# Shared by api, worker, simulator, migrate and seed: one image, several commands.
 x-python-service: &python-service
   image: livecart-python:local
   build:
@@ -255,6 +255,40 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  # A live audience on the seeded friday-drop session: signed comments at a
+  # gentle rate (one every 5 s on average), so that `docker compose up` shows
+  # intents, orders and stock moving without any third-party key. `docker
+  # compose stop simulator` pauses it; `docker compose run --rm simulator
+  # --text` prints the messages the buyers received (references, tokens and
+  # links). The simulator refuses to run with APP_ENV=production.
+  simulator:
+    <<: *python-service
+    # An entrypoint, so that `docker compose run --rm simulator --text` passes
+    # its arguments to livecart-simulate.
+    entrypoint: ["livecart-simulate"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # Straight to the API container, as a platform's webhook would come in.
+      SIMULATOR_API_URL: http://api:8000
+      SIMULATOR_RATE: ${SIMULATOR_RATE:-0.2}
+      SIMULATOR_EXCLUDE_CODES: ${SIMULATOR_EXCLUDE_CODES:-}
+      SIMULATOR_BUYERS: ${SIMULATOR_BUYERS:-12}
+      COMMENT_WEBHOOK_SECRET_SIMULATOR: ${COMMENT_WEBHOOK_SECRET_SIMULATOR:?set it in .env (cp .env.example .env)}
+      # The text mode's stream of the buyers' messages, which the worker writes.
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set it in .env (cp .env.example .env)}@redis:6379/0
+      REDIS_KEY_PREFIX: ${REDIS_KEY_PREFIX:-livecart}
+    # No HTTP server to probe: the image's API healthcheck does not apply, and
+    # `up --wait` waits for the container to run.
+    healthcheck:
+      disable: true
+    depends_on:
+      api:
+        condition: service_healthy
+      # The session it comments on.
+      seed:
+        condition: service_completed_successfully
 
   web:
     image: livecart-web:local

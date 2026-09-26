@@ -1,9 +1,11 @@
 # syntax=docker/dockerfile:1
 #
 # One image for every Python process of LiveCart: the API (default command),
-# the worker and the one-shot migrate job. Building a single artifact means the
-# migrations always come from the same code as the processes that use the
-# schema. compose.yaml chooses each service's command and healthcheck.
+# the worker, the comment simulator and the one-shot migrate and seed jobs.
+# Building a single artifact means the migrations always come from the same
+# code as the processes that use the schema, and the simulator from the same
+# signing code as the API that checks it. compose.yaml chooses each service's
+# command and healthcheck.
 #
 # Build from the repository root:
 #   docker build -f infra/docker/python.Dockerfile -t livecart-python:local .
@@ -37,6 +39,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=packages/livecart-core/pyproject.toml,target=packages/livecart-core/pyproject.toml \
     --mount=type=bind,source=services/api/pyproject.toml,target=services/api/pyproject.toml \
     --mount=type=bind,source=services/worker/pyproject.toml,target=services/worker/pyproject.toml \
+    --mount=type=bind,source=services/simulator/pyproject.toml,target=services/simulator/pyproject.toml \
     uv sync --locked --all-packages --no-install-workspace --no-editable
 
 # Then the workspace members, installed as regular (non-editable) packages, so
@@ -45,6 +48,7 @@ COPY pyproject.toml uv.lock .python-version ./
 COPY packages/livecart-core packages/livecart-core
 COPY services/api services/api
 COPY services/worker services/worker
+COPY services/simulator services/simulator
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --all-packages --no-editable
 

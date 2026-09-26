@@ -4,9 +4,8 @@ The real platforms would deliver an order's reference and token by direct
 message; their integrations are out of the MVP's scope. The simulated
 notifier appends the message to the development stream
 ``{prefix}:dev:buyer-dm``, for the comment simulator's text mode
-(``livecart-simulate --text``, the last step of milestone 4a) to show the
-reference, the token and the buyer's link, for the buyer app's "Add order"
-screen or its deep link:
+(``livecart-simulate --text``) to show the reference, the token and the
+buyer's link, for the buyer app's "Add order" screen or its deep link:
 
 - one entry per notice: the order id, the platform, the recipient (the
   author of the comment), the reference, the token and the link
@@ -40,6 +39,11 @@ BUYER_DM_TTL_S: Final = 3_600
 LINK_SCHEME_PATTERN: Final = re.compile(r"[a-z][a-z0-9+.-]*")
 
 
+def buyer_dm_stream_key(prefix: str) -> str:
+    """The development stream of the buyers' messages, which ``livecart-simulate --text`` reads."""
+    return f"{prefix}:dev:buyer-dm"
+
+
 def buyer_link(scheme: str, notification: BuyerNotification) -> str:
     """The link the buyer app opens: the reference in its path, the token in its fragment."""
     return f"{scheme}://link/{notification.reference.value}#t={notification.access_token}"
@@ -58,7 +62,7 @@ class SimulatedBuyerNotifier:
             raise ValueError(f"{link_scheme!r} is not a URI scheme")
         self._client = client
         self._link_scheme = link_scheme
-        self.stream_key = f"{prefix}:dev:buyer-dm"
+        self.stream_key = buyer_dm_stream_key(prefix)
 
     async def notify(self, notification: BuyerNotification) -> None:
         fields: dict[FieldT, EncodableT] = {

@@ -23,10 +23,12 @@ const WAIT_TIMEOUT_S = 180;
 const HTTP_TIMEOUT_MS = 5_000;
 
 /**
- * Final state of each compose service: "healthy", or "completed" for one-shot
- * jobs. `up --wait` accepts a job's exit only when another service depends on
- * its completion (service_completed_successfully): the API and the worker on
- * migrate, the worker on seed. A job nothing waits for fails `up --wait`.
+ * Final state of each compose service: "healthy", "completed" for one-shot
+ * jobs, or "running" for the simulator, which serves nothing a healthcheck
+ * could probe. `up --wait` accepts a job's exit only when another service
+ * depends on its completion (service_completed_successfully): the API and the
+ * worker on migrate, the worker and the simulator on seed. A job nothing waits
+ * for fails `up --wait`.
  */
 export const EXPECTED_SERVICES = {
   postgres: "healthy",
@@ -35,6 +37,7 @@ export const EXPECTED_SERVICES = {
   seed: "completed",
   api: "healthy",
   worker: "healthy",
+  simulator: "running",
   web: "healthy",
 };
 

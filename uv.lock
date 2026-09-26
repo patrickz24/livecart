@@ -6,6 +6,7 @@ requires-python = "==3.12.*"
 members = [
     "livecart-api",
     "livecart-core",
+    "livecart-simulator",
     "livecart-worker",
 ]
 
@@ -422,6 +423,21 @@ requires-dist = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = "==2.0.54" },
     { name = "structlog", specifier = "==26.1.0" },
     { name = "uuid-utils", specifier = "==1.0.0" },
+]
+
+[[package]]
+name = "livecart-simulator"
+version = "0.1.0"
+source = { editable = "services/simulator" }
+dependencies = [
+    { name = "httpx2" },
+    { name = "livecart-core" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "httpx2", specifier = "==2.13.1" },
+    { name = "livecart-core", editable = "packages/livecart-core" },
 ]
 
 [[package]]

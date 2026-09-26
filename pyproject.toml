@@ -15,11 +15,11 @@ dev = [
 required-version = ">=0.12.19,<0.13"
 
 [tool.uv.workspace]
-# The simulator (services/simulator) joins in milestone 4a.
 members = [
     "packages/livecart-core",
     "services/api",
     "services/worker",
+    "services/simulator",
 ]
 
 [tool.ruff]
@@ -48,7 +48,7 @@ select = [
 "**/tests/**" = ["S101", "S105", "S106", "S107"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["livecart_core", "livecart_api", "livecart_worker"]
+known-first-party = ["livecart_core", "livecart_api", "livecart_worker", "livecart_simulator"]
 
 [tool.ruff.format]
 line-ending = "lf"
@@ -64,7 +64,12 @@ plugins = ["pydantic.mypy"]
 # that their modules keep their import names, and explicit package bases name
 # every other file after its path, so that two members can both hold a
 # tests/unit/test_main.py or a conftest.py.
-mypy_path = ["packages/livecart-core/src", "services/api/src", "services/worker/src"]
+mypy_path = [
+    "packages/livecart-core/src",
+    "services/api/src",
+    "services/worker/src",
+    "services/simulator/src",
+]
 explicit_package_bases = true
 files = [
     "conftest.py",
@@ -75,6 +80,8 @@ files = [
     "services/api/tests",
     "services/worker/src",
     "services/worker/tests",
+    "services/simulator/src",
+    "services/simulator/tests",
 ]
 
 [tool.pydantic-mypy]
@@ -89,6 +96,7 @@ testpaths = [
     "packages/livecart-core/tests",
     "services/api/tests",
     "services/worker/tests",
+    "services/simulator/tests",
 ]
 # importlib mode lets every member keep plain tests/ folders without
 # __init__.py files and without module name clashes.
