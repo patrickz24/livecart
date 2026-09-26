@@ -26,6 +26,7 @@ from contextlib import asynccontextmanager
 from importlib.metadata import version
 from typing import Any
 
+import httpx2
 import structlog
 from asgi_correlation_id import CorrelationIdMiddleware
 from fastapi import FastAPI, Request, status
@@ -49,6 +50,7 @@ from livecart_api.resources import Resources
 from livecart_api.routes.auth import SellerAuth, build_auth_router
 from livecart_api.routes.health import build_health_router
 from livecart_api.routes.live_sessions import build_live_session_router
+from livecart_api.routes.mock_payments import MockWebhookSender, build_mock_payment_router
 from livecart_api.routes.orders import build_order_router
 from livecart_api.routes.products import build_product_router
 from livecart_api.routes.session_events import (
@@ -73,6 +75,7 @@ from livecart_core.application.seller_auth import (
 )
 from livecart_core.application.storefront import ViewStorefront
 from livecart_core.application.watch_live_session import WatchLiveSession
+from livecart_core.infrastructure.payments.mock import MockPaymentProvider
 from livecart_core.metrics import MetricsServer
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
@@ -144,11 +147,15 @@ def create_app(
     *,
     readiness_timeout_s: float = READINESS_TIMEOUT_S,
     metrics_port: int | None = None,
+    mock_webhook_transport: httpx2.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """Create the app. It owns ``resources`` and closes them when it shuts down.
 
     ``metrics_port``, given by the composition root, serves the metrics while
     the app runs; the tests scrape ``app.state.metrics_registry`` instead.
+    The mock provider's hosted page is mounted outside production only, while
+    the mock is the provider; ``mock_webhook_transport`` replaces the network
+    its webhooks go through, in the tests.
     """
 
     @asynccontextmanager
@@ -226,6 +233,12 @@ def create_app(
     )
     app.state.ingest_comments = ingest
     app.include_router(build_webhook_router(resources.platforms, ingest, limits))
+    mock = resources.payment_provider
+    if isinstance(mock, MockPaymentProvider) and not settings.is_production:
+        sender = MockWebhookSender(
+            mock, settings.mock_payment_webhook_url, transport=mock_webhook_transport
+        )
+        app.include_router(build_mock_payment_router(mock, sender))
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)
     app.add_exception_handler(TooManyRequests, too_many_requests)
     errors.install(app)

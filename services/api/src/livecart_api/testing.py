@@ -36,6 +36,7 @@ from livecart_core.application.ports import (
     CommentQueue,
     IdempotencyStore,
     PasswordHasher,
+    PaymentProvider,
     PlatformAdapter,
     RateLimiter,
     SessionEventLog,
@@ -60,6 +61,7 @@ from livecart_core.testing.fakes import (
     FakeClock,
     FakeCommentQueue,
     FakePasswordHasher,
+    FakePaymentProvider,
     InMemoryDatabase,
     InMemoryIdempotencyStore,
     InMemoryRateLimiter,
@@ -68,6 +70,7 @@ from livecart_core.testing.fakes import (
 from livecart_core.testing.keys import (
     TEST_COMMENT_WEBHOOK_SECRET,
     TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
 )
 
@@ -99,6 +102,7 @@ def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT, **overrides: object) -> 
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         allowed_hosts=(TEST_HOST, "localhost", "127.0.0.1"),
         _env_file=None,
     )
@@ -125,6 +129,7 @@ def memory_resources(
     platforms: Mapping[Platform, PlatformAdapter] | None = None,
     comment_queue: CommentQueue | None = None,
     session_events: SessionEventLog | None = None,
+    payment_provider: PaymentProvider | None = None,
 ) -> Resources:
     """Resources over the in-memory repositories of ``database``, with nothing to close.
 
@@ -134,7 +139,8 @@ def memory_resources(
     into a fake queue, unless ``platforms`` and ``comment_queue`` say otherwise.
     The session events go to in-memory streams unless ``session_events`` does,
     and the event streams read them there: one adapter for both, as a single
-    Redis would be.
+    Redis would be. Checkouts go to a ``FakePaymentProvider`` unless
+    ``payment_provider`` names another.
     """
     clock = clock if clock is not None else current_time_clock()
     events = session_events if session_events is not None else InMemorySessionEvents(clock)
@@ -155,6 +161,9 @@ def memory_resources(
         activity=database.activity,
         session_events=events,
         event_streams=events,
+        payment_provider=payment_provider
+        if payment_provider is not None
+        else FakePaymentProvider(),
     )
 
 
@@ -171,6 +180,7 @@ def postgres_resources(
     rate_limiter: RateLimiter | None = None,
     comment_queue: CommentQueue | None = None,
     session_events: SessionEventLog | None = None,
+    payment_provider: PaymentProvider | None = None,
 ) -> Resources:
     """Resources over the SQL adapters on ``engine`` (livecart_app on livecart_test) and argon2id.
 
@@ -197,6 +207,9 @@ def postgres_resources(
         activity=SqlLiveSessionActivity(engine, currency=CURRENCY),
         session_events=events,
         event_streams=events,
+        payment_provider=payment_provider
+        if payment_provider is not None
+        else FakePaymentProvider(),
     )
 
 
@@ -212,10 +225,14 @@ def make_app(
     settings: Settings | None = None,
     comment_queue: CommentQueue | None = None,
     session_events: SessionEventLog | None = None,
+    payment_provider: PaymentProvider | None = None,
+    mock_webhook_transport: httpx2.AsyncBaseTransport | None = None,
 ) -> FastAPI:
     """The app around ``checks`` and in-memory repositories, with nothing to close.
 
-    ``settings`` replaces ``make_settings(app_env)``, to lower a rate limit for instance.
+    ``settings`` replaces ``make_settings(app_env)``, to lower a rate limit for
+    instance; ``mock_webhook_transport`` receives what the mock provider's
+    hosted page posts to the payment webhook.
     """
     resources = memory_resources(
         database if database is not None else InMemoryDatabase(),
@@ -225,11 +242,13 @@ def make_app(
         rate_limiter=rate_limiter,
         comment_queue=comment_queue,
         session_events=session_events,
+        payment_provider=payment_provider,
     )
     return create_app(
         settings if settings is not None else make_settings(app_env),
         resources,
         readiness_timeout_s=timeout_s,
+        mock_webhook_transport=mock_webhook_transport,
     )
 
 

@@ -40,6 +40,7 @@ from livecart_core.testing.database import IntegrationSettings
 from livecart_core.testing.keys import (
     TEST_COMMENT_WEBHOOK_SECRET,
     TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
 )
 
@@ -78,6 +79,7 @@ async def api(
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         allowed_hosts=(TEST_HOST,),
         sse_max_streams=STREAMS,
         # One seller opens them all, as a script with its token would: its own

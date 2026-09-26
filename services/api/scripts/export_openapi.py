@@ -26,6 +26,7 @@ from pydantic import SecretStr
 
 from livecart_api.app import create_app
 from livecart_api.resources import build_resources
+from livecart_core.application.dto import PaymentProviderName
 from livecart_core.settings import AppEnv, LogLevel, Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -52,6 +53,9 @@ def export_settings() -> Settings:
         jwt_secret=SecretStr("openapi-export-jwt-" * 2),
         order_token_key=SecretStr("openapi-export-order-token-" * 2),
         comment_webhook_secret_simulator=SecretStr("openapi-export-webhook-" * 2),
+        # The mock, whose hosted page production never mounts: the export needs no key.
+        payment_provider=PaymentProviderName.MOCK,
+        mock_payment_webhook_secret=SecretStr("openapi-export-mock-payment-" * 2),
         _env_file=None,
     )
 

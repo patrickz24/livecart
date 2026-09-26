@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, build_resources
 from livecart_api.testing import TEST_HOST, make_app, memory_resources, open_client
-from livecart_core.application.dto import Platform
+from livecart_core.application.dto import PaymentProviderName, Platform
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
@@ -19,6 +19,7 @@ from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
+from livecart_core.infrastructure.payments.mock import MockPaymentProvider
 from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.settings import AppEnv, Settings
@@ -26,6 +27,7 @@ from livecart_core.testing.fakes import InMemoryDatabase
 from livecart_core.testing.keys import (
     TEST_COMMENT_WEBHOOK_SECRET,
     TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
 )
 
@@ -105,6 +107,7 @@ async def test_shutdown_closes_the_injected_resources() -> None:
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         _env_file=None,
     )
     resources = replace(memory_resources(InMemoryDatabase()), aclose=aclose)
@@ -122,6 +125,7 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         _env_file=None,
     )
 
@@ -145,6 +149,7 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert isinstance(resources.session_events, RedisSessionEvents)
     assert isinstance(resources.event_streams, RedisSessionEvents)
     assert resources.event_streams is not resources.session_events
+    assert isinstance(resources.payment_provider, MockPaymentProvider)
     await resources.aclose()  # nothing was connected: closing must not fail
 
 
@@ -155,6 +160,7 @@ def _startup_settings(**overrides: object) -> Settings:
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         _env_file=None,
     )
     return settings.model_copy(update=overrides)
@@ -165,6 +171,21 @@ def test_the_api_refuses_to_start_with_a_platform_stub_enabled(stub: Platform) -
     settings = _startup_settings(enabled_platforms=(Platform.SIMULATOR, stub))
 
     with pytest.raises(NotImplementedError, match=f"{stub} comment webhook is a documented stub"):
+        build_resources(settings)
+
+
+@pytest.mark.parametrize("stub", [PaymentProviderName.PAYPAL, PaymentProviderName.VIVA])
+def test_the_api_refuses_to_start_with_a_payment_stub_selected(stub: PaymentProviderName) -> None:
+    settings = _startup_settings(payment_provider=stub)
+
+    with pytest.raises(NotImplementedError, match=f"the {stub} payment provider is a documented"):
+        build_resources(settings)
+
+
+def test_the_api_refuses_to_start_the_mock_without_its_webhook_key() -> None:
+    settings = _startup_settings(mock_payment_webhook_secret=None)
+
+    with pytest.raises(ValueError, match="MOCK_PAYMENT_WEBHOOK_SECRET must be set"):
         build_resources(settings)
 
 
@@ -183,6 +204,7 @@ async def test_unreachable_dependencies_answer_503() -> None:
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         comment_webhook_secret_simulator=TEST_COMMENT_WEBHOOK_SECRET,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         allowed_hosts=(TEST_HOST,),
         _env_file=None,
     )

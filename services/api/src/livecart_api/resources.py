@@ -18,6 +18,7 @@ from livecart_core.application.ports import (
     LiveSessionRepository,
     OrderLookup,
     PasswordHasher,
+    PaymentProvider,
     PlatformAdapter,
     ProductStockRepository,
     RateLimiter,
@@ -38,6 +39,7 @@ from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
+from livecart_core.infrastructure.payments import build_payment_provider
 from livecart_core.infrastructure.platforms import build_platform_adapters
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
@@ -78,15 +80,19 @@ class Resources:
     # own in build_resources, so that the streams, each blocked in XREAD, never
     # take a connection from the webhook, the login or /ready.
     event_streams: SessionEventStream
+    # The hosted checkout of PAYMENT_PROVIDER: the mock's sessions live in the
+    # shared Redis, where the worker finds them too.
+    payment_provider: PaymentProvider
 
 
 def build_resources(settings: Settings) -> Resources:
     """Create the engine, the Redis clients and the adapters; nothing connects until first use.
 
     The password hasher computes its dummy hash here, once: one argon2 run
-    when the process starts. The platform adapters are built here too, so an
-    enabled stub or a missing webhook secret stops the process before it
-    listens (``livecart_core.infrastructure.platforms``).
+    when the process starts. The platform adapters and the payment provider
+    are built here too, so an enabled stub or a missing webhook secret stops
+    the process before it listens (``livecart_core.infrastructure.platforms``
+    and ``livecart_core.infrastructure.payments``).
 
     Two Redis clients: the shared one, of redis-py's default 100
     connections, for every short command (the rate limits, the queue,
@@ -142,4 +148,5 @@ def build_resources(settings: Settings) -> Resources:
         activity=SqlLiveSessionActivity(engine, currency=settings.default_currency),
         session_events=RedisSessionEvents(redis, prefix=settings.redis_key_prefix),
         event_streams=RedisSessionEvents(stream_redis, prefix=settings.redis_key_prefix),
+        payment_provider=build_payment_provider(settings, redis, clock),
     )

@@ -7,6 +7,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "asgi-correlation-id==5.0.1",
     "fastapi==0.141.1",
+    "httpx2==2.13.1",
     "livecart-core",
     "prometheus-fastapi-instrumentator==8.1.0",
     "pyjwt==2.15.0",

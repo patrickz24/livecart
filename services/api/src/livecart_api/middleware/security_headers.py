@@ -15,9 +15,13 @@ referrer. So every response carries:
   only reached over HTTPS.
 
 The interactive documentation of development (``/docs``, whose Swagger UI
-page runs an inline script and loads its bundle from a CDN) is the one page
-the API renders: it keeps every header but the CSP. Production serves no
-documentation.
+page runs an inline script and loads its bundle from a CDN) keeps every
+header but the CSP. Production serves no documentation.
+
+The few HTML pages the API renders for a browser (``livecart_api.pages``:
+the payment bridge, the mock provider's hosted page) set a CSP of their own,
+as strict for a page (``default-src 'none'``, their one stylesheet by its
+hash), which this middleware keeps; every other response gets the one above.
 """
 
 from collections.abc import Iterable
@@ -60,7 +64,11 @@ class SecurityHeadersMiddleware:
             if message["type"] == "http.response.start":
                 response_headers = MutableHeaders(scope=message)
                 for name, value in headers.items():
-                    response_headers[name] = value
+                    if name == "Content-Security-Policy":
+                        # A page's own, as strict for what it renders; see the docstring.
+                        response_headers.setdefault(name, value)
+                    else:
+                        response_headers[name] = value
             await send(message)
 
         await self.app(scope, receive, send_with_headers)

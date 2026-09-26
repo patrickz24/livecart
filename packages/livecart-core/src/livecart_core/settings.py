@@ -15,7 +15,7 @@ from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
 from typing import Annotated, Final, Self
-from urllib.parse import urlsplit
+from urllib.parse import SplitResult, urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -170,29 +170,40 @@ def require_currency(value: str) -> str:
     return value
 
 
+def _is_http_url(parts: SplitResult) -> bool:
+    """An http(s) URL with a host and a valid port, no user and no fragment."""
+    try:
+        port_ok = parts.port is None or parts.port > 0
+    except ValueError:
+        port_ok = False
+    return (
+        parts.scheme in ("http", "https")
+        and bool(parts.hostname)
+        and port_ok
+        and parts.username is None
+        and not parts.fragment
+    )
+
+
 def require_origin(value: str) -> str:
     """An http(s) origin, such as ``http://localhost:8080``: no path, query, fragment or user.
 
     Returned without a trailing slash, so that a path can follow it as is.
     """
     parts = urlsplit(value.strip())
-    try:
-        port_ok = parts.port is None or parts.port > 0
-    except ValueError:
-        port_ok = False
-    if (
-        parts.scheme not in ("http", "https")
-        or not parts.hostname
-        or not port_ok
-        or parts.username is not None
-        or parts.path not in ("", "/")
-        or parts.query
-        or parts.fragment
-    ):
+    if not _is_http_url(parts) or parts.path not in ("", "/") or parts.query:
         raise ValueError(
             "must be an http or https origin such as http://localhost:8080, without a path"
         )
     return f"{parts.scheme}://{parts.netloc}"
+
+
+def require_http_url(value: str) -> str:
+    """An http(s) URL with a host, such as ``http://127.0.0.1:8000/api/v1/...``."""
+    value = value.strip()
+    if not _is_http_url(urlsplit(value)):
+        raise ValueError("must be an http or https URL with a host, without a user or fragment")
+    return value
 
 
 def require_scheme(url: SecretStr, *schemes: str) -> SecretStr:
@@ -475,6 +486,9 @@ class Settings(LlmSettings):
     # provider sends the buyer back to its bridge page there, and the mock's
     # hosted page is served there. In development, the app's EXPO_PUBLIC_API_URL.
     public_api_base_url: str = "http://localhost:8080"
+    # Where the API posts the webhook of a mock payment: its own payment
+    # webhook, on the loopback of its container (or of the host that runs it).
+    mock_payment_webhook_url: str = "http://127.0.0.1:8000/api/v1/webhooks/payments/mock"
     # Backpressure of the comment webhook: once the queue's backlog (comments
     # not acknowledged yet, delivered or not) reaches this depth, the webhook
     # answers 503 until the workers catch up.
@@ -882,6 +896,11 @@ class Settings(LlmSettings):
     @classmethod
     def _check_public_api_base_url(cls, value: str) -> str:
         return require_origin(value)
+
+    @field_validator("mock_payment_webhook_url")
+    @classmethod
+    def _check_mock_payment_webhook_url(cls, value: str) -> str:
+        return require_http_url(value)
 
     @field_validator("rate_limit_login_failure_window_seconds")
     @classmethod

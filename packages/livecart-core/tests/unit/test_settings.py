@@ -44,7 +44,12 @@ LLM_SETTINGS = (
     "LLM_PRICES",
     "LLM_SLOT_WAIT_S",
 )
-PAYMENT_SETTINGS = ("PAYMENT_PROVIDER", "MOCK_PAYMENT_WEBHOOK_SECRET", "PUBLIC_API_BASE_URL")
+PAYMENT_SETTINGS = (
+    "PAYMENT_PROVIDER",
+    "MOCK_PAYMENT_WEBHOOK_SECRET",
+    "PUBLIC_API_BASE_URL",
+    "MOCK_PAYMENT_WEBHOOK_URL",
+)
 # Signing keys that pass every check, in production too.
 KEYS = {
     "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
@@ -981,3 +986,23 @@ def test_the_public_api_base_url_is_an_origin_without_a_trailing_slash(
 def test_the_public_api_base_url_refuses_anything_but_an_origin(value: str) -> None:
     with pytest.raises(ValidationError, match="must be an http or https origin"):
         load(PUBLIC_API_BASE_URL=value, **dev_env())
+
+
+def test_the_mock_posts_its_webhook_to_the_api_on_its_loopback_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert settings.mock_payment_webhook_url == (
+        "http://127.0.0.1:8000/api/v1/webhooks/payments/mock"
+    )
+    assert load(
+        MOCK_PAYMENT_WEBHOOK_URL=" http://api:8000/x?y=1 ", **dev_env()
+    ).mock_payment_webhook_url == ("http://api:8000/x?y=1")
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["127.0.0.1:8000/hook", "ftp://api/hook", "http:///hook", "http://u@api/hook", "http://api/#x"],
+)
+def test_the_mock_webhook_url_is_an_http_url_with_a_host(value: str) -> None:
+    with pytest.raises(ValidationError, match="must be an http or https URL with a host"):
+        load(MOCK_PAYMENT_WEBHOOK_URL=value, **dev_env())
