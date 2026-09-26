@@ -60,6 +60,7 @@ RATE_LIMITS: Final = (
     "rate_limit_storefront_per_minute",
     "rate_limit_comment_webhook_per_minute",
     "rate_limit_comment_webhook_signature_failures_per_minute",
+    "rate_limit_payment_webhook_signature_failures_per_minute",
 )
 # The bounds of the comment queue's backpressure settings.
 MAX_QUEUE_DEPTH: Final = 1_000_000
@@ -468,6 +469,10 @@ class Settings(LlmSettings):
     # unsigned calls cannot make the API read and hash 1 MiB bodies at will; a
     # platform whose signature holds never fills it.
     rate_limit_comment_webhook_signature_failures_per_minute: int = 60
+    # Per client address: the payment webhook calls whose signature fails, as
+    # the comment webhook's. A provider whose signature holds never fills it,
+    # and a Redis outage never stops a payment webhook: the rule fails open.
+    rate_limit_payment_webhook_signature_failures_per_minute: int = 60
     # The Host headers the API answers (TrustedHostMiddleware), comma-separated
     # in the environment: another Host is refused with 400 before any route
     # runs, so no URL is ever built from a forged one. 127.0.0.1 serves the

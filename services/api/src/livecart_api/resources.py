@@ -27,6 +27,7 @@ from livecart_core.application.ports import (
     SellerRepository,
     SessionEventLog,
     SessionEventStream,
+    WebhookEventRecorder,
 )
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
@@ -38,6 +39,7 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
@@ -86,6 +88,9 @@ class Resources:
     # The hosted checkout of PAYMENT_PROVIDER: the mock's sessions live in the
     # shared Redis, where the worker finds them too.
     payment_provider: PaymentProvider
+    # Where the payment webhook records the provider's verified events, for
+    # the worker to apply: PostgreSQL alone.
+    webhook_events: WebhookEventRecorder
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -153,4 +158,5 @@ def build_resources(settings: Settings) -> Resources:
         session_events=RedisSessionEvents(redis, prefix=settings.redis_key_prefix),
         event_streams=RedisSessionEvents(stream_redis, prefix=settings.redis_key_prefix),
         payment_provider=build_payment_provider(settings, redis, clock),
+        webhook_events=SqlWebhookEventRegistry(engine),
     )

@@ -528,6 +528,27 @@ export type OrderUpdated = {
 };
 
 /**
+ * PaymentProviderName
+ *
+ * ``payments.provider`` and ``processed_webhook_events.provider``.
+ */
+export type PaymentProviderName = 'mock' | 'stripe' | 'paypal' | 'viva';
+
+/**
+ * PaymentWebhookReceived
+ *
+ * A verified payment event, durable in the registry: the worker applies it.
+ */
+export type PaymentWebhookReceived = {
+    /**
+     * Redelivery
+     *
+     * Whether an earlier delivery recorded this event already: the registry counted this one, and the event is applied once all the same.
+     */
+    redelivery: boolean;
+};
+
+/**
  * Platform
  *
  * Where a live stream runs: ``live_sessions.platform`` and ``comments.platform``.
@@ -2055,6 +2076,54 @@ export type ReceiveCommentWebhookResponses = {
 };
 
 export type ReceiveCommentWebhookResponse = ReceiveCommentWebhookResponses[keyof ReceiveCommentWebhookResponses];
+
+export type ReceivePaymentWebhookData = {
+    /**
+     * The provider's event, as the provider sends it. Stripe signs it with its Stripe-Signature header (STRIPE_WEBHOOK_SECRET); the mock provider sends a PaymentEvent, signed with X-LiveCart-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of '<t>.<body>' under MOCK_PAYMENT_WEBHOOK_SECRET>.
+     */
+    body: {
+        [key: string]: unknown;
+    };
+    path: {
+        provider: PaymentProviderName;
+    };
+    query?: never;
+    url: '/api/v1/webhooks/payments/{provider}';
+};
+
+export type ReceivePaymentWebhookErrors = {
+    /**
+     * The signature is missing, wrong or too old
+     */
+    401: ErrorResponse;
+    /**
+     * The provider is not the one this API takes
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+    /**
+     * The registry cannot record the event now: deliver it again later
+     */
+    503: ErrorResponse;
+};
+
+export type ReceivePaymentWebhookError = ReceivePaymentWebhookErrors[keyof ReceivePaymentWebhookErrors];
+
+export type ReceivePaymentWebhookResponses = {
+    /**
+     * Successful Response
+     */
+    200: PaymentWebhookReceived;
+};
+
+export type ReceivePaymentWebhookResponse = ReceivePaymentWebhookResponses[keyof ReceivePaymentWebhookResponses];
 
 export type GetHealthData = {
     body?: never;

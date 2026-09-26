@@ -969,7 +969,23 @@ class ShipmentRepository(Protocol):
         """Move a shipment one step along its machine, stamping ``last_event_at``."""
 
 
-class WebhookEventRegistry(Protocol):
+class WebhookEventRecorder(Protocol):
+    """What the payment webhook writes to the registry: each verified event, once.
+
+    One unit per call, on PostgreSQL alone, so that a provider's webhook is
+    acknowledged whether Redis is up or not.
+    """
+
+    async def record(self, event: PaymentEvent, *, now: datetime) -> bool:
+        """Record a verified event: ``True`` the first time, ``False`` for a counted redelivery.
+
+        One row per (provider, event_id), however many deliveries; a
+        redelivery only counts itself (``delivery_count``), and keeps the
+        payload, the type and the processing of the first.
+        """
+
+
+class WebhookEventRegistry(WebhookEventRecorder, Protocol):
     """The durable registry of payment webhooks, ``processed_webhook_events``: the worker's outbox.
 
     An event is recorded once per (provider, event_id) and processed once.
@@ -977,9 +993,6 @@ class WebhookEventRegistry(Protocol):
     (``OrderRepository.record_payment`` is a compare-and-set) and
     ``mark_processed`` settles it once.
     """
-
-    async def record(self, event: PaymentEvent, *, now: datetime) -> bool:
-        """Record a verified event: ``True`` the first time, ``False`` for a counted redelivery."""
 
     async def pending(self, *, limit: int) -> list[RegisteredEvent]:
         """At most ``limit`` unprocessed events, oldest first."""

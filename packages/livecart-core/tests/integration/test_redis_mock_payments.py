@@ -16,6 +16,7 @@ from redis.asyncio import Redis
 
 from livecart_core.application.dto import (
     CheckoutEventType,
+    CheckoutPaymentStatus,
     CheckoutRequest,
     CheckoutStatus,
     PaymentProviderName,
@@ -136,6 +137,7 @@ async def test_paying_gives_one_completed_event_that_the_webhook_verifies(
     assert re.fullmatch(r"evt_mock_[0-9a-f]{24}", event.event_id)
     assert event.checkout_ref == session.provider_ref
     assert event.payment_ref == paid.session.payment_ref
+    assert event.payment_status is CheckoutPaymentStatus.PAID
     assert (event.amount_minor, event.currency) == (2_500, "EUR")
     assert event.occurred_at == paid.completed_at
     assert set(headers) == {SIGNATURE_HEADER}

@@ -52,6 +52,7 @@ from livecart_api.routes.health import build_health_router
 from livecart_api.routes.live_sessions import build_live_session_router
 from livecart_api.routes.mock_payments import MockWebhookSender, build_mock_payment_router
 from livecart_api.routes.orders import build_order_router
+from livecart_api.routes.payment_webhooks import build_payment_webhook_router
 from livecart_api.routes.payments import build_payment_bridge_router
 from livecart_api.routes.products import build_product_router
 from livecart_api.routes.session_events import (
@@ -68,6 +69,7 @@ from livecart_core.application.checkout import CheckoutPages, ReturnUrlPolicy, S
 from livecart_core.application.idempotency import IdempotentRequests
 from livecart_core.application.ingest_comments import IngestComments
 from livecart_core.application.live_sessions import SellerLiveSessions
+from livecart_core.application.payment_webhooks import ReceivePaymentWebhook
 from livecart_core.application.ports import SNAPSHOT_LIMIT, ServiceUnavailable
 from livecart_core.application.products import SellerProducts
 from livecart_core.application.seller_auth import (
@@ -251,6 +253,11 @@ def create_app(
     )
     app.state.ingest_comments = ingest
     app.include_router(build_webhook_router(resources.platforms, ingest, limits))
+    # The provider's events, recorded for the worker to apply.
+    receive_payment = ReceivePaymentWebhook(
+        resources.payment_provider, resources.webhook_events, resources.clock
+    )
+    app.include_router(build_payment_webhook_router(receive_payment, limits))
     mock = resources.payment_provider
     if isinstance(mock, MockPaymentProvider) and not settings.is_production:
         sender = MockWebhookSender(

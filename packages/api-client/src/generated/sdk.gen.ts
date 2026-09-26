@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, ServerSentEventsResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, PutShippingAddressData, PutShippingAddressErrors, PutShippingAddressResponses, ReceiveCommentWebhookData, ReceiveCommentWebhookErrors, ReceiveCommentWebhookResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartCheckoutData, StartCheckoutErrors, StartCheckoutResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, StreamLiveSessionEventsData, StreamLiveSessionEventsErrors, StreamLiveSessionEventsResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
+import type { CreateLiveSessionData, CreateLiveSessionErrors, CreateLiveSessionResponses, CreateProductData, CreateProductErrors, CreateProductResponses, EndLiveSessionData, EndLiveSessionErrors, EndLiveSessionResponses, GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetLiveSessionData, GetLiveSessionErrors, GetLiveSessionResponses, GetOrderData, GetOrderDetailsData, GetOrderDetailsErrors, GetOrderDetailsResponses, GetOrderErrors, GetOrderResponses, GetProductData, GetProductErrors, GetProductResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, GetStorefrontData, GetStorefrontErrors, GetStorefrontResponses, ListLiveSessionsData, ListLiveSessionsErrors, ListLiveSessionsResponses, ListProductsData, ListProductsErrors, ListProductsResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, PutShippingAddressData, PutShippingAddressErrors, PutShippingAddressResponses, ReceiveCommentWebhookData, ReceiveCommentWebhookErrors, ReceiveCommentWebhookResponses, ReceivePaymentWebhookData, ReceivePaymentWebhookErrors, ReceivePaymentWebhookResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses, RestockProductData, RestockProductErrors, RestockProductResponses, StartCheckoutData, StartCheckoutErrors, StartCheckoutResponses, StartLiveSessionData, StartLiveSessionErrors, StartLiveSessionResponses, StreamLiveSessionEventsData, StreamLiveSessionEventsErrors, StreamLiveSessionEventsResponses, UpdateLiveSessionData, UpdateLiveSessionErrors, UpdateLiveSessionResponses, UpdateProductData, UpdateProductErrors, UpdateProductResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -291,6 +291,18 @@ export const getStorefront = <ThrowOnError extends boolean = false>(options: Opt
  */
 export const receiveCommentWebhook = <ThrowOnError extends boolean = false>(options: Options<ReceiveCommentWebhookData, ThrowOnError>): RequestResult<ReceiveCommentWebhookResponses, ReceiveCommentWebhookErrors, ThrowOnError> => (options.client ?? client).post<ReceiveCommentWebhookResponses, ReceiveCommentWebhookErrors, ThrowOnError>({
     url: '/api/v1/webhooks/comments/{platform}',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Receive an event of a checkout session from the payment provider
+ */
+export const receivePaymentWebhook = <ThrowOnError extends boolean = false>(options: Options<ReceivePaymentWebhookData, ThrowOnError>): RequestResult<ReceivePaymentWebhookResponses, ReceivePaymentWebhookErrors, ThrowOnError> => (options.client ?? client).post<ReceivePaymentWebhookResponses, ReceivePaymentWebhookErrors, ThrowOnError>({
+    url: '/api/v1/webhooks/payments/{provider}',
     ...options,
     headers: {
         'Content-Type': 'application/json',

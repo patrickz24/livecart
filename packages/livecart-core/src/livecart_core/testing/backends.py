@@ -2,7 +2,8 @@
 
 ADR 0002 asks every SQL adapter to pass the scenarios of its in-memory fake.
 ``tests/contract`` writes each scenario once, against ``ReservationBackend``
-(the comment inbox, stock, reservations and payment attempts) or
+(the comment inbox, stock, reservations, payment attempts and the registry
+of payment webhooks) or
 ``AuthBackend`` (sellers and refresh tokens),
 and runs it on ``InMemoryBackend`` (the fakes of ``fakes.py``) and on
 ``PostgresBackend`` (the SQL adapters on livecart_test). A backend gives the
@@ -29,7 +30,9 @@ from livecart_core.application.dto import (
     PaymentProviderName,
     Platform,
     ProductRecord,
+    RegisteredEvent,
     StockLevel,
+    WebhookOutcome,
 )
 from livecart_core.application.ports import (
     BuyerNotifier,
@@ -45,6 +48,7 @@ from livecart_core.application.ports import (
     ReservationExpiry,
     SellerRepository,
     SessionEventLog,
+    WebhookEventRecorder,
 )
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
@@ -66,6 +70,7 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import (
     FAKE_CLOCK_START,
@@ -107,6 +112,9 @@ class ReservationBackend(Protocol):
 
     @property
     def payments(self) -> PaymentAttempts: ...
+
+    @property
+    def webhook_events(self) -> WebhookEventRecorder: ...
 
     async def add_seller(self) -> UUID:
         """A seller whose account no password opens."""
@@ -169,6 +177,12 @@ class ReservationBackend(Protocol):
 
     async def count(self, table: CountedTable) -> int: ...
 
+    async def webhook_event(
+        self, provider: PaymentProviderName, event_id: str
+    ) -> RegisteredEvent | None:
+        """The registry's row of an event, as it stands, or ``None``."""
+        ...
+
 
 class AuthBackend(Protocol):
     """The seller and refresh token repositories under test; they seed their own rows."""
@@ -213,6 +227,10 @@ class InMemoryBackend:
     @property
     def payments(self) -> PaymentAttempts:
         return self.database.payments
+
+    @property
+    def webhook_events(self) -> WebhookEventRecorder:
+        return self.database.webhook_events
 
     @property
     def sellers(self) -> SellerRepository:
@@ -315,6 +333,11 @@ class InMemoryBackend:
         )
         return len(rows)
 
+    async def webhook_event(
+        self, provider: PaymentProviderName, event_id: str
+    ) -> RegisteredEvent | None:
+        return self.database.tables.webhook_events.get((provider, event_id))
+
 
 class PostgresBackend:
     """The SQL adapters as livecart_app, the seeding and reading helpers as livecart_migrator.
@@ -341,6 +364,7 @@ class PostgresBackend:
         )
         self._activity = SqlLiveSessionActivity(app_engine, currency=CURRENCY)
         self._payments = SqlPaymentRepository(app_engine)
+        self._webhook_events = SqlWebhookEventRegistry(app_engine)
         self._sellers = SqlSellerRepository(app_engine)
         self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
 
@@ -367,6 +391,10 @@ class PostgresBackend:
     @property
     def payments(self) -> PaymentAttempts:
         return self._payments
+
+    @property
+    def webhook_events(self) -> WebhookEventRecorder:
+        return self._webhook_events
 
     @property
     def sellers(self) -> SellerRepository:
@@ -578,6 +606,29 @@ class PostgresBackend:
                 select(func.count()).select_from(tables.metadata.tables[table])
             )
         return int(counted or 0)
+
+    async def webhook_event(
+        self, provider: PaymentProviderName, event_id: str
+    ) -> RegisteredEvent | None:
+        events = tables.processed_webhook_events
+        async with self._migrator.connect() as connection:
+            row = (
+                await connection.execute(
+                    select(events).where(
+                        events.c.provider == provider.value, events.c.event_id == event_id
+                    )
+                )
+            ).one_or_none()
+        if row is None:
+            return None
+        return RegisteredEvent(
+            PaymentEvent.model_validate(row.payload),
+            received_at=row.created_at,
+            delivery_count=row.delivery_count,
+            attempts=row.attempts,
+            processed_at=row.processed_at,
+            outcome=None if row.outcome is None else WebhookOutcome(row.outcome),
+        )
 
 
 @dataclass(frozen=True, slots=True)

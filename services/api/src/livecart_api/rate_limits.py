@@ -34,7 +34,11 @@ settings may change:
   backpressure, not abuse. The calls whose signature fails count per address
   instead, 60 a minute: past them the address gets 429 before its body is
   read, since each refusal costs the API a body of up to 1 MiB to read and
-  hash, and a log line.
+  hash, and a log line;
+- ``POST /api/v1/webhooks/payments/{provider}``: the calls whose signature
+  fails, 60 a minute per address, counted and checked as the comment
+  webhook's. The signed calls have no limit: each one is a provider's event,
+  which the provider delivers again until it is acknowledged.
 
 The client address is ``request.client``, which uvicorn rewrites from
 ``X-Forwarded-For`` only when the connection comes from nginx
@@ -135,6 +139,7 @@ class RateLimitRules:
     storefront: RateLimitRule
     comment_webhook: RateLimitRule
     comment_webhook_signature_failures: RateLimitRule
+    payment_webhook_signature_failures: RateLimitRule
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Self:
@@ -175,6 +180,11 @@ class RateLimitRules:
             comment_webhook_signature_failures=RateLimitRule(
                 "comment_webhook_signature_failures",
                 settings.rate_limit_comment_webhook_signature_failures_per_minute,
+                MINUTE,
+            ),
+            payment_webhook_signature_failures=RateLimitRule(
+                "payment_webhook_signature_failures",
+                settings.rate_limit_payment_webhook_signature_failures_per_minute,
                 MINUTE,
             ),
         )

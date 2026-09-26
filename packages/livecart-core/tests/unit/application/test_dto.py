@@ -19,6 +19,7 @@ from livecart_core.application.dto import (
     AttemptOpeningKind,
     BuyerNotification,
     CarrierName,
+    CheckoutPaymentStatus,
     CheckoutRequest,
     CheckoutStatus,
     CommentBatch,
@@ -612,6 +613,10 @@ def test_a_payment_event_gives_its_amount_as_money() -> None:
 
     assert event.amount == Money(2_500, "EUR")
     assert event.provider is PaymentProviderName.STRIPE
+    assert event.payment_status is None
+    assert PaymentEvent.model_validate(_payment_event(payment_status="unpaid")).payment_status is (
+        CheckoutPaymentStatus.UNPAID
+    )
 
 
 def test_a_payment_event_may_have_no_amount() -> None:
@@ -629,8 +634,17 @@ def test_a_payment_event_may_have_no_amount() -> None:
         {"currency": "eur"},
         {"event_id": ""},
         {"customer_details": {"email": "buyer@example.invalid"}},
+        {"payment_status": "refunded"},
     ],
-    ids=["currency-alone", "amount-alone", "negative", "lower-currency", "empty-id", "extra"],
+    ids=[
+        "currency-alone",
+        "amount-alone",
+        "negative",
+        "lower-currency",
+        "empty-id",
+        "extra",
+        "unknown-payment-status",
+    ],
 )
 def test_a_payment_event_refuses_what_breaks_its_allow_list(overrides: dict[str, object]) -> None:
     with pytest.raises(ValidationError):

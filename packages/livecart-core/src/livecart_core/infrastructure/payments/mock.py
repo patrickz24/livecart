@@ -48,6 +48,7 @@ from redis.exceptions import RedisError
 
 from livecart_core.application.dto import (
     CheckoutEventType,
+    CheckoutPaymentStatus,
     CheckoutRequest,
     CheckoutSession,
     CheckoutStatus,
@@ -245,6 +246,7 @@ class MockPaymentProvider:
             event_type=CheckoutEventType.COMPLETED.value,
             checkout_ref=session.provider_ref,
             payment_ref=session.payment_ref,
+            payment_status=CheckoutPaymentStatus.PAID,
             amount_minor=session.amount.amount_minor,
             currency=session.amount.currency,
             occurred_at=hosted.completed_at,

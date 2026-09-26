@@ -40,6 +40,7 @@ from livecart_core.application.ports import (
     PlatformAdapter,
     RateLimiter,
     SessionEventLog,
+    WebhookEventRecorder,
 )
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.quantity import Quantity
@@ -50,6 +51,7 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
 from livecart_core.settings import AppEnv, Settings
@@ -131,6 +133,7 @@ def memory_resources(
     comment_queue: CommentQueue | None = None,
     session_events: SessionEventLog | None = None,
     payment_provider: PaymentProvider | None = None,
+    webhook_events: WebhookEventRecorder | None = None,
 ) -> Resources:
     """Resources over the in-memory repositories of ``database``, with nothing to close.
 
@@ -141,7 +144,8 @@ def memory_resources(
     The session events go to in-memory streams unless ``session_events`` does,
     and the event streams read them there: one adapter for both, as a single
     Redis would be. Checkouts go to a ``FakePaymentProvider`` unless
-    ``payment_provider`` names another.
+    ``payment_provider`` names another, and the payment webhook records its
+    events in ``database`` unless ``webhook_events`` says otherwise.
     """
     clock = clock if clock is not None else current_time_clock()
     events = session_events if session_events is not None else InMemorySessionEvents(clock)
@@ -166,6 +170,7 @@ def memory_resources(
         payment_provider=payment_provider
         if payment_provider is not None
         else FakePaymentProvider(),
+        webhook_events=webhook_events if webhook_events is not None else database.webhook_events,
     )
 
 
@@ -213,6 +218,7 @@ def postgres_resources(
         payment_provider=payment_provider
         if payment_provider is not None
         else FakePaymentProvider(),
+        webhook_events=SqlWebhookEventRegistry(engine),
     )
 
 

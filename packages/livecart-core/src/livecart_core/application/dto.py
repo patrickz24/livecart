@@ -1003,12 +1003,26 @@ class CheckoutSession:
             raise ValueError(f"a redirect URL has 1 to {MAX_URL_LENGTH} characters")
 
 
+class CheckoutPaymentStatus(StrEnum):
+    """Whether a checkout session's money came in: Stripe's ``payment_status``.
+
+    A session paid by a delayed method completes ``unpaid``, and one of the
+    ``async_payment_*`` events settles it later.
+    """
+
+    PAID = "paid"
+    UNPAID = "unpaid"
+    NO_PAYMENT_REQUIRED = "no_payment_required"
+
+
 class PaymentEvent(BaseModel):
     """A verified payment webhook, reduced to the fields LiveCart acts on.
 
     This model is the allow-list of ``processed_webhook_events.payload``:
     anything else the provider sends, the customer's details first, is dropped
-    at verification and never stored.
+    at verification and never stored. ``payment_status`` is the session's,
+    when the event carries one; a provider that only reports a session
+    complete once it is paid, as the mock, may leave it out.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -1018,6 +1032,7 @@ class PaymentEvent(BaseModel):
     event_type: str = Field(min_length=1, max_length=128)
     checkout_ref: str | None = Field(default=None, min_length=1, max_length=255)
     payment_ref: str | None = Field(default=None, min_length=1, max_length=255)
+    payment_status: CheckoutPaymentStatus | None = None
     amount_minor: int | None = Field(default=None, ge=0)
     currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$")
     occurred_at: AwareDatetime

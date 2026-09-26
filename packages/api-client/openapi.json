@@ -896,6 +896,32 @@
         "title": "OrderUpdated",
         "type": "object"
       },
+      "PaymentProviderName": {
+        "description": "``payments.provider`` and ``processed_webhook_events.provider``.",
+        "enum": [
+          "mock",
+          "stripe",
+          "paypal",
+          "viva"
+        ],
+        "title": "PaymentProviderName",
+        "type": "string"
+      },
+      "PaymentWebhookReceived": {
+        "description": "A verified payment event, durable in the registry: the worker applies it.",
+        "properties": {
+          "redelivery": {
+            "description": "Whether an earlier delivery recorded this event already: the registry counted this one, and the event is applied once all the same.",
+            "title": "Redelivery",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "redelivery"
+        ],
+        "title": "PaymentWebhookReceived",
+        "type": "object"
+      },
       "Platform": {
         "description": "Where a live stream runs: ``live_sessions.platform`` and ``comments.platform``.",
         "enum": [
@@ -3734,6 +3760,98 @@
           }
         },
         "summary": "Receive a batch of live comments from a platform",
+        "tags": [
+          "webhooks"
+        ]
+      }
+    },
+    "/api/v1/webhooks/payments/{provider}": {
+      "post": {
+        "operationId": "receive_payment_webhook",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "provider",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/PaymentProviderName"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          },
+          "description": "The provider's event, as the provider sends it. Stripe signs it with its Stripe-Signature header (STRIPE_WEBHOOK_SECRET); the mock provider sends a PaymentEvent, signed with X-LiveCart-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of '<t>.<body>' under MOCK_PAYMENT_WEBHOOK_SECRET>.",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaymentWebhookReceived"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The signature is missing, wrong or too old"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The provider is not the one this API takes"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests: try again after Retry-After seconds"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "The registry cannot record the event now: deliver it again later"
+          }
+        },
+        "summary": "Receive an event of a checkout session from the payment provider",
         "tags": [
           "webhooks"
         ]
