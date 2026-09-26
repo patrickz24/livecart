@@ -360,3 +360,19 @@ async def test_an_event_that_fits_no_member_of_the_union_is_skipped_and_logged()
     assert [log["event"] for log in logs if log["log_level"] == "error"] == [
         "session_event_unrelayable"
     ]
+
+
+async def test_a_stream_the_events_fail_is_closed_and_logged() -> None:
+    live = _live()
+
+    with structlog.testing.capture_logs() as logs:
+        async with open_event_stream(live.app, live.path, live.headers()) as stream:
+            await _snapshot(stream)
+            live.events.fail_next()
+            close = await stream.next_message()
+
+    assert close.event == CLOSE_EVENT
+    assert close.json()["data"] == {"reason": "unavailable"}
+    [closed] = [log for log in logs if log["event"] == "session_stream_closed"]
+    assert closed["log_level"] == "warning"
+    assert closed["error"] == "InMemorySessionEvents.read: scripted failure"

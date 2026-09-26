@@ -246,7 +246,10 @@ async def test_a_failure_while_streaming_closes_the_stream() -> None:
 
     world.events.fail_next()
 
-    assert await anext(messages) == FeedClose(CloseReason.UNAVAILABLE)
+    closed = await anext(messages)
+    assert closed == FeedClose(
+        CloseReason.UNAVAILABLE, error="InMemorySessionEvents.read: scripted failure"
+    )
     with pytest.raises(StopAsyncIteration):
         await anext(messages)
 
@@ -259,7 +262,9 @@ async def test_a_failed_gap_check_closes_the_stream_too() -> None:
 
     world.events.fail_next()
 
-    assert await anext(messages) == FeedClose(CloseReason.UNAVAILABLE)
+    closed = await anext(messages)
+    assert isinstance(closed, FeedClose)
+    assert closed.reason is CloseReason.UNAVAILABLE
 
 
 def test_the_bounds_of_a_stream_are_checked() -> None:

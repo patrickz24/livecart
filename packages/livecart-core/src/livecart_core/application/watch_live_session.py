@@ -91,7 +91,10 @@ class FeedGap:
 
 @dataclass(frozen=True, slots=True)
 class FeedClose:
+    """The stream's last message; ``error`` says what failed, for the logs, never the client."""
+
     reason: CloseReason
+    error: str | None = None
 
 
 type FeedMessage = FeedSnapshot | StreamedEvent | FeedGap | FeedClose
@@ -218,8 +221,8 @@ class WatchLiveSession:
                     max_events=self._read_batch,
                     block_seconds=wait.total_seconds(),
                 )
-            except (ServiceUnavailable, RecordNotFound):
-                yield FeedClose(CloseReason.UNAVAILABLE)
+            except (ServiceUnavailable, RecordNotFound) as error:
+                yield FeedClose(CloseReason.UNAVAILABLE, error=str(error))
                 return
             for streamed in events:
                 yield streamed

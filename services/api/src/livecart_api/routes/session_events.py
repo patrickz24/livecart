@@ -373,6 +373,15 @@ def build_session_event_router(
         messages: Annotated[AsyncIterator[FeedMessage], Depends(open_feed)],
     ) -> AsyncIterator[ServerSentEvent]:
         async for message in messages:
+            if isinstance(message, FeedClose):
+                # The port errors name their operation and exception type only.
+                log = logger.warning if message.error is not None else logger.info
+                log(
+                    "session_stream_closed",
+                    session_id=str(session_id),
+                    reason=message.reason.value,
+                    error=message.error,
+                )
             try:
                 relayed = sse_message(
                     message, session_id=session_id, clock=clock, snapshot_limit=snapshot_limit
