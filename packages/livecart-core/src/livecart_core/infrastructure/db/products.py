@@ -26,6 +26,12 @@ other write to the catalog, and no change of the session's status, in
 between. The reservations never lock the session's row, and the
 ``FOR KEY SHARE`` locks of their foreign keys do not conflict with
 ``NO KEY UPDATE``, so a live session keeps selling meanwhile.
+
+The same goes for ``end``, which never waits for the reservations: one
+whose statement started before the ``end`` committed still reads the
+session as live, and may open a pending order in a session that is ended by
+the time it commits. The stock stays exact (the product's row serializes the
+reservations), and that order expires like any other (ADR 0005).
 """
 
 from collections.abc import Sequence

@@ -51,6 +51,7 @@ The seller's restock is the same kind of statement: one `UPDATE ... SET stock_to
 - A burst never fails for a reason another attempt would fix: the loser of the last unit gets a final answer, `out_of_stock`, the first time.
 - A buyer holds at most one pending order per product, of at most `MAX_QUANTITY_PER_COMMENT` (10) units: a troll can still hold that much stock per account and product until the reservation expires.
 - Until the expiry sweep of milestone 4a runs, `reserved_until` is recorded but nothing releases an unpaid reservation.
+- Ending a session never waits for the reservations, nor they for it: the reservation reads the session's row without locking it, and the `FOR KEY SHARE` of its foreign keys does not conflict with the `FOR NO KEY UPDATE` of the transition. A reservation whose statement started before an `end` committed still reads the session as live, and may open a pending order in a session that is ended by the time it commits (checked with two connections on PostgreSQL 16). The stock stays exact, since the product's row is what serializes the reservations; that order expires like any other, with the sweep of milestone 4a. A hard cut would need `end` to lock the session's product rows (`FOR NO KEY UPDATE`) before it changes the status.
 
 ## Alternatives considered
 
