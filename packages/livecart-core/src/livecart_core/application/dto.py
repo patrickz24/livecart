@@ -944,6 +944,67 @@ class IdempotencyRecord(BaseModel):
     response: StoredResponse | None = None
 
 
+# --- Rate limiting ---------------------------------------------------------------------
+
+# A rule's name is a segment of its counters' keys ({p}:rl:{rule}:{subject}).
+RATE_LIMIT_RULE_PATTERN: Final = r"[a-z][a-z0-9_]*"
+# Subjects are built by the API from what it trusts (a grouped client address, a
+# seller id, a SHA-256), never copied from a request, and stay bounded anyway.
+MAX_RATE_LIMIT_SUBJECT_LENGTH: Final = 160
+RATE_LIMIT_SUBJECT_PATTERN: Final = r"[!-~]+"
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimitRule:
+    """At most ``limit`` requests per fixed window of ``window_seconds``, for each subject.
+
+    ``fail_closed`` says what a request gets while the counters cannot be read:
+    refused (the login, whose limits are what stops password guessing) or let
+    through, the failure being counted.
+    """
+
+    name: str
+    limit: int
+    window_seconds: int
+    fail_closed: bool = False
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(RATE_LIMIT_RULE_PATTERN, self.name):
+            raise ValueError(f"{self.name!r} is not a rate limit rule name")
+        if self.limit < 1 or self.window_seconds < 1:
+            raise ValueError("a rate limit allows at least one request per window of 1 s or more")
+
+
+@dataclass(frozen=True, slots=True)
+class RateLimitKey:
+    """One counter: a rule's name and the subject it counts, such as a client address."""
+
+    rule: str
+    subject: str
+
+    def __post_init__(self) -> None:
+        if not re.fullmatch(RATE_LIMIT_RULE_PATTERN, self.rule):
+            raise ValueError(f"{self.rule!r} is not a rate limit rule name")
+        if len(self.subject) > MAX_RATE_LIMIT_SUBJECT_LENGTH or not re.fullmatch(
+            RATE_LIMIT_SUBJECT_PATTERN, self.subject
+        ):
+            raise ValueError(
+                f"a rate limit subject is 1 to {MAX_RATE_LIMIT_SUBJECT_LENGTH} visible ASCII "
+                "characters"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class WindowCount:
+    """The hits of a counter's running window, and the whole seconds until that window ends.
+
+    ``hits`` is 0 and ``resets_in_seconds`` 0 when no window runs.
+    """
+
+    hits: int
+    resets_in_seconds: int
+
+
 # --- Buyer notification ----------------------------------------------------------------
 
 

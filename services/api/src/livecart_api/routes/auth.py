@@ -5,12 +5,15 @@
   ``lc_refresh`` cookie: ``HttpOnly``, so no script can read it,
   ``SameSite=Strict``, ``Path=/api/v1/auth``, so it only travels to these
   routes, and ``Secure`` in production. A wrong password and an unknown e-mail
-  get the same 401.
+  get the same 401. Logins are rate limited per client address, and failures
+  per (account, address), with 429 beyond; while the limits cannot be
+  counted (Redis down), logins answer 503 (``livecart_api.rate_limits``).
 - ``POST /refresh`` trades the cookie for a new access token and rotates the
   refresh token, with a new cookie. Inside the reuse grace (another tab
   refreshed with the same cookie less than 30 s ago) the answer holds an
   access token only, without ``Set-Cookie``: the browser already holds the
-  successor. A refused refresh clears the cookie.
+  successor. A refused refresh clears the cookie. It has no rate limit and
+  needs no Redis: sellers stay signed in through a Redis outage.
 - ``POST /logout`` revokes the cookie's whole token family and clears the
   cookie; it answers 204 whatever the cookie held.
 - ``GET /me`` is the seller's own profile, behind ``CurrentSeller``.
@@ -31,6 +34,12 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, StringConstraints
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.deps import CurrentSeller, require_same_origin
 from livecart_api.errors import ErrorResponse
+from livecart_api.rate_limits import (
+    TOO_MANY_REQUESTS,
+    RateLimiting,
+    client_address,
+    login_failure_subject,
+)
 from livecart_core.application.dto import SellerGrant
 from livecart_core.application.ports import Clock, SellerRepository
 from livecart_core.application.seller_auth import (
@@ -93,12 +102,18 @@ def _responses(*codes: int) -> dict[int | str, dict[str, object]]:
     descriptions = {
         status.HTTP_401_UNAUTHORIZED: "Not authenticated, or the credentials were refused",
         status.HTTP_403_FORBIDDEN: "The Origin header is missing or names another origin",
+        status.HTTP_429_TOO_MANY_REQUESTS: TOO_MANY_REQUESTS,
+        status.HTTP_503_SERVICE_UNAVAILABLE: "The rate limits cannot be counted: try again later",
     }
     return {code: {"model": ErrorResponse, "description": descriptions[code]} for code in codes}
 
 
-def build_auth_router(auth: SellerAuth) -> APIRouter:
+def build_auth_router(auth: SellerAuth, limits: RateLimiting) -> APIRouter:
     router = APIRouter(prefix=PREFIX, tags=["auth"])
+
+    async def limit_logins(request: Request) -> None:
+        # A dependency, so that every attempt counts, a malformed body included.
+        await limits.enforce(limits.rules.login, client_address(request))
 
     def set_refresh_cookie(response: Response, grant: SellerGrant) -> None:
         if grant.refresh_token is None:
@@ -143,12 +158,23 @@ def build_auth_router(auth: SellerAuth) -> APIRouter:
         "/login",
         summary="Log in with an e-mail and a password",
         response_model=AccessTokenResponse,
-        responses=_responses(status.HTTP_401_UNAUTHORIZED),
+        dependencies=[Depends(limit_logins)],
+        responses=_responses(
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+        ),
     )
-    async def login(body: LoginRequest, response: Response) -> AccessTokenResponse:
+    async def login(
+        body: LoginRequest, request: Request, response: Response
+    ) -> AccessTokenResponse:
+        failures = login_failure_subject(body.email, client_address(request))
+        # Checked before the password: past the limit, even the right one is refused.
+        await limits.check(limits.rules.login_failures, failures)
         try:
             grant = await auth.authenticate(body.email, body.password.get_secret_value())
         except InvalidCredentials:
+            await limits.record(limits.rules.login_failures, failures)
             # No e-mail in the logs: it is personal data, and the access log has the client IP.
             logger.info("seller_login_refused")
             raise HTTPException(
@@ -203,7 +229,7 @@ def build_auth_router(auth: SellerAuth) -> APIRouter:
     @router.get(
         "/me",
         summary="The profile of the seller the access token names",
-        responses=_responses(status.HTTP_401_UNAUTHORIZED),
+        responses=_responses(status.HTTP_401_UNAUTHORIZED, status.HTTP_429_TOO_MANY_REQUESTS),
     )
     async def get_current_seller(seller: CurrentSeller) -> SellerProfile:
         record = await auth.sellers.get(seller.id)

@@ -16,6 +16,7 @@ fake raise ``ServiceUnavailable``, with no side effect.
 import asyncio
 import hashlib
 import hmac
+import math
 import secrets
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -61,6 +62,7 @@ from livecart_core.application.dto import (
     PurchaseIntentRecord,
     QueuedComment,
     QueueDelivery,
+    RateLimitKey,
     RefreshTokenRecord,
     RegisteredEvent,
     ReservationRequest,
@@ -75,6 +77,7 @@ from livecart_core.application.dto import (
     StockLevel,
     TrackingUpdate,
     WebhookOutcome,
+    WindowCount,
     page_of,
 )
 from livecart_core.application.ports import (
@@ -585,6 +588,50 @@ class InMemoryIdempotencyStore(_ScriptedFailures):
     async def release(self, key: IdempotencyKey) -> None:
         self._maybe_fail("release")
         self.records.pop(key, None)
+
+
+# --- Rate limiting ---------------------------------------------------------------------
+
+
+def _whole_seconds_until(end: datetime, now: datetime) -> int:
+    """Seconds from ``now`` to ``end``, rounded up, as Retry-After counts them; 0 once past."""
+    return max(0, math.ceil((end - now).total_seconds()))
+
+
+class InMemoryRateLimiter(_ScriptedFailures):
+    """Fixed windows in a dict, timed by ``clock``.
+
+    A window ends ``window_seconds`` after its first hit, as in Redis.
+    ``windows`` holds each running window's hits and end, for the tests to read.
+    """
+
+    def __init__(self, clock: Clock) -> None:
+        self._clock = clock
+        self.windows: dict[RateLimitKey, tuple[int, datetime]] = {}
+
+    def _running(self, key: RateLimitKey, now: datetime) -> tuple[int, datetime] | None:
+        window = self.windows.get(key)
+        if window is not None and window[1] <= now:
+            # Redis expires the key at the end of its window: the next hit starts afresh.
+            del self.windows[key]
+            return None
+        return window
+
+    async def hit(self, key: RateLimitKey, *, window_seconds: int) -> WindowCount:
+        self._maybe_fail("hit")
+        _require_positive("window_seconds", window_seconds)
+        now = self._clock.now()
+        hits, end = self._running(key, now) or (0, now + timedelta(seconds=window_seconds))
+        self.windows[key] = (hits + 1, end)
+        return WindowCount(hits + 1, _whole_seconds_until(end, now))
+
+    async def peek(self, key: RateLimitKey) -> WindowCount:
+        self._maybe_fail("peek")
+        now = self._clock.now()
+        window = self._running(key, now)
+        if window is None:
+            return WindowCount(0, 0)
+        return WindowCount(window[0], _whole_seconds_until(window[1], now))
 
 
 # --- Repositories ----------------------------------------------------------------------

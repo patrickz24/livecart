@@ -41,6 +41,7 @@ from pydantic import (
 
 from livecart_api.deps import CurrentSeller
 from livecart_api.errors import documented, error_answer
+from livecart_api.rate_limits import TOO_MANY_REQUESTS
 from livecart_api.routes.live_sessions import Cursor, PageSize
 from livecart_core.application.dto import (
     IDEMPOTENCY_KEY_PATTERN,
@@ -206,7 +207,10 @@ CONFLICT: Final = "The catalog cannot hold the product, or the session's status 
 
 
 def build_product_router(products: SellerProducts, idempotent: IdempotentRequests) -> APIRouter:
-    router = APIRouter(prefix=PREFIX, tags=["products"])
+    # CurrentSeller counts every request against the seller's rate limit.
+    router = APIRouter(
+        prefix=PREFIX, tags=["products"], responses=documented({429: TOO_MANY_REQUESTS})
+    )
 
     @router.post(
         "",

@@ -13,6 +13,12 @@ from fastapi.routing import APIRoute
 from livecart_api import errors
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.middleware.request_context import RequestContextMiddleware
+from livecart_api.rate_limits import (
+    RateLimiting,
+    RateLimitRules,
+    TooManyRequests,
+    too_many_requests,
+)
 from livecart_api.resources import Resources
 from livecart_api.routes.auth import SellerAuth, build_auth_router
 from livecart_api.routes.health import build_health_router
@@ -101,12 +107,14 @@ def create_app(
         generate_unique_id_function=_operation_id,
     )
     seller_auth = build_seller_auth(settings, resources)
+    limits = RateLimiting(resources.rate_limiter, RateLimitRules.from_settings(settings))
     # Read by CurrentSeller (livecart_api.deps), which every seller route declares.
     app.state.access_tokens = seller_auth.access_tokens
+    app.state.rate_limiting = limits
     app.include_router(
         build_health_router(resources.readiness_checks, timeout_s=readiness_timeout_s)
     )
-    app.include_router(build_auth_router(seller_auth))
+    app.include_router(build_auth_router(seller_auth, limits))
     app.include_router(
         build_live_session_router(SellerLiveSessions(resources.live_sessions, resources.clock))
     )
@@ -122,8 +130,11 @@ def create_app(
         )
     )
     # Checking a token needs its stored hash only, never ORDER_TOKEN_KEY.
-    app.include_router(build_order_router(LookUpOrder(resources.orders, OrderTokens.verify)))
+    app.include_router(
+        build_order_router(LookUpOrder(resources.orders, OrderTokens.verify), limits)
+    )
     app.add_exception_handler(ServiceUnavailable, _service_unavailable)
+    app.add_exception_handler(TooManyRequests, too_many_requests)
     errors.install(app)
 
     # The last middleware added runs first: CorrelationIdMiddleware sets the

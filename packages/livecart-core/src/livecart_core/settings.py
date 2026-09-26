@@ -28,6 +28,17 @@ MAX_DELAY_SECONDS: Final = 86_400
 # Words of letters, digits, "_" and "-" joined by ":", as in "livecart" or "livecart:staging".
 REDIS_KEY_PREFIX_PATTERN: Final = re.compile(r"[A-Za-z0-9_-]+(:[A-Za-z0-9_-]+)*")
 MAX_REDIS_KEY_PREFIX_LENGTH: Final = 64
+# Upper bound of every rate limit: beyond it a limit no longer limits anything.
+MAX_RATE_LIMIT: Final = 1_000_000
+RATE_LIMITS: Final = (
+    "rate_limit_login_per_minute",
+    "rate_limit_login_failures",
+    "rate_limit_seller_per_minute",
+    "rate_limit_buyer_lookup_per_minute",
+    "rate_limit_buyer_lookup_not_found_per_minute",
+    "buyer_lookup_not_found_alert_per_minute",
+    "rate_limit_buyer_token_per_minute",
+)
 
 
 class AppEnv(StrEnum):
@@ -129,6 +140,20 @@ class Settings(BaseAppSettings):
     # The one currency of the deployment (ISO 4217), frozen on every order and
     # payment; multi-currency is out of scope.
     default_currency: str = "EUR"
+    # Rate limits of the API (livecart_api.rate_limits): the plan's defaults, to
+    # recalibrate once measured. Fixed windows of a minute unless named otherwise.
+    rate_limit_login_per_minute: int = 10  # per client address
+    # Failed logins per (account, client address), per window below: low enough
+    # to stop guessing, per address so that nobody else can lock a seller out.
+    rate_limit_login_failures: int = 5
+    rate_limit_login_failure_window_seconds: int = 900
+    rate_limit_seller_per_minute: int = 300  # per seller, on every seller route
+    rate_limit_buyer_lookup_per_minute: int = 30  # per client address
+    rate_limit_buyer_lookup_not_found_per_minute: int = 20  # per client address
+    # Not-found lookups per minute from all addresses together above which a
+    # warning is logged: a guess of references spread over many addresses.
+    buyer_lookup_not_found_alert_per_minute: int = 100
+    rate_limit_buyer_token_per_minute: int = 60  # per order access token
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -200,6 +225,20 @@ class Settings(BaseAppSettings):
     def _check_default_currency(cls, value: str) -> str:
         if not re.fullmatch("[A-Z]{3}", value):
             raise ValueError("must be a three-letter upper-case ISO 4217 code, such as EUR")
+        return value
+
+    @field_validator(*RATE_LIMITS)
+    @classmethod
+    def _check_rate_limit(cls, value: int) -> int:
+        if not 1 <= value <= MAX_RATE_LIMIT:
+            raise ValueError(f"must be from 1 to {MAX_RATE_LIMIT} requests per window")
+        return value
+
+    @field_validator("rate_limit_login_failure_window_seconds")
+    @classmethod
+    def _check_login_failure_window(cls, value: int) -> int:
+        if not MIN_DELAY_SECONDS <= value <= MAX_DELAY_SECONDS:
+            raise ValueError(f"must be from {MIN_DELAY_SECONDS} to {MAX_DELAY_SECONDS} seconds")
         return value
 
 

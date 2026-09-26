@@ -5,7 +5,13 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
-from livecart_core.settings import AppEnv, LogLevel, MigrationSettings, Settings
+from livecart_core.settings import (
+    RATE_LIMITS,
+    AppEnv,
+    LogLevel,
+    MigrationSettings,
+    Settings,
+)
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 APP_URL = "postgresql+asyncpg://livecart_app:{password}@localhost:55432/livecart"
@@ -23,7 +29,8 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     names = ("APP_ENV", "LOG_LEVEL", "DATABASE_URL", "REDIS_URL", "MIGRATOR_URL")
     extra = ("WORKER_HEARTBEAT_FILE", "MAX_QUANTITY_PER_COMMENT", "RESERVATION_TTL_SECONDS")
     keys = ("JWT_SECRET", "ORDER_TOKEN_KEY")
-    for name in (*names, *extra, *keys, "DEFAULT_CURRENCY", "REDIS_KEY_PREFIX"):
+    limits = (*(name.upper() for name in RATE_LIMITS), "RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS")
+    for name in (*names, *extra, *keys, *limits, "DEFAULT_CURRENCY", "REDIS_KEY_PREFIX"):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -239,6 +246,35 @@ def test_the_deployment_currency_is_the_euro_by_default() -> None:
 def test_the_deployment_currency_is_an_iso_4217_code(value: str) -> None:
     with pytest.raises(ValidationError, match="ISO 4217"):
         load(DEFAULT_CURRENCY=value, **dev_env())
+
+
+def test_the_rate_limits_default_to_the_plan() -> None:
+    settings = load(**dev_env())
+
+    assert settings.rate_limit_login_per_minute == 10
+    assert settings.rate_limit_login_failures == 5
+    assert settings.rate_limit_login_failure_window_seconds == 900
+    assert settings.rate_limit_seller_per_minute == 300
+    assert settings.rate_limit_buyer_lookup_per_minute == 30
+    assert settings.rate_limit_buyer_lookup_not_found_per_minute == 20
+    assert settings.buyer_lookup_not_found_alert_per_minute == 100
+    assert settings.rate_limit_buyer_token_per_minute == 60
+
+
+@pytest.mark.parametrize("name", RATE_LIMITS)
+def test_every_rate_limit_is_configurable_within_its_bounds(name: str) -> None:
+    assert getattr(load(**{name.upper(): "1"}, **dev_env()), name) == 1
+    assert getattr(load(**{name.upper(): "1000000"}, **dev_env()), name) == 1_000_000
+    for refused in ("0", "-5", "1000001"):
+        with pytest.raises(ValidationError, match="from 1 to 1000000 requests per window"):
+            load(**{name.upper(): refused}, **dev_env())
+
+
+@pytest.mark.parametrize("value", ["59", "86401"])
+def test_the_login_failure_window_stays_between_a_minute_and_a_day(value: str) -> None:
+    assert load(RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS="60", **dev_env())
+    with pytest.raises(ValidationError, match="from 60 to 86400 seconds"):
+        load(RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS=value, **dev_env())
 
 
 def test_the_redis_keys_are_prefixed_livecart_by_default() -> None:

@@ -263,6 +263,7 @@ def test_the_adapters_are_among_the_modules_checked_for_raw_sql() -> None:
     assert "livecart_core.infrastructure.db.orders" in checked
     assert "livecart_core.infrastructure.db.live_sessions" in checked
     assert "livecart_core.infrastructure.idempotency" in checked
+    assert "livecart_core.infrastructure.ratelimit" in checked
     assert "livecart_core.infrastructure.db.products" in checked
     assert "livecart_core.infrastructure.db.sellers" in checked
     assert "livecart_core.infrastructure.db.refresh_tokens" in checked

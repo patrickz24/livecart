@@ -44,6 +44,8 @@ from livecart_core.application.dto import (
     PurchaseIntentRecord,
     QueuedComment,
     QueueDelivery,
+    RateLimitKey,
+    RateLimitRule,
     RefreshTokenRecord,
     RegisteredEvent,
     ReservationRequest,
@@ -762,3 +764,43 @@ def test_a_product_change_touches_its_keys_only_when_it_moves_them() -> None:
         ProductCode("A12"),
         Variant("L"),
     )
+
+
+# --- Rate limiting ---------------------------------------------------------------------
+
+
+def test_a_rate_limit_rule_allows_at_least_one_request_per_window() -> None:
+    rule = RateLimitRule("login_failures", 5, 900, fail_closed=True)
+
+    assert (rule.name, rule.limit, rule.window_seconds, rule.fail_closed) == (
+        "login_failures",
+        5,
+        900,
+        True,
+    )
+    assert not RateLimitRule("seller", 300, 60).fail_closed
+
+
+@pytest.mark.parametrize(
+    ("name", "limit", "window_seconds"),
+    [("Login", 1, 60), ("login:ip", 1, 60), ("", 1, 60), ("login", 0, 60), ("login", 1, 0)],
+)
+def test_a_rate_limit_rule_refuses_a_bad_name_or_bound(
+    name: str, limit: int, window_seconds: int
+) -> None:
+    with pytest.raises(ValueError, match="rate limit"):
+        RateLimitRule(name, limit, window_seconds)
+
+
+def test_a_rate_limit_key_holds_a_bounded_visible_subject() -> None:
+    assert RateLimitKey("buyer_lookup", "2001:db8:1:2::/64").subject == "2001:db8:1:2::/64"
+    assert RateLimitKey("login", "x" * 160).subject == "x" * 160
+
+
+@pytest.mark.parametrize(
+    ("rule", "subject"),
+    [("login", ""), ("login", "a b"), ("login", "x" * 161), ("login", "é"), ("Login", "x")],
+)
+def test_a_rate_limit_key_refuses_what_could_bend_a_redis_key(rule: str, subject: str) -> None:
+    with pytest.raises(ValueError, match="rate limit"):
+        RateLimitKey(rule, subject)

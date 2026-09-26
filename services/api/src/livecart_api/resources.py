@@ -16,6 +16,7 @@ from livecart_core.application.ports import (
     OrderLookup,
     PasswordHasher,
     ProductStockRepository,
+    RateLimiter,
     RefreshTokenRepository,
     SellerRepository,
 )
@@ -28,6 +29,7 @@ from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenReposi
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
+from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
@@ -54,6 +56,7 @@ class Resources:
     products: ProductStockRepository
     idempotency: IdempotencyStore
     orders: OrderLookup
+    rate_limiter: RateLimiter
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -94,4 +97,5 @@ def build_resources(settings: Settings) -> Resources:
             currency=settings.default_currency,
             access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
         ),
+        rate_limiter=RedisRateLimiter(redis, prefix=settings.redis_key_prefix),
     )

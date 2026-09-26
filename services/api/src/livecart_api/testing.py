@@ -18,12 +18,18 @@ import httpx2
 from fastapi import FastAPI
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncEngine
+from starlette.types import ASGIApp
 
 from livecart_api.access_tokens import AccessTokens
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
 from livecart_core.application.dto import IntentSource, OrderRecord, ReservationRequest
-from livecart_core.application.ports import Clock, IdempotencyStore, PasswordHasher
+from livecart_core.application.ports import (
+    Clock,
+    IdempotencyStore,
+    PasswordHasher,
+    RateLimiter,
+)
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.quantity import Quantity
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
@@ -42,6 +48,7 @@ from livecart_core.testing.fakes import (
     FakePasswordHasher,
     InMemoryDatabase,
     InMemoryIdempotencyStore,
+    InMemoryRateLimiter,
 )
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
@@ -62,8 +69,9 @@ class FakeProbe:
             raise ConnectionRefusedError("dependency down")
 
 
-def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT) -> Settings:
-    return Settings(
+def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT, **overrides: object) -> Settings:
+    """Settings of the unit tests; ``overrides`` replaces fields, such as a rate limit to reach."""
+    settings = Settings(
         app_env=app_env,
         database_url=SecretStr("postgresql+asyncpg://livecart_app:unit@db.invalid/livecart"),
         redis_url=SecretStr("redis://:unit@redis.invalid:6379/0"),
@@ -71,6 +79,7 @@ def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT) -> Settings:
         order_token_key=TEST_ORDER_TOKEN_KEY,
         _env_file=None,
     )
+    return settings.model_copy(update=overrides)
 
 
 def current_time_clock() -> FakeClock:
@@ -89,27 +98,35 @@ def memory_resources(
     passwords: PasswordHasher | None = None,
     clock: Clock | None = None,
     idempotency: IdempotencyStore | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> Resources:
     """Resources over the in-memory repositories of ``database``, with nothing to close.
 
-    A test that needs one repository to behave otherwise ``replace``s it.
+    A test that needs one repository to behave otherwise ``replace``s it. The
+    rate limiter's windows are timed by ``clock``.
     """
+    clock = clock if clock is not None else current_time_clock()
     return Resources(
         readiness_checks=checks,
         aclose=_noop,
         sellers=database.sellers,
         refresh_tokens=database.refresh_tokens,
         passwords=passwords if passwords is not None else FakePasswordHasher(),
-        clock=clock if clock is not None else current_time_clock(),
+        clock=clock,
         live_sessions=database.live_sessions,
         products=database.products,
         idempotency=idempotency if idempotency is not None else InMemoryIdempotencyStore(),
         orders=database.orders,
+        rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
     )
 
 
 def postgres_resources(
-    engine: AsyncEngine, *, clock: Clock, idempotency: IdempotencyStore | None = None
+    engine: AsyncEngine,
+    *,
+    clock: Clock,
+    idempotency: IdempotencyStore | None = None,
+    rate_limiter: RateLimiter | None = None,
 ) -> Resources:
     """Resources over the SQL adapters on ``engine`` (livecart_app on livecart_test) and argon2id.
 
@@ -129,6 +146,7 @@ def postgres_resources(
         orders=SqlOrderRepository(
             engine, currency=CURRENCY, access_token_hash=TEST_ORDER_TOKENS.stored_hash
         ),
+        rate_limiter=rate_limiter if rate_limiter is not None else InMemoryRateLimiter(clock),
     )
 
 
@@ -140,15 +158,25 @@ def make_app(
     database: InMemoryDatabase | None = None,
     passwords: PasswordHasher | None = None,
     clock: Clock | None = None,
+    rate_limiter: RateLimiter | None = None,
+    settings: Settings | None = None,
 ) -> FastAPI:
-    """The app around ``checks`` and in-memory repositories, with nothing to close."""
+    """The app around ``checks`` and in-memory repositories, with nothing to close.
+
+    ``settings`` replaces ``make_settings(app_env)``, to lower a rate limit for instance.
+    """
     resources = memory_resources(
         database if database is not None else InMemoryDatabase(),
         checks=checks,
         passwords=passwords,
         clock=clock,
+        rate_limiter=rate_limiter,
     )
-    return create_app(make_settings(app_env), resources, readiness_timeout_s=timeout_s)
+    return create_app(
+        settings if settings is not None else make_settings(app_env),
+        resources,
+        readiness_timeout_s=timeout_s,
+    )
 
 
 def seller_headers(app: FastAPI, seller_id: UUID) -> dict[str, str]:
@@ -159,10 +187,19 @@ def seller_headers(app: FastAPI, seller_id: UUID) -> dict[str, str]:
     return {"Authorization": f"Bearer {tokens.issue(seller_id).value}"}
 
 
+# The peer address of open_client's connections, unless a test names another.
+TEST_PEER = "127.0.0.1"
+
+
 @asynccontextmanager
-async def open_client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
-    """An in-process HTTP client of ``app`` (the lifespan is tested separately)."""
-    transport = httpx2.ASGITransport(app=app)
+async def open_client(app: ASGIApp, *, peer: str = TEST_PEER) -> AsyncIterator[httpx2.AsyncClient]:
+    """An in-process HTTP client of ``app``, connecting from ``peer``.
+
+    ``peer`` is the address the server sees the connection come from, as
+    ``request.client``; a proxy's ``X-Forwarded-For`` may then rewrite it.
+    The lifespan is tested apart.
+    """
+    transport = httpx2.ASGITransport(app=app, client=(peer, 50_000))
     async with httpx2.AsyncClient(transport=transport, base_url=TEST_ORIGIN) as client:
         yield client
 

@@ -16,10 +16,11 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.ports import IdempotencyStore
+from livecart_core.application.ports import IdempotencyStore, RateLimiter
 from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
+from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
     AuthBackend,
@@ -36,7 +37,7 @@ from livecart_core.testing.database import (
     load_integration_settings,
     unreachable_servers,
 )
-from livecart_core.testing.fakes import InMemoryIdempotencyStore
+from livecart_core.testing.fakes import FakeClock, InMemoryIdempotencyStore, InMemoryRateLimiter
 from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
 
@@ -163,3 +164,16 @@ def idempotency_store(request: pytest.FixtureRequest) -> IdempotencyStore:
     client: Redis = request.getfixturevalue("redis_client")
     prefix: str = request.getfixturevalue("redis_key_prefix")
     return RedisIdempotencyStore(client, prefix=prefix)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def rate_limiter(request: pytest.FixtureRequest) -> RateLimiter:
+    """The fixed-window counters of this run of a contract scenario: the fake, then Redis.
+
+    The fake's clock stands still, as Redis's does within the short scenarios.
+    """
+    if request.param == "memory":
+        return InMemoryRateLimiter(FakeClock())
+    client: Redis = request.getfixturevalue("redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    return RedisRateLimiter(client, prefix=prefix)

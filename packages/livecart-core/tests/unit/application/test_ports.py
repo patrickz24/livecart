@@ -25,6 +25,7 @@ from livecart_core.application.ports import (
     PortError,
     ProductConflict,
     ProductStockRepository,
+    RateLimiter,
     RecordNotFound,
     RefreshTokenRepository,
     SellerConflict,
@@ -50,6 +51,7 @@ from livecart_core.testing.fakes import (
     FakePlatformAdapter,
     InMemoryDatabase,
     InMemoryIdempotencyStore,
+    InMemoryRateLimiter,
 )
 
 
@@ -78,6 +80,7 @@ def test_every_fake_satisfies_its_port() -> None:
     shipments: list[ShipmentRepository] = [database.shipments]
     webhook_events: list[WebhookEventRegistry] = [database.webhook_events]
     idempotency: list[IdempotencyStore] = [InMemoryIdempotencyStore()]
+    rate_limiters: list[RateLimiter] = [InMemoryRateLimiter(clock)]
 
     ports: list[Sequence[object]] = [
         clocks,
@@ -99,6 +102,7 @@ def test_every_fake_satisfies_its_port() -> None:
         shipments,
         webhook_events,
         idempotency,
+        rate_limiters,
     ]
     assert all(ports)
 

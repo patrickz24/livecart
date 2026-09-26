@@ -64,6 +64,7 @@ from livecart_core.application.dto import (
     ProductRecord,
     QueuedComment,
     QueueDelivery,
+    RateLimitKey,
     RefreshTokenRecord,
     RegisteredEvent,
     ReservationRequest,
@@ -76,6 +77,7 @@ from livecart_core.application.dto import (
     ShippingAddress,
     TrackingUpdate,
     WebhookOutcome,
+    WindowCount,
 )
 from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.live_sessions import CatalogConflict
@@ -628,6 +630,23 @@ class IdempotencyStore(Protocol):
 
     async def release(self, key: IdempotencyKey) -> None:
         """Drop the claim of a request that failed without answering, so the key may run again."""
+
+
+class RateLimiter(Protocol):
+    """Fixed-window counters, one per key, shared by every process (Redis, one Lua script).
+
+    A window starts with the first hit of its key and ends ``window_seconds``
+    later, whatever the hits in between; the next hit then starts a new one.
+    The limiter only counts: what a count allows is the caller's rule
+    (``RateLimitRule``). A failure of the store raises ``ServiceUnavailable``,
+    and the caller decides whether the request goes on.
+    """
+
+    async def hit(self, key: RateLimitKey, *, window_seconds: int) -> WindowCount:
+        """Count one hit of ``key``; the count returned includes it."""
+
+    async def peek(self, key: RateLimitKey) -> WindowCount:
+        """The count of ``key``'s running window, without counting a hit."""
 
 
 # How many order references unit 3 draws before it gives up with ServiceUnavailable.

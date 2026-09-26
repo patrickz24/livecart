@@ -28,6 +28,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints
 
 from livecart_api.deps import CurrentSeller
 from livecart_api.errors import documented
+from livecart_api.rate_limits import TOO_MANY_REQUESTS
 from livecart_core.application.dto import (
     MAX_IDENTIFIER_LENGTH,
     MAX_PAGE_SIZE,
@@ -110,7 +111,10 @@ CONFLICT: Final = "The session's status does not allow it, or the live id is tak
 
 
 def build_live_session_router(sessions: SellerLiveSessions) -> APIRouter:
-    router = APIRouter(prefix=PREFIX, tags=["live-sessions"])
+    # CurrentSeller counts every request against the seller's rate limit.
+    router = APIRouter(
+        prefix=PREFIX, tags=["live-sessions"], responses=documented({429: TOO_MANY_REQUESTS})
+    )
 
     @router.post(
         "",

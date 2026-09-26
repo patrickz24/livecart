@@ -574,6 +574,14 @@ export type LoginErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+    /**
+     * The rate limits cannot be counted: try again later
+     */
+    503: ErrorResponse;
 };
 
 export type LoginError = LoginErrors[keyof LoginErrors];
@@ -624,6 +632,10 @@ export type GetCurrentSellerErrors = {
      * Not authenticated, or the credentials were refused
      */
     401: ErrorResponse;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type GetCurrentSellerError = GetCurrentSellerErrors[keyof GetCurrentSellerErrors];
@@ -695,6 +707,10 @@ export type ListLiveSessionsErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type ListLiveSessionsError = ListLiveSessionsErrors[keyof ListLiveSessionsErrors];
@@ -728,6 +744,10 @@ export type CreateLiveSessionErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type CreateLiveSessionError = CreateLiveSessionErrors[keyof CreateLiveSessionErrors];
@@ -766,6 +786,10 @@ export type GetLiveSessionErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type GetLiveSessionError = GetLiveSessionErrors[keyof GetLiveSessionErrors];
@@ -808,6 +832,10 @@ export type UpdateLiveSessionErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type UpdateLiveSessionError = UpdateLiveSessionErrors[keyof UpdateLiveSessionErrors];
@@ -850,6 +878,10 @@ export type EndLiveSessionErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type EndLiveSessionError = EndLiveSessionErrors[keyof EndLiveSessionErrors];
@@ -901,6 +933,10 @@ export type ListProductsErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type ListProductsError = ListProductsErrors[keyof ListProductsErrors];
@@ -943,6 +979,10 @@ export type CreateProductErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type CreateProductError = CreateProductErrors[keyof CreateProductErrors];
@@ -985,6 +1025,10 @@ export type GetProductErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type GetProductError = GetProductErrors[keyof GetProductErrors];
@@ -1031,6 +1075,10 @@ export type UpdateProductErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type UpdateProductError = UpdateProductErrors[keyof UpdateProductErrors];
@@ -1085,6 +1133,10 @@ export type RestockProductErrors = {
      * The body or the key is invalid, or the key was sent with another request
      */
     422: ErrorResponse;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type RestockProductError = RestockProductErrors[keyof RestockProductErrors];
@@ -1127,6 +1179,10 @@ export type StartLiveSessionErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type StartLiveSessionError = StartLiveSessionErrors[keyof StartLiveSessionErrors];
@@ -1163,6 +1219,10 @@ export type GetOrderErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type GetOrderError = GetOrderErrors[keyof GetOrderErrors];
@@ -1199,6 +1259,10 @@ export type GetOrderDetailsErrors = {
      * Validation Error
      */
     422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
 };
 
 export type GetOrderDetailsError = GetOrderDetailsErrors[keyof GetOrderDetailsErrors];

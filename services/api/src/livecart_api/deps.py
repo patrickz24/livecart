@@ -4,7 +4,8 @@
 parameter of that type answers 401, with ``WWW-Authenticate: Bearer``, unless
 the request carries a valid access token in ``Authorization: Bearer``. It
 reads nothing from the database: a verified JWT is the proof, which is what
-keeps access tokens short-lived (15 minutes).
+keeps access tokens short-lived (15 minutes). It then counts the request
+against the seller's rate limit (``livecart_api.rate_limits``), 429 beyond.
 
 ``require_same_origin`` guards the routes that act on the refresh cookie. The
 cookie is ``SameSite=Strict`` already; the ``Origin`` header is a second,
@@ -26,6 +27,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from livecart_api.access_tokens import AccessTokens, InvalidAccessToken
+from livecart_api.rate_limits import rate_limiting
 
 DEFAULT_PORTS: Final = {"http": 80, "https": 443}
 
@@ -72,6 +74,9 @@ async def _current_seller(
         raise _unauthorized(
             "Invalid or expired access token", challenge='Bearer error="invalid_token"'
         ) from None
+    # After the token, so that only a seller's own requests fill the seller's counter.
+    limits = rate_limiting(request)
+    await limits.enforce(limits.rules.seller, str(claims.seller_id))
     return AuthenticatedSeller(claims.seller_id)
 
 

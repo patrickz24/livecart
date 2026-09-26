@@ -14,16 +14,26 @@ Two tiers (``application.buyer_orders``):
 
 The routes that pay, give the address and follow the delivery join the
 second tier with the milestones that implement them.
+
+Both are rate limited (``livecart_api.rate_limits``): the lookup per client
+address, its not-found answers too, so that guessing references is slow, and
+the details per access token.
 """
 
 from datetime import datetime
 from typing import Annotated, Final, Self
 
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
 from livecart_api.errors import NOT_FOUND, documented
+from livecart_api.rate_limits import (
+    TOO_MANY_REQUESTS,
+    RateLimiting,
+    client_address,
+    token_subject,
+)
 from livecart_core.application.buyer_orders import LookUpOrder
 from livecart_core.application.dto import BuyerOrderRecord, ShippingAddress
 from livecart_core.domain.state_machines import OrderStatus
@@ -107,23 +117,45 @@ def _not_found() -> HTTPException:
     return HTTPException(status.HTTP_404_NOT_FOUND, detail=NOT_FOUND)
 
 
-def build_order_router(lookup: LookUpOrder) -> APIRouter:
-    router = APIRouter(prefix=PREFIX, tags=["orders"])
+def build_order_router(lookup: LookUpOrder, limits: RateLimiting) -> APIRouter:
+    router = APIRouter(
+        prefix=PREFIX, tags=["orders"], responses=documented({429: TOO_MANY_REQUESTS})
+    )
+
+    async def limit_lookups(request: Request) -> None:
+        address = client_address(request)
+        await limits.enforce(limits.rules.buyer_lookup, address)
+        # Past its not-found answers, an address finds nothing more, existing orders included.
+        await limits.check(limits.rules.buyer_lookup_not_found, address)
+
+    async def limit_token_requests(
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
+    ) -> None:
+        subject = (
+            client_address(request)
+            if credentials is None
+            else token_subject(credentials.credentials)
+        )
+        await limits.enforce(limits.rules.buyer_token, subject)
 
     @router.get(
         "/{reference}",
         summary="An order's status, product and total, from its reference alone",
+        dependencies=[Depends(limit_lookups)],
         responses=documented({404: "No order has this reference"}),
     )
-    async def get_order(reference: Reference) -> OrderStatusResponse:
+    async def get_order(reference: Reference, request: Request) -> OrderStatusResponse:
         found = await lookup.by_reference(reference)
         if found is None:
+            await limits.record_lookup_not_found(client_address(request))
             raise _not_found()
         return OrderStatusResponse.of(found)
 
     @router.get(
         "/{reference}/details",
         summary="An order in full, shipping address included, with its access token",
+        dependencies=[Depends(limit_token_requests)],
         responses=documented(
             {404: "No order has this reference, or the token is missing or not its own"}
         ),
