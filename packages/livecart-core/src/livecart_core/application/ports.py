@@ -403,16 +403,28 @@ class BuyerNotifier(Protocol):
 
 
 class PaymentProvider(Protocol):
-    """A hosted payment page: a mock by default, Stripe Checkout in test mode (milestone 5).
+    """A hosted payment page: the mock by default, Stripe Checkout in test mode.
 
-    ``create_checkout`` is idempotent on the request's idempotency key: one
-    attempt always gets the same session, so a crash between creating a
-    session and recording it is recovered by creating it again. Expiring a
-    session settles the race between a late payment and the release of the
-    stock (expire-first): stock is released only once the provider has
-    expired the session. Transport failures raise ``ServiceUnavailable``, and
-    an unknown session ``RecordNotFound``. PayPal and Viva are documented
-    stubs that refuse to start.
+    Four calls, whatever the provider, over provider-neutral records
+    (``CheckoutRequest``, ``CheckoutSession``, ``PaymentEvent``): create a
+    hosted session, expire it, read it back, verify a webhook. No card data
+    ever reaches LiveCart: the buyer pays on the provider's page.
+
+    - ``create_checkout`` is idempotent on the request's idempotency key
+      (``checkout-session:{order_id}:{attempt_no}``): one attempt always gets
+      the same session, so a crash between creating a session and recording
+      it is recovered by creating it again. A key sent again with other
+      parameters raises ``ValueError``, as Stripe refuses it;
+    - expiring a session settles the race between a late payment and the
+      release of the stock (expire-first): stock is released only once the
+      provider has expired the session, and a session the buyer paid first
+      refuses to expire;
+    - transport failures raise ``ServiceUnavailable``, and an unknown session
+      ``RecordNotFound``.
+
+    Every process builds the same adapter from ``PAYMENT_PROVIDER``, so the
+    API and the worker see the same sessions: the provider keeps them, never
+    the process. PayPal and Viva are documented stubs that refuse to start.
     """
 
     @property
@@ -420,7 +432,7 @@ class PaymentProvider(Protocol):
         """The provider, as recorded on each payment."""
 
     async def create_checkout(self, request: CheckoutRequest) -> CheckoutSession:
-        """The open session of this attempt, created on the first call."""
+        """The session of this attempt, created open on the first call, then as it stands."""
 
     async def expire_checkout(self, provider_ref: str) -> bool:
         """Expire an open session.
@@ -437,7 +449,7 @@ class PaymentProvider(Protocol):
         """Check the signature before reading the body, then reduce the event to its allow-list.
 
         Raises ``InvalidSignature`` when the signature does not hold, and
-        ``ValueError`` for a verified body that is no event.
+        ``ValueError`` for a verified body that is no event of this provider.
         """
 
 

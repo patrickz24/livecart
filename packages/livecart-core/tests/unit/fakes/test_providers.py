@@ -1,3 +1,9 @@
+"""What only the provider fakes promise: the requests they record and the failures they script.
+
+What every payment provider does, the fake and the mock alike, is in
+``tests/contract/test_payment_provider.py``.
+"""
+
 from dataclasses import replace
 from uuid import UUID
 
@@ -6,14 +12,12 @@ import pytest
 from livecart_core.application.dto import (
     CarrierName,
     CheckoutRequest,
-    CheckoutStatus,
-    PaymentEvent,
     PaymentProviderName,
     ShipmentRequest,
     ShippingAddress,
     TrackingUpdate,
 )
-from livecart_core.application.ports import InvalidSignature, RecordNotFound, ServiceUnavailable
+from livecart_core.application.ports import RecordNotFound, ServiceUnavailable
 from livecart_core.domain.errors import InvalidTransition
 from livecart_core.domain.money import Money
 from livecart_core.domain.reference import OrderReference
@@ -34,15 +38,6 @@ CHECKOUT = CheckoutRequest(
     "https://example.invalid/success",
     "https://example.invalid/cancel",
 )
-EVENT = PaymentEvent(
-    provider=PaymentProviderName.MOCK,
-    event_id="evt_1",
-    event_type="checkout.session.completed",
-    checkout_ref="fake_cs_1",
-    amount_minor=2_500,
-    currency="EUR",
-    occurred_at=FAKE_CLOCK_START,
-)
 ADDRESS = ShippingAddress(
     full_name="Camille Martin",
     line1="12 rue des Lilas",
@@ -55,88 +50,27 @@ ADDRESS = ShippingAddress(
 # --- Payment provider ------------------------------------------------------------------
 
 
-async def test_a_checkout_opens_a_session_for_the_amount() -> None:
+async def test_the_fake_records_every_checkout_request() -> None:
     provider = FakePaymentProvider()
 
-    session = await provider.create_checkout(CHECKOUT)
-
-    assert provider.name is PaymentProviderName.MOCK
-    assert session.status is CheckoutStatus.OPEN
-    assert session.amount == Money(2_500, "EUR")
-    assert session.redirect_url.endswith(session.provider_ref)
-    assert await provider.get_checkout(session.provider_ref) == session
-
-
-async def test_the_same_attempt_always_gets_the_same_session() -> None:
-    provider = FakePaymentProvider()
-
-    first = await provider.create_checkout(CHECKOUT)
-    again = await provider.create_checkout(CHECKOUT)
-    second_attempt = await provider.create_checkout(replace(CHECKOUT, attempt_no=2))
-
-    assert again == first
-    assert second_attempt.provider_ref != first.provider_ref
-    assert len(provider.requests) == 3
-
-
-async def test_a_reused_key_with_other_parameters_is_refused() -> None:
-    provider = FakePaymentProvider()
     await provider.create_checkout(CHECKOUT)
+    await provider.create_checkout(CHECKOUT)
+    await provider.create_checkout(replace(CHECKOUT, attempt_no=2))
 
-    with pytest.raises(ValueError, match="reused with other parameters"):
-        await provider.create_checkout(replace(CHECKOUT, amount=Money(1, "EUR")))
+    assert provider.requests == [CHECKOUT, CHECKOUT, replace(CHECKOUT, attempt_no=2)]
 
 
-async def test_only_an_open_session_can_be_expired() -> None:
+async def test_only_an_open_session_can_be_completed() -> None:
     provider = FakePaymentProvider()
     session = await provider.create_checkout(CHECKOUT)
 
-    assert await provider.expire_checkout(session.provider_ref) is True
-    assert (await provider.get_checkout(session.provider_ref)).status is CheckoutStatus.EXPIRED
-    assert await provider.expire_checkout(session.provider_ref) is False
+    paid = provider.complete(session.provider_ref, payment_ref="fake_pi_1")
 
-
-async def test_a_paid_session_refuses_to_expire_and_reads_back_complete() -> None:
-    provider = FakePaymentProvider()
-    session = await provider.create_checkout(CHECKOUT)
-
-    provider.complete(session.provider_ref, payment_ref="fake_pi_1")
-
-    assert await provider.expire_checkout(session.provider_ref) is False
-    paid = await provider.get_checkout(session.provider_ref)
-    assert paid.status is CheckoutStatus.COMPLETE
     assert paid.payment_ref == "fake_pi_1"
     with pytest.raises(ValueError, match="not open"):
         provider.complete(session.provider_ref)
-
-
-async def test_an_unknown_session_is_not_found() -> None:
-    provider = FakePaymentProvider()
-
     with pytest.raises(RecordNotFound):
-        await provider.get_checkout("fake_cs_404")
-    with pytest.raises(RecordNotFound):
-        await provider.expire_checkout("fake_cs_404")
-
-
-async def test_a_signed_webhook_verifies_into_its_event() -> None:
-    provider = FakePaymentProvider()
-    headers, body = provider.signed_webhook(EVENT)
-
-    assert await provider.verify_webhook(headers, body) == EVENT
-
-
-async def test_a_forged_webhook_is_refused_before_its_body_is_read() -> None:
-    provider = FakePaymentProvider()
-    headers, body = provider.signed_webhook(EVENT)
-    other_headers, _ = FakePaymentProvider(key=b"another-key").signed_webhook(EVENT)
-
-    with pytest.raises(InvalidSignature):
-        await provider.verify_webhook(headers, body.replace(b"2500", b"1"))
-    with pytest.raises(InvalidSignature):
-        await provider.verify_webhook(other_headers, body)
-    with pytest.raises(InvalidSignature):
-        await provider.verify_webhook({}, b"not even json")
+        provider.complete("fake_cs_404")
 
 
 async def test_provider_calls_fail_on_demand() -> None:

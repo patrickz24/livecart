@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from livecart_core.application.dto import LlmPrice, Platform
+from livecart_core.application.dto import LlmPrice, PaymentProviderName, Platform
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.settings import (
     COMMENT_WEBHOOK_SECRETS,
@@ -44,6 +44,7 @@ LLM_SETTINGS = (
     "LLM_PRICES",
     "LLM_SLOT_WAIT_S",
 )
+PAYMENT_SETTINGS = ("PAYMENT_PROVIDER", "MOCK_PAYMENT_WEBHOOK_SECRET", "PUBLIC_API_BASE_URL")
 # Signing keys that pass every check, in production too.
 KEYS = {
     "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
@@ -77,6 +78,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
         *http,
         *webhooks,
         *worker,
+        *PAYMENT_SETTINGS,
         *LLM_SETTINGS,
         "DEFAULT_CURRENCY",
         "REDIS_KEY_PREFIX",
@@ -913,3 +915,69 @@ def test_seed_settings_check_the_migrator_url_and_the_currency() -> None:
         _seed_settings(**{**SEED_ENV, "MIGRATOR_URL": "postgresql://u:p@localhost/livecart"})
     with pytest.raises(ValidationError, match="ISO 4217"):
         _seed_settings(DEFAULT_CURRENCY="euro", **SEED_ENV)
+
+
+# --- Payments --------------------------------------------------------------------------
+
+
+def test_payments_default_to_the_mock_on_the_local_nginx() -> None:
+    settings = load(**dev_env())
+
+    assert settings.payment_provider is PaymentProviderName.MOCK
+    assert settings.mock_payment_webhook_secret is None
+    assert settings.public_api_base_url == "http://localhost:8080"
+
+
+def test_the_payment_provider_is_read_whatever_its_case() -> None:
+    assert load(PAYMENT_PROVIDER=" Stripe ", **dev_env()).payment_provider is (
+        PaymentProviderName.STRIPE
+    )
+    with pytest.raises(ValidationError, match="payment_provider"):
+        load(PAYMENT_PROVIDER="cash", **dev_env())
+
+
+def test_the_mock_payment_key_needs_32_bytes_and_no_placeholder_in_production() -> None:
+    short = "mock-payment-" * 2  # 26 bytes
+    placeholder = "change-me-mock-payment-change-me-mock-payment"
+
+    with pytest.raises(ValidationError, match="at least 32 bytes long") as excinfo:
+        load(MOCK_PAYMENT_WEBHOOK_SECRET=short, **dev_env())
+    assert short not in str(excinfo.value)
+    assert load(MOCK_PAYMENT_WEBHOOK_SECRET=placeholder, **dev_env()).mock_payment_webhook_secret
+    with pytest.raises(ValidationError, match="MOCK_PAYMENT_WEBHOOK_SECRET"):
+        load(
+            APP_ENV="production", MOCK_PAYMENT_WEBHOOK_SECRET=placeholder, **dev_env("real", "real")
+        )
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("http://localhost:8080", "http://localhost:8080"),
+        ("http://192.168.1.20:8080/", "http://192.168.1.20:8080"),
+        (" https://shop.example.com ", "https://shop.example.com"),
+    ],
+)
+def test_the_public_api_base_url_is_an_origin_without_a_trailing_slash(
+    value: str, expected: str
+) -> None:
+    assert load(PUBLIC_API_BASE_URL=value, **dev_env()).public_api_base_url == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "localhost:8080",
+        "ftp://localhost",
+        "http://",
+        "http://localhost:8080/api",
+        "http://localhost:8080?x=1",
+        "http://localhost:8080#top",
+        "http://user@localhost:8080",
+        "http://localhost:0",
+        "http://localhost:99999",
+    ],
+)
+def test_the_public_api_base_url_refuses_anything_but_an_origin(value: str) -> None:
+    with pytest.raises(ValidationError, match="must be an http or https origin"):
+        load(PUBLIC_API_BASE_URL=value, **dev_env())

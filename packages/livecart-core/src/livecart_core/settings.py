@@ -15,11 +15,12 @@ from enum import StrEnum
 from fractions import Fraction
 from pathlib import Path
 from typing import Annotated, Final, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from livecart_core.application.dto import LlmPrice, Platform
+from livecart_core.application.dto import LlmPrice, PaymentProviderName, Platform
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.infrastructure.db.engine import (
@@ -167,6 +168,31 @@ def require_currency(value: str) -> str:
     if not re.fullmatch("[A-Z]{3}", value):
         raise ValueError("must be a three-letter upper-case ISO 4217 code, such as EUR")
     return value
+
+
+def require_origin(value: str) -> str:
+    """An http(s) origin, such as ``http://localhost:8080``: no path, query, fragment or user.
+
+    Returned without a trailing slash, so that a path can follow it as is.
+    """
+    parts = urlsplit(value.strip())
+    try:
+        port_ok = parts.port is None or parts.port > 0
+    except ValueError:
+        port_ok = False
+    if (
+        parts.scheme not in ("http", "https")
+        or not parts.hostname
+        or not port_ok
+        or parts.username is not None
+        or parts.path not in ("", "/")
+        or parts.query
+        or parts.fragment
+    ):
+        raise ValueError(
+            "must be an http or https origin such as http://localhost:8080, without a path"
+        )
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def require_scheme(url: SecretStr, *schemes: str) -> SecretStr:
@@ -437,6 +463,18 @@ class Settings(LlmSettings):
     comment_webhook_secret_facebook: SecretStr | None = None
     comment_webhook_secret_instagram: SecretStr | None = None
     comment_webhook_secret_tiktok: SecretStr | None = None
+    # The payment provider of the hosted checkout (livecart_core.infrastructure
+    # .payments): the mock by default, which needs no account and no key;
+    # PayPal and Viva are documented stubs that stop the process at startup.
+    payment_provider: PaymentProviderName = PaymentProviderName.MOCK
+    # The mock's HMAC key, 32 bytes at least: it signs the webhook the mock's
+    # hosted page sends when the buyer pays, and names its sessions, in the API
+    # and the worker alike. Required while PAYMENT_PROVIDER=mock.
+    mock_payment_webhook_secret: SecretStr | None = None
+    # The origin the buyer's browser reaches the API on, through nginx: the
+    # provider sends the buyer back to its bridge page there, and the mock's
+    # hosted page is served there. In development, the app's EXPO_PUBLIC_API_URL.
+    public_api_base_url: str = "http://localhost:8080"
     # Backpressure of the comment webhook: once the queue's backlog (comments
     # not acknowledged yet, delivered or not) reaches this depth, the webhook
     # answers 503 until the workers catch up.
@@ -560,7 +598,12 @@ class Settings(LlmSettings):
             )
         return value
 
-    @field_validator("jwt_secret", "order_token_key", *COMMENT_WEBHOOK_SECRETS.values())
+    @field_validator(
+        "jwt_secret",
+        "order_token_key",
+        "mock_payment_webhook_secret",
+        *COMMENT_WEBHOOK_SECRETS.values(),
+    )
     @classmethod
     def _check_key_length(cls, value: SecretStr | None) -> SecretStr | None:
         """An HMAC key shorter than its SHA-256 output weakens it; the length alone is reported."""
@@ -829,6 +872,16 @@ class Settings(LlmSettings):
         if not value:
             raise ValueError("must name at least one platform, such as simulator")
         return value
+
+    @field_validator("payment_provider", mode="before")
+    @classmethod
+    def _lowercase_payment_provider(cls, value: object) -> object:
+        return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("public_api_base_url")
+    @classmethod
+    def _check_public_api_base_url(cls, value: str) -> str:
+        return require_origin(value)
 
     @field_validator("rate_limit_login_failure_window_seconds")
     @classmethod

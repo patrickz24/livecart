@@ -10,6 +10,7 @@ revision.
 """
 
 import asyncio
+import contextlib
 import secrets
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -21,12 +22,13 @@ from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.dto import BuyerNotification, Platform
+from livecart_core.application.dto import BuyerNotification, CheckoutSession, Platform
 from livecart_core.application.ports import (
     BuyerNotifier,
     CommentQueue,
     IdempotencyStore,
     LlmBudget,
+    PaymentProvider,
     RateLimiter,
 )
 from livecart_core.domain.reference import OrderReference, RandomSource
@@ -36,6 +38,7 @@ from livecart_core.infrastructure.events import EVENT_RETENTION, RedisSessionEve
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.llm_budget import RedisLlmBudget
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
+from livecart_core.infrastructure.payments.mock import MockPaymentProvider
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
@@ -45,6 +48,7 @@ from livecart_core.testing.backends import (
     EventsBackend,
     InMemoryBackend,
     NotifierBackend,
+    PaymentProviderBackend,
     PostgresBackend,
     ReservationBackend,
 )
@@ -59,11 +63,13 @@ from livecart_core.testing.fakes import (
     FakeBuyerNotifier,
     FakeClock,
     FakeCommentQueue,
+    FakePaymentProvider,
     InMemoryIdempotencyStore,
     InMemoryLlmBudget,
     InMemoryRateLimiter,
     InMemorySessionEvents,
 )
+from livecart_core.testing.keys import TEST_MOCK_PAYMENT_WEBHOOK_SECRET
 from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
 
@@ -259,6 +265,8 @@ def comment_queue(request: pytest.FixtureRequest) -> CommentQueue:
     return RedisCommentQueue(client, prefix=prefix)
 
 
+# The origin the mock under test builds the URLs of its hosted pages from.
+TEST_PUBLIC_API_BASE_URL = "http://localhost:8080"
 # The retention of the Redis streams under test: short, so that it passes within a test.
 TEST_EVENT_RETENTION = timedelta(milliseconds=200)
 
@@ -308,6 +316,64 @@ async def unreachable_redis_client() -> AsyncIterator[Redis]:
         yield client
     finally:
         await client.aclose()
+
+
+def _fake_payments() -> PaymentProviderBackend:
+    fake = FakePaymentProvider()
+    forger = FakePaymentProvider(key=b"a-key-the-forger-guessed")
+
+    async def pay(provider_ref: str) -> CheckoutSession:
+        with contextlib.suppress(ValueError):
+            return fake.complete(provider_ref)
+        return await fake.get_checkout(provider_ref)
+
+    def unreachable() -> PaymentProvider:
+        fake.fail_next(10)
+        return fake
+
+    return PaymentProviderBackend(
+        fake, pay, fake.signed_webhook, forger.signed_webhook, unreachable
+    )
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def payment_provider(request: pytest.FixtureRequest) -> PaymentProviderBackend:
+    """The payment provider of this run of a contract scenario: the fake, then the mock on Redis.
+
+    Both run on a clock that stands still, as the mock's signatures are dated
+    by it; the unreachable mock is built over a closed port, under the same prefix.
+    """
+    if request.param == "memory":
+        return _fake_payments()
+    client: Redis = request.getfixturevalue("redis_client")
+    unreachable_client: Redis = request.getfixturevalue("unreachable_redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    clock = FakeClock()
+
+    def mock(
+        redis: Redis, secret: SecretStr = TEST_MOCK_PAYMENT_WEBHOOK_SECRET
+    ) -> MockPaymentProvider:
+        return MockPaymentProvider(
+            redis,
+            prefix=prefix,
+            secret=secret,
+            clock=clock,
+            public_base_url=TEST_PUBLIC_API_BASE_URL,
+        )
+
+    provider = mock(client)
+    forger = mock(client, SecretStr("a-key-the-forger-guessed-" * 2))
+
+    async def pay(provider_ref: str) -> CheckoutSession:
+        return (await provider.pay(provider_ref)).session
+
+    return PaymentProviderBackend(
+        provider,
+        pay,
+        provider.signed_webhook,
+        forger.signed_webhook,
+        lambda: mock(unreachable_client),
+    )
 
 
 def _streamed_notice(fields: dict[bytes, bytes]) -> BuyerNotification:

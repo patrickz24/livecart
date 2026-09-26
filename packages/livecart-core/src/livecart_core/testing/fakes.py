@@ -652,7 +652,10 @@ class FakePaymentProvider(_ScriptedFailures):
 
     async def verify_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> PaymentEvent:
         _check_signature(headers, raw_body, self._key)
-        return PaymentEvent.model_validate_json(raw_body)
+        event = PaymentEvent.model_validate_json(raw_body)
+        if event.provider is not self._name:
+            raise ValueError(f"a verified {self._name} webhook names another provider")
+        return event
 
     def complete(self, provider_ref: str, *, payment_ref: str = "fake_pi") -> CheckoutSession:
         """The buyer pays an open session."""

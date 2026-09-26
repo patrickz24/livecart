@@ -923,16 +923,44 @@ class AttemptOpening:
 
 
 class CheckoutStatus(StrEnum):
-    """The status of a provider's hosted checkout session."""
+    """The status of a provider's hosted checkout session.
+
+    ``open`` until the buyer pays (``complete``) or LiveCart expires it
+    (``expired``); a session that left ``open`` never goes back, and which of
+    the two came first is the provider's to say (expire-first).
+    """
 
     OPEN = "open"
     COMPLETE = "complete"
     EXPIRED = "expired"
 
 
+class CheckoutEventType(StrEnum):
+    """The webhook events of a hosted checkout session that LiveCart acts on.
+
+    Stripe's names: the mock sends ``checkout.session.completed`` too, and
+    any other event a provider sends is recorded, then ignored.
+    """
+
+    COMPLETED = "checkout.session.completed"
+    ASYNC_PAYMENT_SUCCEEDED = "checkout.session.async_payment_succeeded"
+    ASYNC_PAYMENT_FAILED = "checkout.session.async_payment_failed"
+    EXPIRED = "checkout.session.expired"
+
+
+# The widths of payments.provider_ref and payments.redirect_url (and return_url).
+MAX_PROVIDER_REF_LENGTH: Final = 255
+MAX_URL_LENGTH: Final = 2048
+
+
 @dataclass(frozen=True, slots=True)
 class CheckoutRequest:
-    """A hosted checkout session to create for one payment attempt."""
+    """A hosted checkout session to create for one payment attempt.
+
+    ``success_url`` and ``cancel_url`` are where the provider sends the
+    buyer's browser back, the bridge page of ``PUBLIC_API_BASE_URL``, with
+    the reference only: never the order's token.
+    """
 
     order_id: UUID
     attempt_no: int
@@ -954,13 +982,25 @@ class CheckoutRequest:
 
 @dataclass(frozen=True, slots=True)
 class CheckoutSession:
-    """A provider's hosted checkout session, as the provider reports it."""
+    """A provider's hosted checkout session, as the provider reports it, whatever the provider.
+
+    ``provider_ref`` names it at the provider (``payments.provider_ref``),
+    ``redirect_url`` is the hosted page the buyer's browser opens, ``amount``
+    carries the amount and the currency the provider will charge, and
+    ``payment_ref`` the provider's payment once the session is complete.
+    """
 
     provider_ref: str
     redirect_url: str
     status: CheckoutStatus
     amount: Money
     payment_ref: str | None = None
+
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.provider_ref) <= MAX_PROVIDER_REF_LENGTH:
+            raise ValueError(f"a provider ref has 1 to {MAX_PROVIDER_REF_LENGTH} characters")
+        if not 1 <= len(self.redirect_url) <= MAX_URL_LENGTH:
+            raise ValueError(f"a redirect URL has 1 to {MAX_URL_LENGTH} characters")
 
 
 class PaymentEvent(BaseModel):

@@ -23,7 +23,9 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import (
     BuyerNotification,
+    CheckoutSession,
     LiveSessionRecord,
+    PaymentEvent,
     PaymentProviderName,
     Platform,
     ProductRecord,
@@ -36,6 +38,7 @@ from livecart_core.application.ports import (
     LiveSessionRepository,
     OrderLookup,
     OrderReservations,
+    PaymentProvider,
     ProductStockRepository,
     RefreshTokenRepository,
     ReservationExpiry,
@@ -569,6 +572,27 @@ class NotifierBackend:
     notifier: BuyerNotifier
     delivered: Callable[[], Awaitable[list[BuyerNotification]]]
     failing: Callable[[], BuyerNotifier]
+
+
+type SignWebhook = Callable[[PaymentEvent], tuple[dict[str, str], bytes]]
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentProviderBackend:
+    """The payment provider under test, its buyer, its webhooks, and a provider that is down.
+
+    ``pay`` is the buyer paying on the hosted page, and answers the session
+    as it stands after the attempt: complete, or still expired when LiveCart
+    expired it first. ``signed`` signs an event as the provider does,
+    ``forged`` as someone without its key would, and ``unreachable`` gives a
+    provider whose own service cannot be reached.
+    """
+
+    provider: PaymentProvider
+    pay: Callable[[str], Awaitable[CheckoutSession]]
+    signed: SignWebhook
+    forged: SignWebhook
+    unreachable: Callable[[], PaymentProvider]
 
 
 class BackendFactory(Protocol):
