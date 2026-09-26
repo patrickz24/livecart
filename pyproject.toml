@@ -82,6 +82,7 @@ files = [
     "services/worker/tests",
     "services/simulator/src",
     "services/simulator/tests",
+    "scripts/llm_eval.py",
 ]
 
 [tool.pydantic-mypy]
