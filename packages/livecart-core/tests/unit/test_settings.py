@@ -25,6 +25,7 @@ WORKER_SETTINGS = (
     "MESSAGE_PROCESS_TIMEOUT_S",
     "QUEUE_MAX_DELIVERIES",
     "QUEUE_RECLAIM_MIN_IDLE_MS",
+    "BUYER_LINK_SCHEME",
 )
 # Signing keys that pass every check, in production too.
 KEYS = {
@@ -613,6 +614,17 @@ def test_the_reclaim_settings_are_refused_outside_their_bounds(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         load(**env, **dev_env())
+
+
+def test_the_buyer_links_open_the_demo_app_by_default() -> None:
+    assert load(**dev_env()).buyer_link_scheme == "livecart"
+    assert load(BUYER_LINK_SCHEME="samplelive", **dev_env()).buyer_link_scheme == "samplelive"
+
+
+@pytest.mark.parametrize("scheme", ["", "Livecart", "1app", "live cart", "https://x"])
+def test_a_buyer_link_scheme_is_a_uri_scheme(scheme: str) -> None:
+    with pytest.raises(ValidationError, match="must be a URI scheme"):
+        load(BUYER_LINK_SCHEME=scheme, **dev_env())
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

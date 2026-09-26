@@ -21,9 +21,14 @@ from livecart_core.domain.outcomes import IntentOutcome
 from livecart_core.domain.state_machines import CommentStatus, OrderStatus
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.engine import WORKER_POOL
-from livecart_core.testing.backends import PostgresBackend
+from livecart_core.testing.backends import ORDER_TOKENS, PostgresBackend
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, queued_comment
-from livecart_core.testing.fakes import FakeClock, FakeCommentQueue, FakeEventPublisher
+from livecart_core.testing.fakes import (
+    FakeBuyerNotifier,
+    FakeClock,
+    FakeCommentQueue,
+    FakeEventPublisher,
+)
 from livecart_core.testing.pools import PoolProbe
 
 pytestmark = pytest.mark.integration
@@ -66,6 +71,8 @@ async def _setup(
         orders=backend.orders,
         queue=queue,
         events=FakeEventPublisher(),
+        notifier=FakeBuyerNotifier(),
+        access_token=ORDER_TOKENS.token_for,
         clock=clock,
         lease=LEASE,
         reservation_ttl=TTL,

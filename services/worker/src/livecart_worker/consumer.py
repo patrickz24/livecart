@@ -272,6 +272,7 @@ def _summary(handled: HandledComment) -> dict[str, object]:
         "order_id": None if order is None else str(order.id),
         "rejection_reason": None if handled.rejection is None else handled.rejection.value,
         "unpublished_events": handled.unpublished_events,
+        "notified": handled.notified,
     }
 
 

@@ -28,9 +28,14 @@ from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import OrderStatus
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.ids import new_id
-from livecart_core.testing.backends import PostgresBackend
+from livecart_core.testing.backends import ORDER_TOKENS, PostgresBackend
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, queued_comment
-from livecart_core.testing.fakes import FakeClock, FakeCommentQueue, FakeEventPublisher
+from livecart_core.testing.fakes import (
+    FakeBuyerNotifier,
+    FakeClock,
+    FakeCommentQueue,
+    FakeEventPublisher,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -58,6 +63,8 @@ async def test_an_unpaid_reservation_expires_and_its_stock_returns(
         orders=postgres_backend.orders,
         queue=queue,
         events=events,
+        notifier=FakeBuyerNotifier(),
+        access_token=ORDER_TOKENS.token_for,
         clock=clock,
         lease=timedelta(seconds=30),
         reservation_ttl=RESERVATION_TTL,

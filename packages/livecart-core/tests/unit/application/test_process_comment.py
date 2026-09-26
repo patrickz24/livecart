@@ -1,16 +1,18 @@
 import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from uuid import UUID
 
 import pytest
 
 from livecart_core.application.dto import (
     MAX_IDENTIFIER_LENGTH,
+    BuyerNotification,
     InboxComment,
     IntentSource,
     LiveSessionRecord,
+    OrderRecord,
     ParseKind,
     ParseSummary,
     Platform,
@@ -38,6 +40,8 @@ from livecart_core.domain.state_machines import (
 )
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, demo_catalog, queued_comment
 from livecart_core.testing.fakes import (
+    TEST_ORDER_TOKENS,
+    FakeBuyerNotifier,
     FakeClock,
     FakeCommentQueue,
     FakeEventPublisher,
@@ -59,6 +63,7 @@ class World:
     clock: FakeClock
     queue: FakeCommentQueue
     events: FakeEventPublisher
+    notifier: FakeBuyerNotifier
     session: LiveSessionRecord
     process: ProcessComment
 
@@ -92,6 +97,7 @@ def _world(
     clock = FakeClock()
     queue = FakeCommentQueue(clock)
     events = FakeEventPublisher()
+    notifier = FakeBuyerNotifier()
     session = database.add_live_session(status=status)
     database.add_catalog(session.id, demo_catalog(), stock_total=stock_total)
     process = ProcessComment(
@@ -100,12 +106,14 @@ def _world(
         orders=orders(database),
         queue=queue,
         events=events,
+        notifier=notifier,
+        access_token=TEST_ORDER_TOKENS.token_for,
         clock=clock,
         lease=LEASE,
         reservation_ttl=TTL,
         max_quantity=DEMO_MAX_QUANTITY,
     )
-    return World(database, clock, queue, events, session, process)
+    return World(database, clock, queue, events, notifier, session, process)
 
 
 # --- A comment that reserves -----------------------------------------------------------
@@ -256,7 +264,16 @@ async def test_a_redelivered_processed_comment_republishes_its_outcome() -> None
     duplicate = await world.process(again, consumer="worker-2")
 
     assert duplicate.handling is Handling.DUPLICATE
-    assert duplicate.reservation == processed.reservation
+    assert duplicate.reservation is not None
+    assert processed.reservation is not None
+    assert duplicate.reservation.intent == processed.reservation.intent
+    assert duplicate.reservation.order is not None
+    assert processed.reservation.order is not None
+    assert duplicate.reservation.order.id == processed.reservation.order.id
+    # Stamped by the first delivery: the second sends no notice.
+    assert duplicate.reservation.order.buyer_notified_at == world.clock.now()
+    assert not duplicate.notified
+    assert len(world.notifier.sent) == 1
     assert world.event_types() == [
         SessionEventType.INTENT_RECORDED,
         SessionEventType.ORDER_UPDATED,
@@ -366,6 +383,164 @@ def _b07_stock(world: World) -> StockLevel:
     product = world.database.find_product(world.session.id, ProductCode("B07"), Variant())
     assert product is not None
     return product.stock
+
+
+# --- The buyer's notice ----------------------------------------------------------------
+
+
+def _order(world: World) -> OrderRecord:
+    [order] = world.database.tables.orders.values()
+    return order
+
+
+async def test_the_buyer_gets_the_reference_and_its_derived_token_then_the_notice_is_stamped() -> (
+    None
+):
+    world = _world()
+    world.clock.advance(7)
+
+    handled = await world.handle()
+
+    order = _order(world)
+    assert handled.notified
+    assert world.notifier.sent == [
+        BuyerNotification(
+            order_id=order.id,
+            platform=Platform.SIMULATOR,
+            recipient="buyer-1",
+            reference=order.reference,
+            access_token=TEST_ORDER_TOKENS.token_for(order.id),
+        )
+    ]
+    # The token is not stored: only its hash is, and the notice proves it.
+    stored_hash = world.database.tables.order_token_hashes[order.id]
+    assert TEST_ORDER_TOKENS.verify(world.notifier.sent[0].access_token, stored_hash)
+    assert order.buyer_notified_at == world.clock.now()
+    assert world.queue.pending == []
+
+
+async def test_an_intent_without_an_order_notifies_nobody() -> None:
+    world = _world(stock_total=0)
+
+    handled = await world.handle()
+
+    assert not handled.notified
+    assert world.notifier.sent == []
+
+
+async def test_a_failed_notice_leaves_the_order_unstamped_and_its_retry_sends_the_same_token() -> (
+    None
+):
+    world = _world()
+    world.notifier.fail_next(1)
+    [delivery] = await world.deliver(BUY_B07)
+
+    with pytest.raises(ServiceUnavailable):
+        await world.process(delivery, consumer=CONSUMER)
+    assert _order(world).buyer_notified_at is None
+    assert world.queue.pending == [delivery]
+    retried = await world.process(delivery, consumer=CONSUMER)
+
+    assert (retried.handling, retried.notified) == (Handling.DUPLICATE, True)
+    order = _order(world)
+    assert [notice.access_token for notice in world.notifier.sent] == [
+        TEST_ORDER_TOKENS.token_for(order.id)
+    ]
+    assert order.buyer_notified_at == world.clock.now()
+    assert world.queue.pending == []
+
+
+class _CrashBeforeTheStamp(InMemoryOrderRepository):
+    """The worker dies once between the notice and its stamp."""
+
+    crashes = 1
+
+    async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:
+        if self.crashes:
+            self.crashes -= 1
+            raise ServiceUnavailable("database unavailable: scripted")
+        return await super().mark_buyer_notified(order_id, now=now)
+
+
+async def test_a_redelivery_after_a_crash_before_the_stamp_sends_the_same_token_again() -> None:
+    world = _world(orders=_CrashBeforeTheStamp)
+    [delivery] = await world.deliver(BUY_B07)
+    with pytest.raises(ServiceUnavailable):
+        await world.process(delivery, consumer=CONSUMER)
+    world.clock.advance(LEASE * 4)
+    [redelivery] = await world.queue.reclaim(
+        "worker-2", min_idle_seconds=LEASE.total_seconds(), max_messages=1
+    )
+
+    handled = await world.process(redelivery, consumer="worker-2")
+
+    first, second = world.notifier.sent
+    assert (handled.handling, handled.notified) == (Handling.DUPLICATE, True)
+    # The same message twice, never two tokens for one order.
+    assert first == second
+    assert first.access_token == TEST_ORDER_TOKENS.token_for(_order(world).id)
+    assert _order(world).buyer_notified_at == world.clock.now()
+    assert world.queue.pending == []
+
+
+class _CrashBeforeTheAcknowledgment(FakeCommentQueue):
+    """The worker dies once after the stamp, before its XACK."""
+
+    crashes = 1
+
+    async def ack(self, delivery: QueueDelivery) -> None:
+        if self.crashes:
+            self.crashes -= 1
+            raise RuntimeError("the worker died")
+        await super().ack(delivery)
+
+
+async def test_a_redelivery_after_the_stamp_sends_no_second_notice() -> None:
+    world = _world()
+    crashing = _CrashBeforeTheAcknowledgment(world.clock)
+    world.queue = crashing
+    world.process = ProcessComment(
+        inbox=world.database.comments,
+        sessions=world.database.live_sessions,
+        orders=world.database.orders,
+        queue=crashing,
+        events=world.events,
+        notifier=world.notifier,
+        access_token=TEST_ORDER_TOKENS.token_for,
+        clock=world.clock,
+        lease=LEASE,
+        reservation_ttl=TTL,
+        max_quantity=DEMO_MAX_QUANTITY,
+    )
+    [delivery] = await world.deliver(BUY_B07)
+    with pytest.raises(RuntimeError, match="died"):
+        await world.process(delivery, consumer=CONSUMER)
+    world.clock.advance(LEASE * 4)
+    [redelivery] = await world.queue.reclaim(
+        "worker-2", min_idle_seconds=LEASE.total_seconds(), max_messages=1
+    )
+
+    handled = await world.process(redelivery, consumer="worker-2")
+
+    assert (handled.handling, handled.notified) == (Handling.DUPLICATE, False)
+    assert len(world.notifier.sent) == 1
+    assert world.queue.pending == []
+
+
+async def test_an_order_expired_before_its_notice_is_not_notified_any_more() -> None:
+    world = _world(orders=_CrashBeforeTheStamp)
+    [delivery] = await world.deliver(BUY_B07)
+    with pytest.raises(ServiceUnavailable):
+        await world.process(delivery, consumer=CONSUMER)
+    world.clock.advance(TTL + timedelta(seconds=1))
+    await world.database.orders.expire_due(now=world.clock.now(), limit=10)
+    [redelivery] = await world.queue.reclaim("worker-2", min_idle_seconds=0, max_messages=1)
+
+    handled = await world.process(redelivery, consumer="worker-2")
+
+    assert (handled.handling, handled.notified) == (Handling.DUPLICATE, False)
+    assert len(world.notifier.sent) == 1
+    assert _order(world).buyer_notified_at is None
 
 
 # --- Failures and races ----------------------------------------------------------------
@@ -548,6 +723,8 @@ def test_nonsensical_settings_are_refused(
             orders=database.orders,
             queue=FakeCommentQueue(clock),
             events=FakeEventPublisher(),
+            notifier=FakeBuyerNotifier(),
+            access_token=TEST_ORDER_TOKENS.token_for,
             clock=clock,
             lease=lease,
             reservation_ttl=TTL,

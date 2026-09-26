@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from livecart_core.settings import Settings
+from livecart_core.settings import AppEnv, Settings
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 from livecart_worker.main import install_stop_handlers, serve
 
@@ -40,3 +40,18 @@ async def test_serve_returns_once_stopped_and_releases_redis(tmp_path: Path) -> 
     await asyncio.wait_for(serve(settings, stop), timeout=2)
 
     assert not heartbeat.exists()
+
+
+async def test_a_production_worker_refuses_the_simulated_notifier(tmp_path: Path) -> None:
+    settings = Settings(
+        app_env=AppEnv.PRODUCTION,
+        database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
+        redis_url=SecretStr("redis://127.0.0.1:1/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
+        worker_heartbeat_file=tmp_path / "worker.heartbeat",
+        _env_file=None,
+    )
+
+    with pytest.raises(ValueError, match="refused when APP_ENV=production"):
+        await serve(settings, asyncio.Event())

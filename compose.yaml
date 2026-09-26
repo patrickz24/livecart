@@ -231,6 +231,8 @@ services:
       # Reclaim and dead letters; an empty idle time is derived from the window.
       QUEUE_MAX_DELIVERIES: ${QUEUE_MAX_DELIVERIES:-3}
       QUEUE_RECLAIM_MIN_IDLE_MS: ${QUEUE_RECLAIM_MIN_IDLE_MS:-}
+      # The scheme of the links the buyers receive on the development stream.
+      BUYER_LINK_SCHEME: ${BUYER_LINK_SCHEME:-livecart}
     # On SIGTERM the worker stops reading and lets its handlers finish, each
     # within MESSAGE_PROCESS_TIMEOUT_S (30 s): Docker's default 10 s would kill
     # them midway, which only leaves their deliveries for a reclaim.

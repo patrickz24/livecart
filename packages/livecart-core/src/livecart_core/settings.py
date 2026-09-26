@@ -26,6 +26,7 @@ from livecart_core.infrastructure.db.engine import (
     PoolSize,
     worker_pool,
 )
+from livecart_core.infrastructure.notifier import LINK_SCHEME_PATTERN
 from livecart_core.order_tokens import MIN_KEY_BYTES
 
 # Marker of the development placeholders shipped in .env.example.
@@ -274,6 +275,9 @@ class Settings(BaseAppSettings):
     # Deliveries of one comment: the next one goes to the dead-letter queue
     # instead, and the comment is settled as dead_lettered.
     queue_max_deliveries: int = 3
+    # The URI scheme of the buyer app's links, <scheme>://link/<reference>#t=<token>:
+    # the demo brand's (milestone 8 gives each brand its own).
+    buyer_link_scheme: str = "livecart"
     # How long a delivery stays pending, unacknowledged, before another
     # consumer reclaims it (XAUTOCLAIM). None derives it from the worker's
     # window (queue_reclaim_min_idle); a value set must not be shorter.
@@ -426,6 +430,13 @@ class Settings(BaseAppSettings):
     def _check_worker_db_max_connections(cls, value: int) -> int:
         if not 1 <= value <= MAX_DB_CONNECTIONS:
             raise ValueError(f"must be from 1 to {MAX_DB_CONNECTIONS} connections")
+        return value
+
+    @field_validator("buyer_link_scheme")
+    @classmethod
+    def _check_buyer_link_scheme(cls, value: str) -> str:
+        if not LINK_SCHEME_PATTERN.fullmatch(value):
+            raise ValueError("must be a URI scheme: a lower-case letter, then letters, digits, +-.")
         return value
 
     @field_validator("queue_reclaim_min_idle_ms", mode="before")

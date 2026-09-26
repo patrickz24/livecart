@@ -12,8 +12,8 @@ own, so that no connection is ever held across another port:
    is not taken:
 
    - the comment is settled already: its stored outcome is published again,
-     then the delivery is acknowledged, since the platform or the queue only
-     delivered it twice;
+     its buyer notified if no notice went out yet (below), then the delivery
+     is acknowledged, since the platform or the queue only delivered it twice;
    - another delivery holds the lease: this one is acknowledged at once,
      because the holder's own entry stays pending in the queue, and is
      reclaimed if its worker dies.
@@ -30,7 +30,17 @@ own, so that no connection is ever held across another port:
    every deadline comes from the ``Clock`` port.
 5. **After the commit**, the session events are published, best effort (a
    failure is counted in the result, never raised: the dashboard catches up
-   from its next snapshot), then the delivery is acknowledged.
+   from its next snapshot). The buyer of an order opened is then notified
+   (``BuyerNotifier``) of its reference and its access token, the token
+   computed again from the order id (``livecart_core.order_tokens``): nothing
+   stores it in clear. ``orders.buyer_notified_at`` is stamped after the
+   notice, and the delivery is acknowledged last.
+
+A crash between the commit and the acknowledgment leaves the delivery
+pending, and its redelivery is a duplicate: it sends the notice again, with
+the very same token, when ``buyer_notified_at`` is still empty and the order
+still pending, and does not otherwise. A buyer may get the same message
+twice (the crash fell between the notice and its stamp), never two tokens.
 
 Every settlement carries the guard ``status = 'received'``: a delivery that
 finds the comment settled by another one in the meantime handles it as a
@@ -40,7 +50,7 @@ to the reclaim loop, and whatever committed before the failure makes the
 retry a duplicate rather than a second effect.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import StrEnum
@@ -49,7 +59,9 @@ from uuid import UUID
 
 from livecart_core.application.dto import (
     MAX_IDENTIFIER_LENGTH,
+    BuyerNotification,
     InboxComment,
+    OrderRecord,
     ParseSummary,
     QueueDelivery,
     ReservationResult,
@@ -57,6 +69,7 @@ from livecart_core.application.dto import (
     SessionEvent,
 )
 from livecart_core.application.ports import (
+    BuyerNotifier,
     Clock,
     CommentInbox,
     CommentQueue,
@@ -75,8 +88,12 @@ from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.domain.state_machines import (
     CommentStatus,
     LiveSessionStatus,
+    OrderStatus,
     TransitionOutcome,
 )
+
+# An order id -> its access token: OrderTokens.token_for in production.
+type TokenFor = Callable[[UUID], str]
 
 # Between the consumer's name and the delivery id in a lease holder.
 HOLDER_SEPARATOR: Final = "/"
@@ -121,6 +138,8 @@ class HandledComment:
     rejection: RejectionReason | None = None
     # Events the publisher failed to append (best effort: never retried).
     unpublished_events: int = 0
+    # Whether this delivery sent the buyer the order's reference and token.
+    notified: bool = False
 
 
 class ProcessComment:
@@ -134,6 +153,8 @@ class ProcessComment:
         orders: OrderReservations,
         queue: CommentQueue,
         events: EventPublisher,
+        notifier: BuyerNotifier,
+        access_token: TokenFor,
         clock: Clock,
         lease: timedelta,
         reservation_ttl: timedelta,
@@ -148,6 +169,8 @@ class ProcessComment:
         self._orders = orders
         self._queue = queue
         self._events = events
+        self._notifier = notifier
+        self._access_token = access_token
         self._clock = clock
         self._lease = lease
         self._max_quantity = max_quantity
@@ -207,9 +230,14 @@ class ProcessComment:
                 result, correlation_id=comment.correlation_id, occurred_at=self._clock.now()
             )
         )
+        notified = result.order is not None and await self._notify(comment, result.order)
         await self._queue.ack(delivery)
         return HandledComment(
-            Handling.PROCESSED, comment, reservation=result, unpublished_events=unpublished
+            Handling.PROCESSED,
+            comment,
+            reservation=result,
+            unpublished_events=unpublished,
+            notified=notified,
         )
 
     async def _reject(
@@ -252,10 +280,12 @@ class ProcessComment:
         """A settled comment delivered again: its stored outcome is published again."""
         now = self._clock.now()
         reservation = None
+        order = None
         events: list[SessionEvent] = []
         if comment.status is CommentStatus.PROCESSED:
             reservation = await self._orders.find_reservation(comment.id)
             if reservation is not None:
+                order = reservation.order
                 events = reservation_events(
                     reservation, correlation_id=comment.correlation_id, occurred_at=now
                 )
@@ -270,6 +300,14 @@ class ProcessComment:
                 )
             ]
         unpublished = await self._publish(events)
+        # The notice of an earlier delivery that died before stamping it; an
+        # order no longer pending is past what its buyer could do with it.
+        notified = (
+            order is not None
+            and order.buyer_notified_at is None
+            and order.status is OrderStatus.PENDING_PAYMENT
+            and await self._notify(comment, order)
+        )
         await self._queue.ack(delivery)
         return HandledComment(
             Handling.DUPLICATE,
@@ -277,7 +315,22 @@ class ProcessComment:
             reservation=reservation,
             rejection=comment.rejection_reason,
             unpublished_events=unpublished,
+            notified=notified,
         )
+
+    async def _notify(self, comment: InboxComment, order: OrderRecord) -> bool:
+        """Send the buyer the order's reference and token, then stamp the notice."""
+        await self._notifier.notify(
+            BuyerNotification(
+                order_id=order.id,
+                platform=comment.platform,
+                recipient=order.buyer_platform_user_id,
+                reference=order.reference,
+                access_token=self._access_token(order.id),
+            )
+        )
+        await self._orders.mark_buyer_notified(order.id, now=self._clock.now())
+        return True
 
     async def _reread(self, comment_id: UUID) -> InboxComment:
         comment = await self._inbox.get(comment_id)

@@ -86,19 +86,6 @@ async def _order_id(database: InMemoryDatabase, session_id: UUID, comment: str) 
     return result.order.id
 
 
-async def test_the_buyer_is_marked_notified_once() -> None:
-    database, session_id, _ = _database()
-    order_id = await _order_id(database, session_id, "comment-1")
-
-    first = await database.orders.mark_buyer_notified(order_id, now=NOW)
-    again = await database.orders.mark_buyer_notified(order_id, now=NOW + timedelta(seconds=5))
-
-    assert first.buyer_notified_at == NOW
-    assert again.buyer_notified_at == NOW
-    with pytest.raises(RecordNotFound):
-        await database.orders.mark_buyer_notified(UNKNOWN, now=NOW)
-
-
 async def test_an_order_records_its_shipping_address() -> None:
     database, session_id, _ = _database()
     order_id = await _order_id(database, session_id, "comment-1")

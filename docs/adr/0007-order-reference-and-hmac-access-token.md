@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-26. Milestone 3 implemented the reference, the token and the two tiers of `GET /api/v1/orders/{reference}`. The buyer notifier that delivers the token arrives in milestone 4a, and the routes that pay, take the address and follow the delivery join the token tier with the milestones that implement them.
+Accepted, 2026-09-26. Milestone 3 implemented the reference, the token and the two tiers of `GET /api/v1/orders/{reference}`; milestone 4a the notice that delivers them to the buyer, through the simulated notifier of development. The routes that pay, take the address and follow the delivery join the token tier with the milestones that implement them.
 
 ## Context
 
@@ -23,6 +23,13 @@ An order is born from a comment, for a buyer who has no account: the platform us
 - Verifying needs the stored hash only, never the key: `OrderTokens.verify` refuses a malformed or non-canonical token before any comparison, then compares the hashes with `hmac.compare_digest`.
 - `ORDER_TOKEN_KEY` is at least 32 bytes and must differ from `JWT_SECRET`; the settings refuse otherwise, and refuse a `change-me` value in production.
 
+### The notice
+
+- Once unit 3 has committed an order, the worker (`ProcessComment`) sends its buyer, the author of the comment, the reference and the token through the `BuyerNotifier` port, the token computed then from the order id. It stamps `orders.buyer_notified_at` after the notice, and acknowledges the comment's delivery last.
+- A crash in between leaves the delivery pending, and its redelivery finds the comment processed: it sends the notice again, with the very same token, when `buyer_notified_at` is still empty and the order still pending, and nothing otherwise. A buyer may get the same message twice, never two tokens for one order.
+- The platforms' direct messages are out of the MVP's scope. `SimulatedBuyerNotifier` appends each notice (order id, platform, recipient, reference, token, and the link `<BUYER_LINK_SCHEME>://link/<reference>#t=<token>`, whose fragment the app reads and never sends to a server) to the development stream `{prefix}:dev:buyer-dm`, with `XADD ... MAXLEN ~ 1000` and a sliding `EXPIRE` of an hour, for the comment simulator's text mode to show (`livecart-simulate --text`, the last step of milestone 4a). That stream holds working tokens in clear: the notifier refuses to be built when `APP_ENV=production`.
+- The token never reaches a log line: `BuyerNotification` keeps it out of its repr, a Redis failure of the notice is reported by its type alone, and a test runs the worker with every logger at `DEBUG`, SQLAlchemy's statements included, and finds the token in the stream and nowhere in the logs.
+
 ### Two tiers
 
 - `GET /api/v1/orders/{reference}` needs the reference alone and answers the public projection: status, product code, variant and name, quantity, total, currency and `reserved_until`. No buyer id, no address, no seller.
@@ -36,6 +43,7 @@ An order is born from a comment, for a buyer who has no account: the platform us
 - The buyer keeps two things, the reference to read and the token to act. The API reads the token from the `Authorization` header only, never from a URL, where it would reach logs and referrers.
 - Whoever holds `ORDER_TOKEN_KEY` can compute every token: its rotation is not implemented. A single order's token cannot be revoked either, since it is derived rather than stored.
 - 2^30 references are enough while the orders stay far fewer; running out of draws would show as `ServiceUnavailable`, not as a duplicate.
+- A production worker needs a notifier that delivers on the platforms themselves. None exists yet, and the simulated one is refused there: the worker does not start with `APP_ENV=production` until a platform integration brings one.
 
 ## Alternatives considered
 

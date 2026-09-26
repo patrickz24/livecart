@@ -36,6 +36,7 @@ from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.events import NullEventPublisher
+from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.logging import configure_logging
 from livecart_core.order_tokens import OrderTokens
@@ -107,10 +108,9 @@ async def serve(
     try:
         queue = RedisCommentQueue(redis, prefix=settings.redis_key_prefix)
         inbox = SqlCommentInbox(engine)
+        tokens = OrderTokens(settings.order_token_key)
         orders = SqlOrderRepository(
-            engine,
-            currency=settings.default_currency,
-            access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
+            engine, currency=settings.default_currency, access_token_hash=tokens.stored_hash
         )
         events = NullEventPublisher()
         process = ProcessComment(
@@ -119,6 +119,14 @@ async def serve(
             orders=orders,
             queue=queue,
             events=events,
+            # Refused at startup in production: see livecart_core.infrastructure.notifier.
+            notifier=SimulatedBuyerNotifier(
+                redis,
+                prefix=settings.redis_key_prefix,
+                link_scheme=settings.buyer_link_scheme,
+                production=settings.is_production,
+            ),
+            access_token=tokens.token_for,
             clock=clock,
             lease=settings.message_process_timeout,
             reservation_ttl=settings.reservation_ttl,

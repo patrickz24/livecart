@@ -219,6 +219,25 @@ class SqlOrderRepository:
             ).one_or_none()
         return None if row is None else order_record(row)
 
+    async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:
+        async with transaction(self._engine) as connection:
+            row = (
+                await connection.execute(
+                    update(orders)
+                    .where(orders.c.id == order_id, orders.c.buyer_notified_at.is_(None))
+                    .values(buyer_notified_at=now)
+                    .returning(*orders.c)
+                )
+            ).one_or_none()
+            if row is None:
+                # Stamped already, by an earlier notice: the first time stays.
+                row = (
+                    await connection.execute(select(orders).where(orders.c.id == order_id))
+                ).one_or_none()
+        if row is None:
+            raise RecordNotFound(f"no order {order_id}")
+        return order_record(row)
+
     async def find_by_reference(self, reference: OrderReference) -> BuyerOrderRecord | None:
         async with transaction(self._engine) as connection:
             row = (

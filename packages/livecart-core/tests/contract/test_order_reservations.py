@@ -127,6 +127,26 @@ async def test_the_settlement_records_what_the_parser_said(
     assert comment.parse == parse
 
 
+async def test_the_buyer_is_marked_notified_once(backend: ReservationBackend) -> None:
+    session_id, _, _ = await _seed(backend)
+    result = await backend.orders.reserve(
+        _request(await backend.add_comment("comment-1"), session_id)
+    )
+    assert result is not None
+    assert result.order is not None
+    assert result.order.buyer_notified_at is None
+
+    first = await backend.orders.mark_buyer_notified(result.order.id, now=NOW)
+    again = await backend.orders.mark_buyer_notified(
+        result.order.id, now=NOW + timedelta(seconds=5)
+    )
+
+    assert first.buyer_notified_at == again.buyer_notified_at == NOW
+    assert await backend.orders.get(result.order.id) == again
+    with pytest.raises(RecordNotFound):
+        await backend.orders.mark_buyer_notified(UNKNOWN, now=NOW)
+
+
 async def test_short_stock_records_an_out_of_stock_intent(backend: ReservationBackend) -> None:
     session_id, _, _ = await _seed(backend, stock_total=1)
     comment_id = await backend.add_comment("comment-1")

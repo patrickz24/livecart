@@ -686,7 +686,9 @@ REFERENCE_DRAWS: Final = 3
 
 
 class OrderReservations(Protocol):
-    """Unit 3 of a comment, and the reads of what it recorded: what ``ReserveStock`` needs.
+    """Unit 3 of a comment, the reads of what it recorded, and the buyer's notice.
+
+    What ``ReserveStock`` and ``ProcessComment`` need.
 
     A buyer has at most one pending order per product of a session
     (``uq_orders_pending_buyer_product``), and every order has a reference no
@@ -719,6 +721,12 @@ class OrderReservations(Protocol):
 
     async def get_by_reference(self, reference: OrderReference) -> OrderRecord | None:
         """The order with this reference, or ``None``."""
+
+    async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:
+        """Stamp ``buyer_notified_at`` once; a later call keeps the first time.
+
+        Raises ``RecordNotFound`` when no order has ``order_id``.
+        """
 
 
 class OrderLookup(Protocol):
@@ -757,9 +765,6 @@ class ReservationExpiry(Protocol):
 
 class OrderRepository(OrderReservations, OrderLookup, ReservationExpiry, Protocol):
     """Purchase intents and orders, with the stock effects of their transitions."""
-
-    async def mark_buyer_notified(self, order_id: UUID, *, now: datetime) -> OrderRecord:
-        """Stamp ``buyer_notified_at`` once; a later call keeps the first time."""
 
     async def set_shipping_address(self, order_id: UUID, address: ShippingAddress) -> OrderRecord:
         """Record where the buyer wants the order delivered."""

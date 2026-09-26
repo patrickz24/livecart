@@ -27,7 +27,8 @@ from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import GROUP, RedisCommentQueue
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.events import NullEventPublisher
-from livecart_core.testing.backends import PostgresBackend
+from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
+from livecart_core.testing.backends import ORDER_TOKENS, PostgresBackend
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, queued_comment
 from livecart_worker.consumer import CommentConsumer
 from livecart_worker.reclaim import reclaim_once
@@ -59,6 +60,10 @@ async def worker(
         orders=postgres_backend.orders,
         queue=queue,
         events=NullEventPublisher(),
+        notifier=SimulatedBuyerNotifier(
+            redis_client, prefix=redis_key_prefix, link_scheme="livecart", production=False
+        ),
+        access_token=ORDER_TOKENS.token_for,
         clock=clock,
         lease=timedelta(seconds=30),
         reservation_ttl=timedelta(seconds=900),
