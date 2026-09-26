@@ -17,7 +17,10 @@ second tier with the milestones that implement them.
 
 Both are rate limited (``livecart_api.rate_limits``): the lookup per client
 address, its not-found answers too, so that guessing references is slow, and
-the details per access token.
+the details per access token. The not-found answers of the details, those
+of a wrong or missing token included, count against the client address with
+the lookup's: a client that sends a new token value with every request gets
+no new window from it.
 """
 
 from datetime import datetime
@@ -132,11 +135,10 @@ def build_order_router(lookup: LookUpOrder, limits: RateLimiting) -> APIRouter:
         request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
     ) -> None:
-        subject = (
-            client_address(request)
-            if credentials is None
-            else token_subject(credentials.credentials)
-        )
+        address = client_address(request)
+        # First, so that a refused request opens no counter for the token it sent.
+        await limits.check(limits.rules.buyer_lookup_not_found, address)
+        subject = address if credentials is None else token_subject(credentials.credentials)
         await limits.enforce(limits.rules.buyer_token, subject)
 
     @router.get(
@@ -162,11 +164,15 @@ def build_order_router(lookup: LookUpOrder, limits: RateLimiting) -> APIRouter:
     )
     async def get_order_details(
         reference: Reference,
+        request: Request,
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
     ) -> OrderDetailsResponse:
         token = None if credentials is None else credentials.credentials
         found = await lookup.with_token(reference, token)
         if found is None:
+            # Against the address, never the token: any value sent opens a counter of its
+            # own, while the verified tokens of one shared address (CGNAT) never fill this one.
+            await limits.record_lookup_not_found(client_address(request))
             raise _not_found()
         return OrderDetailsResponse.of(found)
 

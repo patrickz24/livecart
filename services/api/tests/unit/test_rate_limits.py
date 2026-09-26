@@ -33,7 +33,7 @@ from livecart_api.testing import (
     seller_headers,
 )
 from livecart_core.application.create_seller import CreateSeller
-from livecart_core.application.dto import OrderRecord
+from livecart_core.application.dto import OrderRecord, RateLimitKey
 from livecart_core.settings import AppEnv
 from livecart_core.testing.fakes import (
     TEST_ORDER_TOKENS,
@@ -327,7 +327,7 @@ async def test_token_routes_are_limited_per_token_or_else_per_address() -> None:
     async with open_client(api.app) as client:
         first = await client.get(details, headers=token)
         second = await client.get(details, headers=token)
-        # Another token has a counter of its own, even from the same address.
+        # Another token has a counter of its own; its 404 counts against the address.
         other = await client.get(details, headers=other_token)
         tokenless = [(await client.get(details)).status_code for _ in range(2)]
 
@@ -335,6 +335,80 @@ async def test_token_routes_are_limited_per_token_or_else_per_address() -> None:
     _assert_too_many(second, 60)
     assert other.status_code == 404
     assert tokenless == [404, 429]
+    assert api.limits.buyer_lookup_not_found_total == 2
+
+
+def _bearer(token: str) -> dict[str, str]:
+    return {"Authorization": f"Bearer {token}"}
+
+
+async def test_a_new_token_value_opens_no_new_window_for_its_address() -> None:
+    api = await _api(rate_limit_buyer_lookup_not_found_per_minute=2)
+    order = await _order(api)
+    details = f"{ORDERS}/{order.reference.value}/details"
+    token = _bearer(TEST_ORDER_TOKENS.token_for(order.id))
+
+    async with open_client(api.app, peer="203.0.113.7") as client:
+        guesses = [
+            (await client.get(details, headers=_bearer(f"forged-{n}"))).status_code
+            for n in range(2)
+        ]
+        fresh = await client.get(details, headers=_bearer("forged-2"))
+        # The address shares its not-found answers with the lookup: past them, nothing is found.
+        real = await client.get(details, headers=token)
+        lookup = await client.get(f"{ORDERS}/{order.reference.value}")
+    async with open_client(api.app, peer="198.51.100.1") as other:
+        elsewhere = await other.get(details, headers=token)
+
+    assert guesses == [404, 404]
+    _assert_too_many(fresh, 60)
+    _assert_too_many(real, 60)
+    _assert_too_many(lookup, 60)
+    assert elsewhere.status_code == 200
+    # A refused request opened no counter for the token it sent.
+    assert RateLimitKey("buyer_token", token_subject("forged-0")) in api.limiter.windows
+    assert RateLimitKey("buyer_token", token_subject("forged-2")) not in api.limiter.windows
+
+
+async def test_a_new_token_value_per_request_is_stopped_at_the_default_limits() -> None:
+    api = await _api()
+    order = await _order(api)
+    details = f"{ORDERS}/{order.reference.value}/details"
+
+    async with open_client(api.app, peer="203.0.113.7") as client:
+        statuses = [
+            (await client.get(details, headers=_bearer(f"forged-{n}"))).status_code
+            for n in range(65)
+        ]
+
+    assert statuses == [404] * 20 + [429] * 45
+
+
+async def test_the_verified_tokens_of_one_address_count_per_token_only() -> None:
+    api = await _api(
+        rate_limit_buyer_lookup_not_found_per_minute=1, rate_limit_buyer_token_per_minute=3
+    )
+    session = api.database.add_live_session(seller_id=api.seller_id)
+    api.database.add_product(session.id, "B07", name="Sac en cuir", stock_total=5)
+    orders = [
+        await open_order(api.database, session.id, "B07", buyer=f"buyer-{n}") for n in range(3)
+    ]
+
+    # A whole audience behind one carrier's address (CGNAT), each buyer with its own token.
+    async with open_client(api.app, peer="203.0.113.7") as client:
+        statuses = [
+            (
+                await client.get(
+                    f"{ORDERS}/{order.reference.value}/details",
+                    headers=_bearer(TEST_ORDER_TOKENS.token_for(order.id)),
+                )
+            ).status_code
+            for order in orders
+            for _ in range(3)
+        ]
+
+    assert statuses == [200] * 9
+    assert api.limits.buyer_lookup_not_found_total == 0
 
 
 # --- Redis outage ----------------------------------------------------------------------
@@ -373,8 +447,8 @@ async def test_without_the_counters_other_routes_pass_and_the_failure_is_counted
             )
 
     assert (seller.status_code, lookup.status_code, details.status_code) == (200, 200, 200)
-    # One per counter read: the seller's, the lookup's two, the token's.
-    assert api.limits.limiter_errors_total == 4
+    # One per counter read: the seller's, the lookup's two, the details' two.
+    assert api.limits.limiter_errors_total == 5
     assert {log["rule"] for log in logs if log["event"] == "rate_limiter_unavailable"} == {
         "seller",
         "buyer_lookup",

@@ -17,7 +17,11 @@ settings may change:
 - the buyer's token routes (for now ``GET /api/v1/orders/{reference}/details``):
   60 requests a minute per order access token, counted by its SHA-256, or per
   address when no token is sent. A whole live audience behind one mobile
-  carrier's address (CGNAT) holds as many tokens as orders.
+  carrier's address (CGNAT) holds as many tokens as orders. Any value counts
+  as a token there, so their not-found answers, a wrong token's included,
+  count against the address with the lookup's 20: a client that sends a new
+  value with every request is stopped all the same, while the verified tokens
+  of one address never fill that counter.
 
 The client address is ``request.client``, which uvicorn rewrites from
 ``X-Forwarded-For`` only when the connection comes from nginx
