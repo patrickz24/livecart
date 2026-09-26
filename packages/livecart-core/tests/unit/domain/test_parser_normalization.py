@@ -25,6 +25,7 @@ RIGHT_SINGLE_QUOTE = chr(0x2019)
 QUESTION_EMOJI = chr(0x2753)
 INVERTED_QUESTION = chr(0x00BF)
 ZERO_WIDTH_JOINER = chr(0x200D)
+ZERO_WIDTH_SPACE = chr(0x200B)
 EURO = chr(0x20AC)
 EN_DASH = chr(0x2013)
 HEART = chr(0x2764) + VS16
@@ -203,6 +204,22 @@ def test_a_joined_word_still_quotes_the_dropped_apostrophe() -> None:
 
     assert result.text == "ill"
     assert text[slice(*result.source_span(0, 3))] == "i'll"
+
+
+@pytest.mark.parametrize(
+    ("typed", "expected"),
+    [
+        (f"je{ZERO_WIDTH_JOINER}prends", "je prends"),
+        (f"je{ZERO_WIDTH_SPACE}prends", "je prends"),
+        (f"B{ZERO_WIDTH_JOINER}07", "b07"),
+        (f"A1{ZERO_WIDTH_SPACE}2", "a12"),
+        (f"{ZERO_WIDTH_JOINER}je", "je"),
+        (f"je{ZERO_WIDTH_JOINER}", "je"),
+    ],
+    ids=["joiner", "space", "letter-digit", "digit-digit", "leading", "trailing"],
+)
+def test_a_zero_width_break_between_two_letters_is_a_space(typed: str, expected: str) -> None:
+    assert folded(typed) == expected
 
 
 def test_leading_zero_width_characters_have_nothing_to_attach_to() -> None:

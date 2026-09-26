@@ -18,7 +18,9 @@ Per character, in this order:
    folding, then canonical decomposition;
 3. zero-width characters disappear: combining marks (accents, and the
    U+20E3 enclosing keycap of ``2`` U+FE0F U+20E3, which leaves the digit),
-   variation selectors, joiners and other format characters;
+   variation selectors, joiners and other format characters; but a zero-width
+   space or joiner between two ASCII letters is a space, since it has no
+   typographic use there and would glue two words ("je" U+200D "prends");
 4. letters and digits stay; ``?``, ``'``, ``@`` and dashes stay for the rules
    below; a currency symbol or ``%`` becomes the ``AMOUNT_UNIT`` mark, since
    the number next to it is a price or a discount, never a quantity; a comma
@@ -82,6 +84,8 @@ _EXPLICIT: Final[dict[str, str]] = {
 _KEPT_PUNCTUATION: Final = frozenset({"?", "'", "@"})
 # ASCII and fullwidth, since fullwidth digits fold to digits too.
 _DECIMAL_SEPARATORS: Final = frozenset({",", ".", "\uff0c", "\uff0e"})
+# ZERO WIDTH SPACE, ZERO WIDTH NON-JOINER and ZERO WIDTH JOINER.
+_ZERO_WIDTH_BREAKS: Final = frozenset({"\u200b", "\u200c", "\u200d"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +193,12 @@ def _between_digits(text: str, index: int) -> bool:
     return 0 < index < len(text) - 1 and text[index - 1].isdecimal() and text[index + 1].isdecimal()
 
 
+def _between_ascii_letters(text: str, index: int) -> bool:
+    return 0 < index < len(text) - 1 and all(
+        char.isascii() and char.isalpha() for char in (text[index - 1], text[index + 1])
+    )
+
+
 def normalize_comment(text: str) -> NormalizedText:
     """Fold a comment for matching; see the module docstring for the rules."""
     chars: list[str] = []
@@ -198,6 +208,8 @@ def normalize_comment(text: str) -> NormalizedText:
         folded = _fold_char(char)
         if char in _DECIMAL_SEPARATORS and _between_digits(text, index):
             folded = DECIMAL
+        elif char in _ZERO_WIDTH_BREAKS and _between_ascii_letters(text, index):
+            folded = " "
         if folded:
             chars.append(folded)
             starts.extend([index] * len(folded))

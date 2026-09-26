@@ -101,6 +101,11 @@ def test_words_without_the_shape_of_a_code_are_not_codes(typed: str) -> None:
         ("2x", ["Number:2", "Word:x"]),
         ("A12Lx2", ["Code:a12", "Word:l", "GluedQuantity:x2"]),
         ("C3rougex2", ["Code:c3", "Word:rouge", "GluedQuantity:x2"]),
+        ("soldB07", ["Word:sold", "Code:b07"]),
+        ("prendsA12M", ["Word:prends", "Code:a12", "Word:m"]),
+        ("takeBO7x2", ["Word:take", "Code:bo7", "GluedQuantity:x2"]),
+        # A verb and a code off the catalog: no split.
+        ("soldQ7", ["Word:soldq7"]),
     ],
 )
 def test_glued_words_split_where_a_digit_meets_a_letter(typed: str, expected: list[str]) -> None:

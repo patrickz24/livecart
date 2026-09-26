@@ -13,7 +13,8 @@ because a buyer glues what belongs together ("A12M", "C3x2", "2xC3"):
 4. otherwise the word splits where a digit is followed by a letter (``a12m``
    gives ``a12`` and ``m``, ``c3x2`` gives ``c3`` and ``x2``), and each piece is
    read the same way; a piece ``x`` + code (from ``2xC3``) splits once more,
-   and so does a piece of letters + glued quantity (``lx2`` from ``A12Lx2``);
+   and so do a piece of letters + glued quantity (``lx2`` from ``A12Lx2``)
+   and a piece of a buy verb + catalog code (``soldb07``, ``prendsa12``);
 5. if no piece is a catalog code but the whole word has the shape of a code,
    even through a swap (``A13``, ``A1O``), the word is one unknown code,
    carrying the catalog codes it could be read as when there are several;
@@ -107,6 +108,8 @@ _GLUED_QUANTITY: Final = re.compile(rf"(?:{'|'.join(lexicon.GLUED_QUANTITY_PREFI
 _WORD_THEN_QUANTITY: Final = re.compile(r"([a-z]+?)(x[0-9]+)")
 # "2xl", "3xs": a size, not the quantity 2 of "xl".
 _NUMBERED_SIZE: Final = re.compile(r"[2-6]x[sl]")
+# Longest first, so that "prendsb07" is "prends" + "b07".
+_GLUED_VERBS: Final = tuple(sorted(lexicon.BUY_VERBS | lexicon.BUY_SLANG, key=len, reverse=True))
 
 # Swaps between look-alike letters and digits. In the letter part of a code a
 # digit may stand for a letter, and in the digit part a letter for a digit.
@@ -260,9 +263,18 @@ class _Reader:
         if (glued := _WORD_THEN_QUANTITY.fullmatch(piece)) is not None:
             head = glued.group(1)
             return [self._word(head, offset), *self._piece(glued.group(2), offset + len(head))]
+        if (glued_verb := self._verb_then_code(piece, offset)) is not None:
+            return glued_verb
         if lookalike_number(piece) is None and (unknown := self._unknown_code(piece, offset)):
             return [unknown]
         return [self._word(piece, offset)]
+
+    def _verb_then_code(self, piece: str, offset: int) -> list[Token] | None:
+        for verb in _GLUED_VERBS:
+            rest = piece.removeprefix(verb)
+            if rest != piece and (code := self._resolved(rest, offset + len(verb))) is not None:
+                return [self._word(verb, offset), code]
+        return None
 
     def _ascii_word(self, word: str, offset: int) -> list[Token]:
         if _NUMBERED_SIZE.fullmatch(word) or lexicon.time_or_ordinal(word):

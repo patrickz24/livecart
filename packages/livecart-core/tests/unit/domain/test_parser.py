@@ -40,6 +40,7 @@ RIGHT_SINGLE_QUOTE = chr(0x2019)
 EURO = chr(0x20AC)
 HEART = chr(0x2764) + VS16
 QUESTION_EMOJI = chr(0x2753)
+ZERO_WIDTH_JOINER = chr(0x200D)
 
 A12, B07, C3, D4, E15, Z99 = (
     ProductCode(code) for code in ("A12", "B07", "C3", "D4", "E15", "Z99")
@@ -844,6 +845,24 @@ def test_which_product_comes_before_whether_and_which_variant(
 
 def test_names_are_only_read_when_no_code_is_given() -> None:
     assert parse("je prends la robe B07") == match(B07, "", 1, Confidence.EXACT, "prends", "B07")
+
+
+@pytest.mark.parametrize(
+    ("text", "verb"), [("soldB07", "sold"), ("prendsB07", "prends"), ("B07sold", "sold")]
+)
+def test_a_buy_verb_glued_to_the_code_is_split_from_it(text: str, verb: str) -> None:
+    assert parse(text) == match(
+        B07, "", 1, Confidence.EXACT, *sorted((verb, "B07"), key=text.index)
+    )
+
+
+def test_a_zero_width_joiner_between_two_words_does_not_glue_them() -> None:
+    assert parse(f"je{ZERO_WIDTH_JOINER}prends B07") == match(
+        B07, "", 1, Confidence.EXACT, "prends", "B07"
+    )
+    assert parse(f"je prends B{ZERO_WIDTH_JOINER}07") == match(
+        B07, "", 1, Confidence.EXACT, "prends", f"B{ZERO_WIDTH_JOINER}07"
+    )
 
 
 def test_the_evidence_quotes_the_comment_as_typed() -> None:
