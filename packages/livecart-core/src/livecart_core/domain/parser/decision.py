@@ -57,9 +57,13 @@ def decide(reading: Reading, catalog: Catalog, *, max_quantity: int) -> ParseRes
     # 3. A buy signal with nothing to buy.
     if not reading.references and not reading.named_products:
         return Rejected(RejectionReason.NO_INTENT)
-    # 4. Out of bounds whatever the product turns out to be.
+    # 4. Out of bounds whatever the product turns out to be, but only for a
+    # number that can be nothing but a quantity: a bare "50" may be a price,
+    # a date or a size, so it is left to rule 8.
     values = {quantity.value for quantity in reading.quantities}
-    if values and not any(1 <= value <= max_quantity for value in values):
+    in_bounds = {value for value in values if 1 <= value <= max_quantity}
+    definite = any(quantity.marked or quantity.value < 1 for quantity in reading.quantities)
+    if values and not in_bounds and definite:
         return Rejected(RejectionReason.QUANTITY_OUT_OF_BOUNDS)
     reference = reading.references[0] if reading.references else None
     product = (
@@ -80,8 +84,14 @@ def decide(reading: Reading, catalog: Catalog, *, max_quantity: int) -> ParseRes
     # 7. A code-shaped token that no catalog code matches, or several do.
     if product is None:
         return Ambiguous(AmbiguityReason.UNKNOWN_CODE, reference.candidates, evidence)
-    # 8. Signals that pull two ways.
-    if reading.doubts or len(values) >= 2 or reading.number_words or len(found) >= 2:
+    # 8. Signals that pull two ways, or a bare number too large to be the quantity.
+    if (
+        reading.doubts
+        or len(values) >= 2
+        or (values and not in_bounds)
+        or reading.number_words
+        or len(found) >= 2
+    ):
         return Ambiguous(AmbiguityReason.CONFLICTING_SIGNALS, (product.code,), evidence)
     # 9. Which size or colour? A product with a single variant needs no answer.
     variant: Variant = NO_VARIANT

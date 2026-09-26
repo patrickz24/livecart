@@ -48,7 +48,7 @@
 {"text": "B07 🛒", "kind": "match", "code": "B07", "variant": "", "quantity": 1, "confidence": "1.00", "tag": "emoji"}
 {"text": "je prends B07 3\ufe0f\u20e3", "kind": "match", "code": "B07", "variant": "", "quantity": 3, "confidence": "1.00", "tag": "emoji"}
 {"text": "je prends Z99 🔟", "kind": "match", "code": "Z99", "variant": "", "quantity": 10, "confidence": "1.00", "tag": "emoji"}
-{"text": "je prends B07 1\ufe0f\u20e31\ufe0f\u20e3", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "emoji"}
+{"text": "je prends B07 1\ufe0f\u20e31\ufe0f\u20e3", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "emoji"}
 {"text": "B07 ✖\ufe0f2", "kind": "match", "code": "B07", "variant": "", "quantity": 2, "confidence": "0.90", "tag": "emoji"}
 {"text": "B07 ×3", "kind": "match", "code": "B07", "variant": "", "quantity": 3, "confidence": "0.90", "tag": "emoji"}
 {"text": "❤\ufe0f❤\ufe0f C3 noir ❤\ufe0f❤\ufe0f", "kind": "match", "code": "C3", "variant": "Noir", "quantity": 1, "confidence": "0.90", "tag": "emoji"}
@@ -86,7 +86,7 @@
 {"text": "je prends D4 en 44", "kind": "rejected", "reason": "variant_not_found", "tag": "size"}
 {"text": "je prends D4 38 40", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["D4"], "tag": "size"}
 {"text": "je prends 2 D4 42", "kind": "match", "code": "D4", "variant": "42", "quantity": 2, "confidence": "1.00", "tag": "size"}
-{"text": "je prends D4 44", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "limitation"}
+{"text": "je prends D4 44", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["D4"], "tag": "size"}
 {"text": "je prends D4 2", "kind": "ambiguous", "reason": "unresolved_variant", "candidates": ["D4"], "tag": "size"}
 {"text": "E15", "kind": "match", "code": "E15", "variant": "Unique", "quantity": 1, "confidence": "0.90", "tag": "single-variant"}
 {"text": "je prends E15 rouge", "kind": "rejected", "reason": "variant_not_found", "tag": "single-variant"}
@@ -107,7 +107,7 @@
 {"text": "je prends B07 x11", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
 {"text": "je prends B07 x0", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
 {"text": "je prends 0 B07", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
-{"text": "je prends 100 Z99", "kind": "rejected", "reason": "quantity_out_of_bounds", "tag": "bounds"}
+{"text": "je prends 100 Z99", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["Z99"], "tag": "bounds"}
 {"text": "je prends B07 x2 x3", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "quantity"}
 {"text": "je prends deux B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "number-word"}
 {"text": "I take two B07", "kind": "ambiguous", "reason": "conflicting_signals", "candidates": ["B07"], "tag": "number-word"}

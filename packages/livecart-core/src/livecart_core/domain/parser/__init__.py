@@ -30,7 +30,9 @@ read into the comment, so that ambiguities stay rare:
 2. ``multiple_products``: two or more distinct codes, known or not;
 3. ``no_intent``: a buy signal, but neither a code nor a catalog product name;
 4. ``quantity_out_of_bounds``: every quantity given is below 1 or above
-   ``max_quantity``;
+   ``max_quantity``, and one of them is marked as a quantity ("x50", "50
+   pcs", "qte 50") or below 1; a bare number above the bound may be a date,
+   a price or a size ("le 12", "en 38"), so it goes to rule 8 instead;
 5. ``variant_not_found``: the product has variants, none is named, and a
    size or colour word (or the word after "taille", "size"...) is given;
 6. ``product_by_name`` (ambiguous): no code, but a word of a catalog product
@@ -38,8 +40,8 @@ read into the comment, so that ambiguities stay rare:
 7. ``unknown_code`` (ambiguous): the code matches no catalog code, even
    through a swap, or several catalog codes through swaps;
 8. ``conflicting_signals`` (ambiguous): a buy signal with a question or a
-   negation ("je prends C3 ?"), two different quantities, a number written in
-   words, or two different variants;
+   negation ("je prends C3 ?"), two different quantities, a bare number above
+   the bound, a number written in words, or two different variants;
 9. ``unresolved_variant`` (ambiguous): the product has several variants and
    none is named (a product with a single variant takes it);
 10. ``Match``, with quantity 1 unless one is given.

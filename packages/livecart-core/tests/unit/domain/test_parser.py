@@ -446,13 +446,36 @@ def test_the_same_code_twice_is_one_product() -> None:
     [
         "je prends B07 x11",
         "je prends B07 x0",
-        "je prends 50 B07",
+        "je prends 50 pcs B07",
+        "je prends B07 qte 12",
+        "je prends 0 B07",
         "je prends B07 x 1000000000000000000000000",
         "je prends B07 x11 x12",
+        "je prends B07 x11 12",
     ],
 )
 def test_quantity_out_of_bounds(text: str) -> None:
     assert rejected(text) is RejectionReason.QUANTITY_OUT_OF_BOUNDS
+
+
+@pytest.mark.parametrize(
+    ("text", "number"),
+    [
+        ("je prends 50 B07", "50"),
+        ("je prends B07 le 12", "12"),
+        ("B07 29", "29"),
+        # No size for a bag: a size typed by mistake, or a quantity of 38?
+        ("je prends B07 en 38", "38"),
+        # A size that A12 does not have, or a quantity of 38?
+        ("je prends A12 en 38", "38"),
+        ("je prends D4 44", "44"),
+    ],
+)
+def test_a_bare_number_above_the_bound_is_left_to_the_fallback(text: str, number: str) -> None:
+    result = ambiguous(text)
+
+    assert result.reason is AmbiguityReason.CONFLICTING_SIGNALS
+    assert number in result.evidence
 
 
 def test_the_quantity_bound_is_an_argument() -> None:

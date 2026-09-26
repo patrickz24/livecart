@@ -20,8 +20,8 @@ gets, so that the catalog always wins over the generic vocabulary:
 6. quantities: a number next to a currency, ``%``, a time unit or a decimal
    separator is a price, a discount, a time or a decimal and is ignored
    ("15,90 €", "29.99", "14 h"); then a glued quantity ("x2"), a prefix and a
-   number ("x 2", "qte 2"), a number and a suffix ("2x", "2 pcs"), and
-   finally a bare number;
+   number ("x 2", "qte 2"), a number and a suffix ("2x", "2 pcs"), all
+   marked as quantities, and finally a bare number, which is not;
 7. marks: the cart emoji is a buy signal, a question mark or an elided "n'" a
    doubt;
 8. words of the lexicon: buy verbs, doubts, numbers in words, the name of the
@@ -95,6 +95,8 @@ class Reference:
 class QuantityMention:
     value: int
     mention: Mention
+    # False for a bare number, which may as well be a date, a price or a size.
+    marked: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -358,20 +360,20 @@ class _Grammar:
             if self._roles[i] is not None:
                 i += 1
             elif isinstance(token, GluedQuantity):
-                self._quantity(token.value, i, i)
+                self._quantity(token.value, i, i, marked=True)
                 i += 1
             elif (
                 self._free_word(i) in lexicon.QUANTITY_PREFIXES
                 and (number := self._free_number(i + 1)) is not None
             ):
-                self._quantity(number.value, i, i + 1)
+                self._quantity(number.value, i, i + 1, marked=True)
                 i += 2
             elif (number := self._free_number(i)) is not None:
                 if self._free_word(i + 1) in lexicon.QUANTITY_SUFFIXES:
-                    self._quantity(number.value, i, i + 1)
+                    self._quantity(number.value, i, i + 1, marked=True)
                     i += 2
                 else:
-                    self._quantity(number.value, i, i)
+                    self._quantity(number.value, i, i, marked=False)
                     i += 1
             else:
                 i += 1
@@ -385,9 +387,9 @@ class _Grammar:
             return token.kind in {MarkKind.AMOUNT_UNIT, MarkKind.DECIMAL}
         return self._free_word(i) in _UNIT_WORDS
 
-    def _quantity(self, value: int, first: int, last: int) -> None:
+    def _quantity(self, value: int, first: int, last: int, *, marked: bool) -> None:
         self._assign_all(range(first, last + 1), Role.QUANTITY)
-        self._quantities.append(QuantityMention(value, self._mention(first, last)))
+        self._quantities.append(QuantityMention(value, self._mention(first, last), marked))
 
     def _read_marks(self) -> None:
         roles = {
