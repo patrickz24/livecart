@@ -1,10 +1,13 @@
 """The parser against its French and English corpus, case by case and field by field."""
 
 from collections import Counter
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from livecart_core.domain.llm_decision import LlmProposal, decide_from_llm
+from livecart_core.domain.outcomes import LlmReason
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, demo_catalog
 from livecart_core.testing.corpus import (
     AmbiguousCase,
@@ -31,6 +34,35 @@ def test_every_case_gives_exactly_the_expected_result() -> None:
     failures = mismatches(CORPUS, demo_catalog(), max_quantity=DEMO_MAX_QUANTITY)
 
     assert not failures, f"{len(failures)} corpus case(s) differ:\n" + "\n".join(failures)
+
+
+def test_every_resolution_is_an_order_the_domain_takes_from_the_llm() -> None:
+    # A label the domain would refuse could never be reached: the evaluation
+    # of the fallback would count a miss the model cannot avoid.
+    resolved = [
+        line.case
+        for line in CORPUS
+        if isinstance(line.case, AmbiguousCase) and line.case.resolution is not None
+    ]
+    for case in resolved:
+        assert case.resolution is not None
+        proposal = LlmProposal(
+            LlmReason.ORDER,
+            case.resolution.code,
+            case.resolution.variant,
+            case.resolution.quantity,
+            Decimal(1),
+        )
+        choice = decide_from_llm(proposal, demo_catalog(), max_quantity=DEMO_MAX_QUANTITY)
+        assert choice is not None, case.text
+        assert (str(choice.product_code), str(choice.variant), choice.quantity.value) == (
+            case.resolution.code,
+            case.resolution.variant,
+            case.resolution.quantity,
+        ), case.text
+    # Some ambiguities carry an order, and the rest none: both are measured.
+    ambiguous = sum(isinstance(line.case, AmbiguousCase) for line in CORPUS)
+    assert 0 < len(resolved) < ambiguous
 
 
 def test_every_outcome_of_the_parser_appears_in_the_corpus() -> None:

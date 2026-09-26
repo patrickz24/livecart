@@ -2,9 +2,11 @@
 
 ``comments.jsonl`` holds one case per line: a comment, the exact result the
 parser must give for it against ``builders.demo_catalog()`` with
-``builders.DEMO_MAX_QUANTITY``, and a short tag. README.md, next to it,
-explains the format and how to add a case. The same file can later feed an
-evaluation of the LLM fallback on the ambiguous cases.
+``builders.DEMO_MAX_QUANTITY``, and a short tag. An ambiguous case also
+holds its resolution: the order a careful reader takes from the comment, or
+none, which the evaluation of the LLM fallback (``scripts/llm_eval.py``)
+compares its decisions with. README.md, next to it, explains the format and
+how to add a case.
 """
 
 from collections.abc import Iterable
@@ -40,10 +42,27 @@ class MatchCase(_Case):
     confidence: Literal["1.00", "0.90", "0.80"]
 
 
+class Resolution(BaseModel):
+    """The one order an ambiguous comment carries: a product, its variant, a quantity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    code: str
+    variant: str
+    quantity: int
+
+
 class AmbiguousCase(_Case):
     kind: Literal["ambiguous"]
     reason: AmbiguityReason
     candidates: list[str]
+    # What the fallback should settle, or None when the comment orders nothing
+    # the catalog can take: required, so that every ambiguous case is labelled.
+    resolution: Resolution | None
+
+    def expected(self) -> dict[str, object]:
+        """The parser's result only: the resolution is the fallback's to reach."""
+        return self.model_dump(mode="json", exclude={"text", "tag", "resolution"})
 
 
 class RejectedCase(_Case):
