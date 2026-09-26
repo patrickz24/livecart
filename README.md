@@ -8,7 +8,14 @@ A FastAPI API, an asyncio worker and a Redis Streams queue absorb comment spikes
 
 ## Status
 
-Milestone 1 of 9: the monorepo, its tooling, CI and the Docker stack. The API only answers `/health` and `/ready`, the worker only runs its heartbeat, and the dashboard is a shell page that checks the API. The features described above arrive milestone by milestone; this README grows with them.
+Milestone 2 of 9: the domain and the comment parser, on top of the monorepo, tooling, CI and Docker stack of milestone 1.
+
+- **Domain** (`livecart_core.domain`, standard library only): the value objects (`Money`, `ProductCode`, `OrderReference`, drawn from an injected random source and read back tolerantly in Crockford base 32), the state machines of orders, payment attempts, shipments, live sessions and comments, and a deterministic parser that reads a French or English comment against the session catalog into a match, an ambiguity (the only kind a later LLM fallback will see) or a rejection.
+- **Corpus**: 200 French and English comments with their exact expected results (`packages/livecart-core/src/livecart_core/testing/corpus/`), against which the parser is tested field by field, alongside unit and seeded property tests.
+- **Ports and fakes** (`livecart_core.application`): every port the later milestones need, as a `typing.Protocol`, with a deterministic in-memory fake of each in `livecart_core.testing.fakes`.
+- **Tests**: the unit tests need no Docker (`uv run --locked pytest -m "not integration" --cov`), and the coverage gate fails below 80 % branch coverage of the domain and the application.
+
+Nothing calls the parser or the ports yet: the API only answers `/health` and `/ready`, the worker only runs its heartbeat, and the dashboard is a shell page that checks the API. The features described above arrive milestone by milestone; this README grows with them.
 
 ## Quickstart
 
@@ -39,7 +46,16 @@ _To be completed: `docs/assets/demo.gif`, recorded once the dashboard and the bu
 
 ## Architecture
 
-_To be completed: the Mermaid diagram of the comment path, from the signed webhook to the SSE event, and the Python layers (domain, application, infrastructure, entry points)._
+_To be completed: the Mermaid diagram of the comment path, from the signed webhook to the SSE event._
+
+The Python code is layered, and imports only go inwards ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)):
+
+- **domain** (`livecart_core.domain`): value objects, state machines and the parser, standard library only;
+- **application** (`livecart_core.application`): the ports and the data that crosses them, with pydantic; the use cases join it from milestone 3;
+- **infrastructure** (`livecart_core.infrastructure`): the PostgreSQL engine and the Redis client today, then the SQL repositories, the queue, the payment providers, the carriers and the LLM;
+- **entry points** (`livecart_api`, `livecart_worker`, the CLIs): routes, loops and the wiring of the adapters.
+
+An architecture test fails on any import that breaks the rule of the two inner layers.
 
 ## Features
 
@@ -47,12 +63,14 @@ _To be completed as each milestone lands: comment ingestion and intent parsing, 
 
 ## Key decisions and trade-offs
 
-_To be completed, with a link to each ADR in `docs/adr/`._
+_To be completed as the milestones land; every record is in [`docs/adr/`](docs/adr/README.md)._
 
-| Decision                                              | Trade-off                                                                                    |
-| ----------------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| One `cp .env.example .env` before `docker compose up` | One extra command, so that secrets never have a default in a versioned file                  |
-| One Python image for the API, the worker and migrate  | A slightly larger image per process, but migrations always ship with the code that uses them |
+| Decision                                                                                                                                      | Trade-off                                                                                                                                |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| One `cp .env.example .env` before `docker compose up`                                                                                         | One extra command, so that secrets never have a default in a versioned file                                                              |
+| One Python image for the API, the worker and migrate                                                                                          | A slightly larger image per process, but migrations always ship with the code that uses them                                             |
+| A deterministic parser first, an LLM only for its ambiguities ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))           | A phrasing the lexicon misses is rejected or costs a model call until it is added; clear orders never wait for, pay for or trust a model |
+| Protocol ports with in-memory fakes, hand-written state machines ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)) | The fakes hold rules the SQL adapters must match, so both are tested on the same scenarios; every rule is tested without Docker          |
 
 ## Out of scope
 
