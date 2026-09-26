@@ -103,6 +103,12 @@ def test_question_marks_are_kept(typed: str, expected: str) -> None:
     [
         ("je prends l'A12", "je prends a12"),
         ("s'il vous plait", "il vous plait"),
+        ("s il vous plait", "il vous plait"),
+        ("qu ils", "ils"),
+        ("M s'il", "m il"),
+        ("S il", "il"),
+        ("s ile", "s ile"),
+        ("as il", "as il"),
         ("qu'il", "il"),
         ("je n'en veux pas", f"je {NEGATION} en veux pas"),
         (f"je n{RIGHT_SINGLE_QUOTE}en veux", f"je {NEGATION} en veux"),

@@ -27,8 +27,10 @@ Per character, in this order:
    (punctuation, emojis, spaces, controls) becomes a space.
 
 Then, on the folded string: an ``@mention`` is dropped, as it names another
-viewer; a French elision (``l'``, ``j'``, ``qu'``...) is dropped, except
-``n'``, which becomes the ``NEGATION`` mark; an apostrophe inside a word is
+viewer; ``s`` or ``qu`` then a space before ``il`` or ``ils`` is an elision
+typed without its apostrophe (``s il vous plait``) and is dropped, lest it
+pass for the size S; a French elision (``l'``, ``j'``, ``qu'``...) is dropped,
+except ``n'``, which becomes the ``NEGATION`` mark; an apostrophe inside a word is
 dropped (``i'll`` reads ``ill``, ``don't`` reads ``dont``); a dash right
 before a digit, at the start of a word or after a glued quantity prefix
 (``-2``, ``x-1``), becomes the ``MINUS`` mark, so that a negative quantity is
@@ -164,6 +166,8 @@ def _rewrite(
 
 _WORD_CHAR: Final = r"[^\W_]"
 _MENTION: Final = re.compile(rf"@{_WORD_CHAR}*")
+# Read before _ELISION, so that "en S s'il" keeps its size S next to "il".
+_SPACED_ELISION: Final = re.compile(rf"(?<!{_WORD_CHAR})(?:s|qu) (?=ils?(?!{_WORD_CHAR}))")
 _ELISION: Final = re.compile(rf"(?<!{_WORD_CHAR})(qu|[cdjlmnst])'(?={_WORD_CHAR})")
 _INNER_APOSTROPHE: Final = re.compile(rf"(?<={_WORD_CHAR})'(?={_WORD_CHAR})")
 # A lookbehind must have a fixed width: one per prefix.
@@ -204,6 +208,7 @@ def normalize_comment(text: str) -> NormalizedText:
             ends[-1] = index + 1
     folded_text = NormalizedText(text, "".join(chars), tuple(starts), tuple(ends))
     folded_text = _rewrite(folded_text, _MENTION, lambda _: " ")
+    folded_text = _rewrite(folded_text, _SPACED_ELISION, lambda _: " ")
     folded_text = _rewrite(
         folded_text,
         _ELISION,

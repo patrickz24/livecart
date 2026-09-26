@@ -438,6 +438,15 @@ FILLERS: Final = frozenset(
     }
 )
 
+# A French elision typed with a space for its apostrophe ("je l offre")
+# leaves one of these letters, which must not pass for the size L, M or S.
+ELIDED_LETTERS: Final = frozenset("cdjlmst")
+# The words before an elided pronoun or article: "je l offre", "pour l anniversaire".
+ELISION_CONTEXT: Final = frozenset(
+    {"je", "tu", "il", "elle", "on", "ne", "que", "si", "pour", "de", "a", "dans", "sur", "par"}
+)
+VOWELS: Final = frozenset("aeiouyh")
+
 # The same size or colour in French and English, so that "C3 blue" finds the
 # seller's label "Bleu" and "A12 medium" the label "M".
 VARIANT_SYNONYMS: Final = (

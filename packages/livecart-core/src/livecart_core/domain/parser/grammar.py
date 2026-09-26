@@ -4,32 +4,36 @@ Roles are handed out in a fixed order, and a token keeps the first role it
 gets, so that the catalog always wins over the generic vocabulary:
 
 1. product references: the tokens read as catalog codes;
-2. variants: when the comment names exactly one catalog code, the labels of
+2. elisions typed without their apostrophe: a letter between a preposition
+   or a pronoun and a word starting with a vowel ("pour l anniversaire", "je
+   l offre") is an elided word, not the size L, M or S ("s il" is dropped
+   during normalisation);
+3. variants: when the comment names exactly one catalog code, the labels of
    that product, longest first ("bleu nuit" before "bleu"), matched on words,
    numbers and code-shaped tokens alike ("38", "T2"), allowing a plural or
    feminine ending ("bleue") and the English or French synonym of a size or
    colour ("blue" for "Bleu"); then a ``t38``-style size, read as "taille 38";
-3. the word after a variant keyword ("taille", "size", "couleur"...), a size
+4. the word after a variant keyword ("taille", "size", "couleur"...), a size
    or colour even when it looks like a quantity ("taille 2"); likewise the
    number after "en" ("en 38"), while no variant is named yet and the product
    comes in numbered sizes, unless a quantity word follows it ("en 2
    exemplaires"): "A12 M en 2" and "C3 rouge en 2" are quantities;
-4. phrases: "sold out", "out of stock" and "is sold" (doubts), "i'd like" and
+5. phrases: "sold out", "out of stock" and "is sold" (doubts), "i'd like" and
    "would like", "i'll have", "mets-moi", "de cote" (buy signals), "ma
    commande", "my order" and "pas de souci" (no role);
-5. the unknown codes left: product references too;
-6. quantities: a number next to a currency, ``%``, a time unit or a decimal
+6. the unknown codes left: product references too;
+7. quantities: a number next to a currency, ``%``, a time unit or a decimal
    separator is a price, a discount, a time or a decimal and is ignored
    ("15,90 €", "29.99", "14 h"); then a glued quantity ("x2"), a prefix and a
    number ("x 2", "qte 2"), a number and a suffix ("2x", "2 pcs"), a minus
    sign and a number ("x-1", "-2", a quantity below 1), all marked as
    quantities, and finally a bare number, which is not;
-7. marks: the cart emoji is a buy signal, a question mark or an elided "n'" a
+8. marks: the cart emoji is a buy signal, a question mark or an elided "n'" a
    doubt;
-8. words of the lexicon: buy verbs, doubts, numbers in words or typed with
-   look-alike letters ("deux", "1O"), the name of the
-   referenced product, sizes and colours, fillers, times and ordinals
-   ("14h", "3e"); then the typos of buy verbs; every other word is content.
+9. words of the lexicon: buy verbs, doubts, numbers in words or typed with
+   look-alike letters ("deux", "1O"), the name of the referenced product,
+   sizes and colours, fillers, times and ordinals ("14h", "3e"); then the
+   typos of buy verbs; every other word is content.
 
 When the comment references no product at all, the content, size and colour
 words are also compared with the words of every product name.
@@ -199,6 +203,7 @@ class _Grammar:
         self._assign_all(self._indexes(Code), Role.REFERENCE)
         distinct = list(dict.fromkeys(token.code for token in codes))
         product = self._catalog.get(distinct[0]) if len(distinct) == 1 else None
+        self._read_elisions()
         if product is not None:
             self._read_variants(product)
         self._read_variant_keywords(product)
@@ -274,6 +279,18 @@ class _Grammar:
         return None
 
     # Passes.
+
+    def _read_elisions(self) -> None:
+        for i in range(len(self._tokens)):
+            if self._free_word(i) not in lexicon.ELIDED_LETTERS:
+                continue
+            following = self._free_word(i + 1)
+            if (
+                self._free_word(i - 1) in lexicon.ELISION_CONTEXT
+                and following is not None
+                and following[0] in lexicon.VOWELS
+            ):
+                self._roles[i] = Role.NEUTRAL
 
     def _read_variants(self, product: CatalogProduct) -> None:
         labels = sorted(

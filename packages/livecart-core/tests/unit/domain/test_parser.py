@@ -35,6 +35,7 @@ SMALL_E_GRAVE = chr(0x00E8)
 SMALL_E_ACUTE = chr(0x00E9)
 SMALL_A_GRAVE = chr(0x00E0)
 SMALL_O_CIRCUMFLEX = chr(0x00F4)
+SMALL_I_CIRCUMFLEX = chr(0x00EE)
 RIGHT_SINGLE_QUOTE = chr(0x2019)
 EURO = chr(0x20AC)
 HEART = chr(0x2764) + VS16
@@ -451,6 +452,47 @@ def test_after_en_a_product_without_sizes_can_only_take_a_quantity() -> None:
     ],
 )
 def test_after_en_a_number_is_a_size_only_while_a_numbered_size_is_open(
+    text: str, expected: ParseResult
+) -> None:
+    assert parse(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "je prends A12 s il vous plait",
+            Ambiguous(AmbiguityReason.UNRESOLVED_VARIANT, (A12,), ("prends", "A12")),
+        ),
+        (
+            f"A12 s il vous pla{SMALL_I_CIRCUMFLEX}t",
+            Ambiguous(AmbiguityReason.UNRESOLVED_VARIANT, (A12,), ("A12",)),
+        ),
+        (
+            "je prends A12 M s il vous plait",
+            match(A12, "M", 1, Confidence.EXACT, "prends", "A12", "M"),
+        ),
+        (
+            "je prends A12 M pour l anniversaire de ma fille",
+            match(A12, "M", 1, Confidence.EXACT, "prends", "A12", "M"),
+        ),
+        (
+            "je prends A12 M, je l offre a ma soeur",
+            match(A12, "M", 1, Confidence.EXACT, "prends", "A12", "M"),
+        ),
+        # The apostrophe typed: the size next to "il" stays a size.
+        (
+            "je prends A12 en S s'il vous plait",
+            match(A12, "S", 1, Confidence.EXACT, "prends", "A12", "S"),
+        ),
+        # A size, then a word that happens to start with a vowel.
+        (
+            "je prends A12 L avec la ceinture",
+            match(A12, "L", 1, Confidence.EXACT, "prends", "A12", "L"),
+        ),
+    ],
+)
+def test_an_elided_letter_typed_without_its_apostrophe_is_not_a_size(
     text: str, expected: ParseResult
 ) -> None:
     assert parse(text) == expected
