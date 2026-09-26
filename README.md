@@ -8,7 +8,16 @@ A FastAPI API, an asyncio worker and a Redis Streams queue absorb comment spikes
 
 ## Status
 
-Milestone 3 of 9: the HTTP API, the atomic stock reservation and the order references, on top of the domain and parser of milestone 2 and the monorepo, CI and Docker stack of milestone 1.
+Milestone 4 of 9, in its three parts: comment ingestion, the queue and the worker (4a), real-time events (4b) and the optional LLM fallback (4c). They stand on the HTTP API, the atomic stock reservation and the order references of milestone 3, the domain and parser of milestone 2, and the monorepo, CI and Docker stack of milestone 1.
+
+- **Comment ingestion** (4a): one signed webhook per platform, `POST /api/v1/webhooks/comments/{platform}`, in a common format (`IncomingComment`), its HMAC-SHA256 signature checked before anything is read. The simulator's adapter is real; Facebook, Instagram and TikTok are documented stubs that refuse to start. Each batch goes to a Redis stream in one pipeline and the webhook answers 202, or 503 with `Retry-After` once the workers' backlog reaches `QUEUE_MAX_DEPTH` ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md)).
+- **Worker** (4a): a consumer group reads the stream; a PostgreSQL inbox, with a lease per delivery, makes every comment count once whatever its deliveries; the parser reads it and one transaction reserves the stock and opens the order. Idle deliveries are reclaimed after 120 s, dead-lettered after 3 deliveries, and the settled history trimmed safely. Every 5 s, the reservations nobody paid expire and their stock is for sale again ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)). The buyer receives the order's reference and its access token, derived again at each delivery, on a development stream.
+- **Comment simulator** (4a): a live audience on the demo session, comments arriving as a Poisson process, mostly orders, some noise and some ambiguous ones ([CONTRIBUTING.md](CONTRIBUTING.md#comment-simulator)).
+- **Real time** (4b): each change is published to its session's Redis stream after its commit, and `GET /api/v1/live-sessions/{id}/events` streams it to the seller over SSE, after a snapshot and its cursor, resumable with `Last-Event-ID` ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md)). The `LiveSessionEvent` union is in the OpenAPI contract and the generated client.
+- **Observability** (4a to 4c): JSON logs with request and correlation ids, and Prometheus metrics on each process's internal port 9100, published nowhere ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md)).
+- **LLM fallback** (4c): optional. With `ANTHROPIC_API_KEY` set, the comments the parser leaves ambiguous go to Claude (`claude-opus-5` at low effort) in structured outputs, once per comment, and the domain checks the answer against the catalog before anything is reserved. A budget shared in Redis (200 calls per session, $1.00 a day) and 4 slots per worker, waited for 7 s at most, bound the cost and the wait; `scripts/llm_eval.py` measures a model on the corpus before any change ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md)). It has not been run against the real API yet. Without a key, everything runs on the parser alone.
+
+From milestone 3, the API, the reservation and the references that the worker builds on:
 
 - **Schema** (`livecart_core.infrastructure.db`): every table of the data model, from sellers to shipments, as SQLAlchemy Core metadata and an Alembic revision that a test compares with it, with UUID v7 keys, integer minor units and the plan's named constraints ([ADR 0003](docs/adr/0003-backend-stack-fastapi-sqlalchemy-core-alembic.md)).
 - **Reservation**: one conditional `UPDATE` in a READ COMMITTED transaction reserves the stock, and a partial unique index allows one pending order per buyer and product. A thousand concurrent reservations of 200 units, three times over, never oversell ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)).
@@ -18,7 +27,7 @@ Milestone 3 of 9: the HTTP API, the atomic stock reservation and the order refer
 - **Perimeter**: rate limits in Redis (per address, per seller, per account and per token), security headers, trusted hosts, a 1 MiB body limit and uvicorn trusting nginx alone for the client address ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md)).
 - **Demo data and accounts**: the one-shot `seed` service creates the demo sellers and sessions; `livecart-create-seller` opens other accounts ([CONTRIBUTING.md](CONTRIBUTING.md#demo-data)).
 
-Nothing ingests comments yet: the signed webhook, the queue and the worker that reserves for each comment arrive in milestone 4a, and the worker still only runs its heartbeat. The dashboard is a shell page that checks the API. The features described above arrive milestone by milestone; this README grows with them.
+The dashboard is still a shell page that checks the API: the payments, the carrier, the dashboard itself and the buyer app arrive with milestones 5 to 8. The features described above arrive milestone by milestone; this README grows with them.
 
 ## Quickstart
 
@@ -32,17 +41,20 @@ docker compose up --build
 
 Then open the dashboard on <http://localhost:8080>, and the interactive API documentation, in development only, on <http://127.0.0.1:8000/docs>, where `POST /api/v1/auth/login` signs in the demo seller: `demo-seller@livecart.test`, with the `SEED_DEMO_PASSWORD` of `.env`. The demo storefront is <http://localhost:8080/api/v1/storefronts/demo-seller>. `docker compose down --volumes` (or `make reset`) removes the stack and its data.
 
+The stack needs no third-party key: to try the LLM fallback, set `ANTHROPIC_API_KEY` in `.env` (the always-on simulator then spends the daily budget; `docker compose stop simulator` pauses it).
+
 The copy of `.env.example` is the one step before `docker compose up`: `compose.yaml` gives no default to any secret and refuses to start without them, so that no password ever has a default value in a versioned file. The `change-me-*` values are development placeholders, refused when `APP_ENV=production`.
 
-| Service    | Role                                                    | Published on                              |
-| ---------- | ------------------------------------------------------- | ----------------------------------------- |
-| `web`      | nginx: the dashboard, and the API proxied on `/api/`    | `8080` (every interface, for a LAN phone) |
-| `api`      | FastAPI behind uvicorn                                  | `127.0.0.1:8000`                          |
-| `worker`   | asyncio worker (heartbeat only for now)                 | not published                             |
-| `migrate`  | one-shot Alembic upgrade, as the schema owner           | not published                             |
-| `seed`     | one-shot demo data, created only where missing          | not published                             |
-| `postgres` | PostgreSQL 16, databases `livecart` and `livecart_test` | `127.0.0.1:55432`                         |
-| `redis`    | Redis 8 with a password, append-only file               | `127.0.0.1:56379`                         |
+| Service     | Role                                                    | Published on                              |
+| ----------- | ------------------------------------------------------- | ----------------------------------------- |
+| `web`       | nginx: the dashboard, and the API proxied on `/api/`    | `8080` (every interface, for a LAN phone) |
+| `api`       | FastAPI behind uvicorn                                  | `127.0.0.1:8000`                          |
+| `worker`    | asyncio worker: comments, reclaim, expiry sweep         | not published                             |
+| `simulator` | comment simulator on the demo session                   | not published                             |
+| `migrate`   | one-shot Alembic upgrade, as the schema owner           | not published                             |
+| `seed`      | one-shot demo data, created only where missing          | not published                             |
+| `postgres`  | PostgreSQL 16, databases `livecart` and `livecart_test` | `127.0.0.1:55432`                         |
+| `redis`     | Redis 8 with a password, append-only file               | `127.0.0.1:56379`                         |
 
 ## Demo
 
@@ -56,8 +68,8 @@ The Python code is layered, and imports only go inwards ([ADR 0002](docs/adr/000
 
 - **domain** (`livecart_core.domain`): value objects, state machines and the parser, standard library only;
 - **application** (`livecart_core.application`): the ports, the data that crosses them and the use cases, with pydantic;
-- **infrastructure** (`livecart_core.infrastructure`): the SQL repositories, the Redis idempotency store and rate limiter, argon2id and the clock today, then the queue, the payment providers, the carriers and the LLM;
-- **entry points** (`livecart_api`, `livecart_worker`, the CLIs): routes, loops and the wiring of the adapters.
+- **infrastructure** (`livecart_core.infrastructure`): the SQL repositories, the Redis comment queue, session streams, idempotency store, rate limiter and LLM budget, the platform adapters, argon2id and the clock today, then the payment providers and the carriers;
+- **entry points** (`livecart_api`, `livecart_worker`, the CLIs): routes, loops and the wiring of the adapters; the worker also holds the Claude adapter, the one module that needs the Anthropic SDK.
 
 An architecture test fails on any import that breaks the rule of the two inner layers.
 
@@ -69,16 +81,20 @@ _To be completed as each milestone lands: comment ingestion and intent parsing, 
 
 _To be completed as the milestones land; every record is in [`docs/adr/`](docs/adr/README.md)._
 
-| Decision                                                                                                                                              | Trade-off                                                                                                                                |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| One `cp .env.example .env` before `docker compose up`                                                                                                 | One extra command, so that secrets never have a default in a versioned file                                                              |
-| One Python image for the API, the worker, migrate and seed                                                                                            | A slightly larger image per process, but migrations always ship with the code that uses them                                             |
-| A deterministic parser first, an LLM only for its ambiguities ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))                   | A phrasing the lexicon misses is rejected or costs a model call until it is added; clear orders never wait for, pay for or trust a model |
-| Protocol ports with in-memory fakes, hand-written state machines ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md))         | The fakes hold rules the SQL adapters must match, so both are tested on the same scenarios; every rule is tested without Docker          |
-| One conditional `UPDATE` reserves the stock, in READ COMMITTED ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md))                        | Reservations of one product wait on its row lock, one short transaction each; none oversells and none retries                            |
-| A public reference, and an access token derived by HMAC for the rest ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md))             | The buyer keeps two things; a leak of `ORDER_TOKEN_KEY` would expose every token, and its rotation is not implemented                    |
-| Access tokens of 15 minutes, rotating refresh tokens with a 30 s grace ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md)) | An access token lives until it expires; tabs racing on one refresh token keep the seller signed in                                       |
-| Rate limits in Redis, logins closed while it is down ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md))                                           | A Redis outage refuses new logins; fixed windows let a burst of up to twice a limit through at their edge                                |
+| Decision                                                                                                                                                                      | Trade-off                                                                                                                                     |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| One `cp .env.example .env` before `docker compose up`                                                                                                                         | One extra command, so that secrets never have a default in a versioned file                                                                   |
+| One Python image for the API, the worker, migrate and seed                                                                                                                    | A slightly larger image per process, but migrations always ship with the code that uses them                                                  |
+| A deterministic parser first, an LLM only for its ambiguities ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))                                           | A phrasing the lexicon misses is rejected or costs a model call until it is added; clear orders never wait for, pay for or trust a model      |
+| Protocol ports with in-memory fakes, hand-written state machines ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md))                                 | The fakes hold rules the SQL adapters must match, so both are tested on the same scenarios; every rule is tested without Docker               |
+| One conditional `UPDATE` reserves the stock, in READ COMMITTED ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md))                                                | Reservations of one product wait on its row lock, one short transaction each; none oversells and none retries                                 |
+| A public reference, and an access token derived by HMAC for the rest ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md))                                     | The buyer keeps two things; a leak of `ORDER_TOKEN_KEY` would expose every token, and its rotation is not implemented                         |
+| Access tokens of 15 minutes, rotating refresh tokens with a 30 s grace ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md))                         | An access token lives until it expires; tabs racing on one refresh token keep the seller signed in                                            |
+| Rate limits in Redis, logins closed while it is down ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md))                                                                   | A Redis outage refuses new logins; fixed windows let a burst of up to twice a limit through at their edge                                     |
+| Redis Streams with backpressure on the backlog, and a leased PostgreSQL inbox ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md))                             | Delivery is at least once and the inbox makes it harmless; after a worker crashes, its comments wait about two minutes for a reclaim          |
+| SSE over a Redis stream per session, published after commit ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md))                                       | Best effort: an event lost to a Redis failure is caught up from the next snapshot, never retried                                              |
+| Claude only for the parser's ambiguities, in structured outputs, behind a budget and 4 slots per worker ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md)) | A comment past the budget or the slot wait is a missed sale rather than a late one; the model's answer is checked before it reserves anything |
+| Metrics on an internal port only ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md))                                                              | Nothing outside the container network can read them, nor anyone until a scraper runs beside the containers                                    |
 
 ## Out of scope
 

@@ -117,6 +117,20 @@ uv run --locked livecart-simulate --rate 2 --count 50 --exclude-codes B07,E15   
 
 `--exclude-codes` keeps products out of the comments, to buy them by hand meanwhile; `--seed` repeats a run; `--help` lists the rest, each option with the `SIMULATOR_*` variable it overrides (`.env.example`). From the host, the simulator reads `COMMENT_WEBHOOK_SECRET_SIMULATOR` and, for `--text`, `REDIS_URL` from `.env`. It refuses to run with `APP_ENV=production`, where it would open fake orders.
 
+## LLM fallback
+
+The worker asks Claude about the comments the parser leaves ambiguous only when `ANTHROPIC_API_KEY` is set in `.env` (and `LLM_ENABLED` is not `false`); without a key, the stack runs on the parser alone and those comments are rejected as `ambiguous_unresolved`. `.env.example` lists every setting: the model (`LLM_MODEL=claude-opus-5`) and its effort (`LLM_EFFORT=low`), the budget shared by the workers (`LLM_MAX_CALLS_PER_SESSION=200`, `LLM_DAILY_BUDGET_USD=1.00`, at the list prices of `LLM_PRICES`) and the slot wait (`LLM_SLOT_WAIT_S=7`). With a key, the worker refuses to start unless `MESSAGE_PROCESS_TIMEOUT_S` holds the slot wait, the call and the units after it (30 ≥ 18 + 5 + 7 by default). The simulator sends ambiguous comments too: `docker compose stop simulator` keeps it from spending the budget. [ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md) explains the decisions.
+
+Before any change of model, evaluate it on the corpus. The script calls the real API, from the host, with the key of `.env`; it never runs in CI, and without a key it says so and exits 0:
+
+```bash
+uv run --locked python scripts/llm_eval.py                               # LLM_MODEL, every ambiguous case
+uv run --locked python scripts/llm_eval.py --model claude-haiku-4-5 --limit 10
+uv run --locked python scripts/llm_eval.py --max-cost-usd 0.20           # stop asking once the run cost $0.20
+```
+
+It prints each case the model got wrong, the accuracy against the resolutions of the corpus, the outcomes, the tokens and the largest output (against `max_tokens`), the latency and the cost at list price. The tests never reach Anthropic: the adapter is tested against `httpx2.MockTransport`.
+
 ## Metrics
 
 The API and the worker each serve their Prometheus metrics on port 9100 of their container (`METRICS_PORT`), for a scraper on the compose network: the port is never published on the host and nginx never routes it. To read them by hand:
@@ -125,7 +139,7 @@ The API and the worker each serve their Prometheus metrics on port 9100 of their
 docker compose exec worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9100/metrics').read().decode())"
 ```
 
-The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations.
+The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations; with a key, the LLM fallback's outcomes (`livecart_llm_outcomes_total`) and its spend at list price (`livecart_llm_spend_usd_total`).
 
 ## Seller accounts
 
