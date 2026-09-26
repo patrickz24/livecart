@@ -5,6 +5,46 @@ export type ClientOptions = {
 };
 
 /**
+ * AccessTokenResponse
+ */
+export type AccessTokenResponse = {
+    /**
+     * Access Token
+     */
+    access_token: string;
+    /**
+     * Expires In
+     *
+     * Seconds until the access token expires.
+     */
+    expires_in: number;
+    /**
+     * Token Type
+     */
+    token_type?: 'bearer';
+};
+
+/**
+ * ErrorResponse
+ */
+export type ErrorResponse = {
+    /**
+     * Detail
+     */
+    detail: string;
+};
+
+/**
+ * HTTPValidationError
+ */
+export type HttpValidationError = {
+    /**
+     * Detail
+     */
+    detail?: Array<ValidationError>;
+};
+
+/**
  * HealthStatus
  */
 export type HealthStatus = {
@@ -12,6 +52,16 @@ export type HealthStatus = {
      * Status
      */
     status: 'ok';
+};
+
+/**
+ * LoginRequest
+ */
+export type LoginRequest = {
+    /**
+     * Email
+     */
+    email: string;
 };
 
 /**
@@ -29,6 +79,178 @@ export type ReadinessStatus = {
      */
     status: 'ready' | 'not_ready';
 };
+
+/**
+ * SellerProfile
+ */
+export type SellerProfile = {
+    /**
+     * Display Name
+     */
+    display_name: string;
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Id
+     */
+    id: string;
+    /**
+     * Slug
+     */
+    slug: string;
+};
+
+/**
+ * ValidationError
+ */
+export type ValidationError = {
+    /**
+     * Context
+     */
+    ctx?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Input
+     */
+    input?: unknown;
+    /**
+     * Location
+     */
+    loc: Array<string | number>;
+    /**
+     * Message
+     */
+    msg: string;
+    /**
+     * Error Type
+     */
+    type: string;
+};
+
+/**
+ * LoginRequest
+ */
+export type LoginRequestWritable = {
+    /**
+     * Email
+     */
+    email: string;
+    /**
+     * Password
+     */
+    password: string;
+};
+
+export type LoginData = {
+    body: LoginRequestWritable;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/login';
+};
+
+export type LoginErrors = {
+    /**
+     * Not authenticated, or the credentials were refused
+     */
+    401: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+};
+
+export type LoginError = LoginErrors[keyof LoginErrors];
+
+export type LoginResponses = {
+    /**
+     * Successful Response
+     */
+    200: AccessTokenResponse;
+};
+
+export type LoginResponse = LoginResponses[keyof LoginResponses];
+
+export type LogoutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/logout';
+};
+
+export type LogoutErrors = {
+    /**
+     * The Origin header is missing or names another origin
+     */
+    403: ErrorResponse;
+};
+
+export type LogoutError = LogoutErrors[keyof LogoutErrors];
+
+export type LogoutResponses = {
+    /**
+     * Successful Response
+     */
+    204: void;
+};
+
+export type LogoutResponse = LogoutResponses[keyof LogoutResponses];
+
+export type GetCurrentSellerData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/me';
+};
+
+export type GetCurrentSellerErrors = {
+    /**
+     * Not authenticated, or the credentials were refused
+     */
+    401: ErrorResponse;
+};
+
+export type GetCurrentSellerError = GetCurrentSellerErrors[keyof GetCurrentSellerErrors];
+
+export type GetCurrentSellerResponses = {
+    /**
+     * Successful Response
+     */
+    200: SellerProfile;
+};
+
+export type GetCurrentSellerResponse = GetCurrentSellerResponses[keyof GetCurrentSellerResponses];
+
+export type RefreshAccessTokenData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/refresh';
+};
+
+export type RefreshAccessTokenErrors = {
+    /**
+     * Not authenticated, or the credentials were refused
+     */
+    401: ErrorResponse;
+    /**
+     * The Origin header is missing or names another origin
+     */
+    403: ErrorResponse;
+};
+
+export type RefreshAccessTokenError = RefreshAccessTokenErrors[keyof RefreshAccessTokenErrors];
+
+export type RefreshAccessTokenResponses = {
+    /**
+     * Successful Response
+     */
+    200: AccessTokenResponse;
+};
+
+export type RefreshAccessTokenResponse = RefreshAccessTokenResponses[keyof RefreshAccessTokenResponses];
 
 export type GetHealthData = {
     body?: never;

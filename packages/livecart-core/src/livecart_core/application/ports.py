@@ -31,7 +31,7 @@ with its fake, in the same commit.
 
 from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta
-from typing import Final, Protocol
+from typing import Final, Literal, Protocol
 from uuid import UUID
 
 from livecart_core.application.dto import (
@@ -55,9 +55,11 @@ from livecart_core.application.dto import (
     ProductRecord,
     QueuedComment,
     QueueDelivery,
+    RefreshTokenRecord,
     RegisteredEvent,
     ReservationRequest,
     ReservationResult,
+    SellerRecord,
     SessionEvent,
     ShipmentRecord,
     ShipmentRef,
@@ -99,6 +101,14 @@ class StockConflict(PortError):
     """A restock that would bring a product's stock total below its reserved and sold units."""
 
 
+class SellerConflict(PortError):
+    """A new seller whose e-mail (whatever its case) or slug another seller has already."""
+
+    def __init__(self, field: Literal["email", "slug"]) -> None:
+        super().__init__(f"another seller has this {field}")
+        self.field: Literal["email", "slug"] = field
+
+
 # --- Time ------------------------------------------------------------------------------
 
 
@@ -107,6 +117,30 @@ class Clock(Protocol):
 
     def now(self) -> datetime:
         """A timezone-aware UTC datetime: every deadline and lease end is computed from it."""
+
+
+# --- Seller authentication -------------------------------------------------------------
+
+
+class PasswordHasher(Protocol):
+    """Hashes and checks seller passwords: argon2id, off the event loop, with bounded concurrency.
+
+    ``verify`` costs the same whatever its answer, and the same again for an
+    e-mail that names no seller: a login cannot tell a wrong password from an
+    unknown e-mail by its timing.
+    """
+
+    async def hash(self, password: str) -> str:
+        """A new salted hash of ``password``, to store."""
+
+    async def verify(self, password_hash: str | None, password: str) -> bool:
+        """Whether ``password`` matches ``password_hash``.
+
+        ``None`` stands for an account that does not exist: the password is
+        checked against a dummy hash of the same cost, and the answer is
+        ``False``. A stored value that is no hash at all (a locked account)
+        answers ``False`` after the same work.
+        """
 
 
 # --- Comment ingestion -----------------------------------------------------------------
@@ -310,6 +344,61 @@ class CarrierProvider(Protocol):
 
 
 # --- Repositories ----------------------------------------------------------------------
+
+
+class SellerRepository(Protocol):
+    """Seller accounts, unique by e-mail whatever its case, and by slug."""
+
+    async def add(
+        self, *, email: str, slug: str, display_name: str, password_hash: str, now: datetime
+    ) -> SellerRecord:
+        """Create an account from values the domain checked (``livecart_core.domain.sellers``).
+
+        Raises ``SellerConflict`` when another seller has the e-mail, in any
+        case, or the slug.
+        """
+
+    async def get(self, seller_id: UUID) -> SellerRecord | None:
+        """The row, or ``None``."""
+
+    async def find_by_email(self, email: str) -> SellerRecord | None:
+        """The seller whose e-mail equals ``email`` ignoring case, or ``None``."""
+
+
+class RefreshTokenRepository(Protocol):
+    """The sellers' refresh tokens, stored as SHA-256 hashes, in one family per login.
+
+    A token is used once: rotating it marks it used and stores its successor,
+    in its family and with its expiry, as one unit that exactly one of several
+    concurrent rotations of the token wins. Revoking a family revokes every
+    token of it, the successor of a rotation committing meanwhile included.
+    """
+
+    async def issue(
+        self, seller_id: UUID, token_hash: bytes, *, now: datetime, expires_at: datetime
+    ) -> RefreshTokenRecord:
+        """Store the first token of a new family: a login.
+
+        Raises ``RecordNotFound`` when no seller has ``seller_id``.
+        """
+
+    async def rotate(
+        self, token_hash: bytes, successor_hash: bytes, *, now: datetime
+    ) -> RefreshTokenRecord | None:
+        """Use the token if it is active at ``now``, store its successor, and return the successor.
+
+        ``None``, having written nothing, when no token has the hash or when
+        it is used, revoked or expired.
+        """
+
+    async def find(self, token_hash: bytes) -> RefreshTokenRecord | None:
+        """The token with this hash, whatever its state, or ``None``."""
+
+    async def get(self, token_id: UUID) -> RefreshTokenRecord | None:
+        """The row, or ``None``."""
+
+    async def revoke_family(self, family_id: UUID, *, now: datetime) -> int:
+        """Revoke every token of the family not revoked yet; return how many this call revoked."""
 
 
 class CommentInbox(Protocol):

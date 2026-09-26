@@ -1,7 +1,8 @@
-"""Two backends behind the stock and reservation ports, for scenarios that must hold on both.
+"""Two backends behind the repository ports, for scenarios that must hold on both.
 
 ADR 0002 asks every SQL adapter to pass the scenarios of its in-memory fake.
-``tests/contract`` writes each scenario once, against ``ReservationBackend``,
+``tests/contract`` writes each scenario once, against ``ReservationBackend``
+(stock and reservations) or ``AuthBackend`` (sellers and refresh tokens),
 and runs it on ``InMemoryBackend`` (the fakes of ``fakes.py``) and on
 ``PostgresBackend`` (the SQL adapters on livecart_test). A backend gives the
 repositories under test, and seeds or reads the rows the scenarios need
@@ -18,7 +19,12 @@ from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import LiveSessionRecord, Platform, ProductRecord, StockLevel
-from livecart_core.application.ports import OrderReservations, ProductStockRepository
+from livecart_core.application.ports import (
+    OrderReservations,
+    ProductStockRepository,
+    RefreshTokenRepository,
+    SellerRepository,
+)
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import RejectionReason
@@ -28,6 +34,8 @@ from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
+from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
+from livecart_core.infrastructure.db.sellers import SqlSellerRepository
 from livecart_core.order_tokens import OrderTokens
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import FAKE_CLOCK_START, InMemoryDatabase
@@ -100,6 +108,20 @@ class ReservationBackend(Protocol):
     async def count(self, table: CountedTable) -> int: ...
 
 
+class AuthBackend(Protocol):
+    """The seller and refresh token repositories under test; they seed their own rows."""
+
+    @property
+    def sellers(self) -> SellerRepository: ...
+
+    @property
+    def refresh_tokens(self) -> RefreshTokenRepository: ...
+
+
+class Backend(ReservationBackend, AuthBackend, Protocol):
+    """Every repository under test, on one database."""
+
+
 class InMemoryBackend:
     """The fakes of ``fakes.py``, all over one ``InMemoryDatabase``."""
 
@@ -113,6 +135,14 @@ class InMemoryBackend:
     @property
     def orders(self) -> OrderReservations:
         return self.database.orders
+
+    @property
+    def sellers(self) -> SellerRepository:
+        return self.database.sellers
+
+    @property
+    def refresh_tokens(self) -> RefreshTokenRepository:
+        return self.database.refresh_tokens
 
     async def add_live_session(
         self,
@@ -205,6 +235,8 @@ class PostgresBackend:
             access_token_hash=ORDER_TOKENS.stored_hash,
             random_source=random_source,
         )
+        self._sellers = SqlSellerRepository(app_engine)
+        self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
 
     @property
     def products(self) -> ProductStockRepository:
@@ -213,6 +245,14 @@ class PostgresBackend:
     @property
     def orders(self) -> SqlOrderRepository:
         return self._orders
+
+    @property
+    def sellers(self) -> SellerRepository:
+        return self._sellers
+
+    @property
+    def refresh_tokens(self) -> RefreshTokenRepository:
+        return self._refresh_tokens
 
     async def add_seller(self) -> UUID:
         seller_id = new_id()
@@ -383,4 +423,4 @@ class PostgresBackend:
 class BackendFactory(Protocol):
     """Builds a backend whose SQL adapter draws order references from ``random_source``."""
 
-    def __call__(self, *, random_source: RandomSource = secrets) -> ReservationBackend: ...
+    def __call__(self, *, random_source: RandomSource = secrets) -> Backend: ...

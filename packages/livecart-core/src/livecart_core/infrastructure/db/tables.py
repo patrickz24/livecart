@@ -57,6 +57,12 @@ from livecart_core.domain.reference import (
     REFERENCE_PREFIX,
     REFERENCE_SYMBOLS,
 )
+from livecart_core.domain.sellers import (
+    MAX_DISPLAY_NAME_LENGTH,
+    MAX_EMAIL_LENGTH,
+    MAX_SLUG_LENGTH,
+    SLUG_PATTERN,
+)
 from livecart_core.domain.state_machines import (
     CommentStatus,
     LiveSessionStatus,
@@ -160,9 +166,9 @@ sellers: Final = sa.Table(
     metadata,
     _id(),
     # 254: the longest address SMTP delivers (RFC 5321 path limit).
-    sa.Column("email", sa.String(254), nullable=False),
-    sa.Column("slug", sa.String(64), nullable=False),
-    sa.Column("display_name", sa.String(100), nullable=False),
+    sa.Column("email", sa.String(MAX_EMAIL_LENGTH), nullable=False),
+    sa.Column("slug", sa.String(MAX_SLUG_LENGTH), nullable=False),
+    sa.Column("display_name", sa.String(MAX_DISPLAY_NAME_LENGTH), nullable=False),
     # An argon2id PHC string, about 100 characters with the default parameters.
     sa.Column("password_hash", sa.String(255), nullable=False),
     _created_at(),
@@ -170,7 +176,7 @@ sellers: Final = sa.Table(
     sa.UniqueConstraint("slug", name="uq_sellers_slug"),
     # The storefront URL segment: lower-case words joined by single hyphens.
     sa.CheckConstraint(
-        sa.column("slug", sa.String).regexp_match("^[a-z0-9]+(-[a-z0-9]+)*$"),
+        sa.column("slug", sa.String).regexp_match(f"^{SLUG_PATTERN.pattern}$"),
         name="ck_sellers_slug",
     ),
 )

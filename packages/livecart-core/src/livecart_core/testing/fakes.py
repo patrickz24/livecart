@@ -51,9 +51,11 @@ from livecart_core.application.dto import (
     PurchaseIntentRecord,
     QueuedComment,
     QueueDelivery,
+    RefreshTokenRecord,
     RegisteredEvent,
     ReservationRequest,
     ReservationResult,
+    SellerRecord,
     SessionEvent,
     SessionEventType,
     ShipmentRecord,
@@ -69,6 +71,7 @@ from livecart_core.application.ports import (
     Clock,
     InvalidSignature,
     RecordNotFound,
+    SellerConflict,
     ServiceUnavailable,
     StockConflict,
 )
@@ -165,6 +168,40 @@ class FakeClock:
             raise ValueError("advance() only moves forward; set() goes anywhere")
         self._now += step
         return self._now
+
+
+# --- Seller authentication -------------------------------------------------------------
+
+FAKE_HASH_PREFIX: Final = "fake-hash:"
+# What FakePasswordHasher checks the password of an unknown or locked account against.
+FAKE_DUMMY_HASH: Final = f"{FAKE_HASH_PREFIX}dummy"
+
+
+class FakePasswordHasher:
+    """Instant, deterministic and plainly fake hashes: ``fake-hash:`` then the password's SHA-256.
+
+    ``verified`` records the hash each ``verify`` checked, ``FAKE_DUMMY_HASH``
+    for an unknown account, so that a test can prove that an unknown e-mail
+    and a wrong password take the same path. A stored value without the
+    prefix stands for a locked account, as ``!`` does in the seeds.
+    """
+
+    def __init__(self) -> None:
+        self.verified: list[str] = []
+
+    @staticmethod
+    def hash_of(password: str) -> str:
+        return f"{FAKE_HASH_PREFIX}{hashlib.sha256(password.encode()).hexdigest()}"
+
+    async def hash(self, password: str) -> str:
+        return self.hash_of(password)
+
+    async def verify(self, password_hash: str | None, password: str) -> bool:
+        if password_hash is None or not password_hash.startswith(FAKE_HASH_PREFIX):
+            self.verified.append(FAKE_DUMMY_HASH)
+            return False
+        self.verified.append(password_hash)
+        return hmac.compare_digest(password_hash, self.hash_of(password))
 
 
 # --- Comment ingestion -----------------------------------------------------------------
@@ -503,6 +540,10 @@ class FakeCarrierProvider(_ScriptedFailures):
 class InMemoryTables:
     """The rows of every table, by id, in creation order."""
 
+    sellers: dict[UUID, SellerRecord] = field(default_factory=dict)
+    refresh_tokens: dict[UUID, RefreshTokenRecord] = field(default_factory=dict)
+    # refresh_tokens.token_hash, the unique column tokens are looked up by.
+    refresh_token_ids: dict[bytes, UUID] = field(default_factory=dict)
     comments: dict[UUID, InboxComment] = field(default_factory=dict)
     sessions: dict[UUID, LiveSessionRecord] = field(default_factory=dict)
     products: dict[UUID, ProductRecord] = field(default_factory=dict)
@@ -526,6 +567,8 @@ class InMemoryDatabase:
         self.random_source = random_source
         self.tables = InMemoryTables()
         self._last_id = 0
+        self.sellers = InMemorySellerRepository(self)
+        self.refresh_tokens = InMemoryRefreshTokenRepository(self)
         self.comments = InMemoryCommentInbox(self)
         self.live_sessions = InMemoryLiveSessionRepository(self)
         self.products = InMemoryProductStockRepository(self)
@@ -649,6 +692,110 @@ def _row[K, V](rows: Mapping[K, V], key: K, what: str) -> V:
     if row is None:
         raise RecordNotFound(f"no {what} {key}")
     return row
+
+
+class InMemorySellerRepository(_Repository):
+    async def add(
+        self, *, email: str, slug: str, display_name: str, password_hash: str, now: datetime
+    ) -> SellerRecord:
+        _require_aware(now)
+        # The order of the SQL checks does not matter: a scenario takes one field at a time.
+        if self._find(email) is not None:
+            raise SellerConflict("email")
+        if any(row.slug == slug for row in self._tables.sellers.values()):
+            raise SellerConflict("slug")
+        seller = SellerRecord(
+            id=self._db.new_id(),
+            email=email,
+            slug=slug,
+            display_name=display_name,
+            password_hash=password_hash,
+            created_at=now,
+        )
+        self._tables.sellers[seller.id] = seller
+        return seller
+
+    async def get(self, seller_id: UUID) -> SellerRecord | None:
+        return self._tables.sellers.get(seller_id)
+
+    async def find_by_email(self, email: str) -> SellerRecord | None:
+        return self._find(email)
+
+    def _find(self, email: str) -> SellerRecord | None:
+        # lower(), as the unique index uq_sellers_email: the e-mails are ASCII.
+        return next(
+            (row for row in self._tables.sellers.values() if row.email.lower() == email.lower()),
+            None,
+        )
+
+
+class InMemoryRefreshTokenRepository(_Repository):
+    async def issue(
+        self, seller_id: UUID, token_hash: bytes, *, now: datetime, expires_at: datetime
+    ) -> RefreshTokenRecord:
+        _require_aware(now)
+        _row(self._tables.sellers, seller_id, "seller")
+        return self._store(
+            RefreshTokenRecord(
+                id=self._db.new_id(),
+                seller_id=seller_id,
+                family_id=self._db.new_id(),
+                expires_at=_require_aware(expires_at),
+                created_at=now,
+            ),
+            token_hash,
+        )
+
+    async def rotate(
+        self, token_hash: bytes, successor_hash: bytes, *, now: datetime
+    ) -> RefreshTokenRecord | None:
+        _require_aware(now)
+        current = self._find(token_hash)
+        if current is None or not current.is_active(now):
+            return None
+        successor = self._store(
+            RefreshTokenRecord(
+                id=self._db.new_id(),
+                seller_id=current.seller_id,
+                family_id=current.family_id,
+                expires_at=current.expires_at,
+                created_at=now,
+            ),
+            successor_hash,
+        )
+        self._tables.refresh_tokens[current.id] = replace(
+            current, used_at=now, replaced_by_id=successor.id
+        )
+        return successor
+
+    async def find(self, token_hash: bytes) -> RefreshTokenRecord | None:
+        return self._find(token_hash)
+
+    async def get(self, token_id: UUID) -> RefreshTokenRecord | None:
+        return self._tables.refresh_tokens.get(token_id)
+
+    async def revoke_family(self, family_id: UUID, *, now: datetime) -> int:
+        _require_aware(now)
+        family = [
+            row
+            for row in self._tables.refresh_tokens.values()
+            if row.family_id == family_id and row.revoked_at is None
+        ]
+        for row in family:
+            self._tables.refresh_tokens[row.id] = replace(row, revoked_at=now)
+        return len(family)
+
+    def _find(self, token_hash: bytes) -> RefreshTokenRecord | None:
+        token_id = self._tables.refresh_token_ids.get(token_hash)
+        return None if token_id is None else self._tables.refresh_tokens[token_id]
+
+    def _store(self, record: RefreshTokenRecord, token_hash: bytes) -> RefreshTokenRecord:
+        # uq_refresh_tokens_token_hash; a 256-bit token never collides outside a test.
+        if token_hash in self._tables.refresh_token_ids:
+            raise ValueError("another refresh token has this hash")
+        self._tables.refresh_tokens[record.id] = record
+        self._tables.refresh_token_ids[token_hash] = record.id
+        return record
 
 
 class InMemoryCommentInbox(_Repository):

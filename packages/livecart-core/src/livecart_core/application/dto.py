@@ -80,6 +80,70 @@ class CarrierName(StrEnum):
     DHL = "dhl"
 
 
+# --- Sellers and their authentication --------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SellerRecord:
+    """A row of ``sellers``."""
+
+    id: UUID
+    email: str
+    slug: str
+    display_name: str
+    # An argon2id PHC string: not a secret, but no reason to reach a log line either.
+    password_hash: str = field(repr=False)
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshTokenRecord:
+    """A row of ``refresh_tokens``: one refresh token of a login's family, known by its hash only.
+
+    A token is active until it is used (rotated into ``replaced_by_id``),
+    revoked or past ``expires_at``. Every token of a family shares the
+    family's ``expires_at``, set at login.
+    """
+
+    id: UUID
+    seller_id: UUID
+    family_id: UUID
+    expires_at: datetime
+    created_at: datetime
+    used_at: datetime | None = None
+    revoked_at: datetime | None = None
+    replaced_by_id: UUID | None = None
+
+    def __post_init__(self) -> None:
+        if (self.used_at is None) != (self.replaced_by_id is None):
+            raise ValueError("a used token names its successor, and only a used token does")
+
+    def is_active(self, now: datetime) -> bool:
+        return self.used_at is None and self.revoked_at is None and self.expires_at > now
+
+
+@dataclass(frozen=True, slots=True)
+class IssuedRefreshToken:
+    """A refresh token as its seller receives it, once: only its SHA-256 is ever stored."""
+
+    # Out of the repr, so that it cannot reach a log line through one.
+    value: str = field(repr=False)
+    expires_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class SellerGrant:
+    """What a login or a refresh grants: an access token for the seller, and a new refresh token.
+
+    ``refresh_token`` is ``None`` for a refresh inside the reuse grace: the
+    request that rotated the token first already sent its successor, which the
+    browser shares between tabs, so this answer carries none.
+    """
+
+    seller_id: UUID
+    refresh_token: IssuedRefreshToken | None
+
+
 # --- Comment webhook and queue ---------------------------------------------------------
 
 

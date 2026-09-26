@@ -3,9 +3,10 @@
 The TypeScript client is generated from that file (``pnpm run gen-api``), and CI
 fails when the committed copy differs from what the code produces
 (``pnpm run check:openapi``). No server starts and nothing connects: the app is
-built around an export-only ``Settings`` instance and resources that probe
-nothing. The output is deterministic (sorted keys, two-space indent, LF line
-endings, trailing newline), so the same code always gives the same bytes.
+built around an export-only ``Settings`` instance and the real resources, whose
+engine and Redis client only connect on first use, which never comes. The
+output is deterministic (sorted keys, two-space indent, LF line endings,
+trailing newline), so the same code always gives the same bytes.
 
 Usage, from the repository root::
 
@@ -13,6 +14,7 @@ Usage, from the repository root::
 """
 
 import argparse
+import asyncio
 import json
 import sys
 from collections.abc import Sequence
@@ -23,7 +25,7 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 
 from livecart_api.app import create_app
-from livecart_api.resources import Resources
+from livecart_api.resources import build_resources
 from livecart_core.settings import AppEnv, LogLevel, Settings
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -53,13 +55,19 @@ def export_settings() -> Settings:
     )
 
 
-async def _nothing_to_close() -> None:
-    return None
+async def _export_schema() -> dict[str, Any]:
+    settings = export_settings()
+    resources = build_resources(settings)
+    try:
+        app: FastAPI = create_app(settings, resources)
+        return app.openapi()
+    finally:
+        await resources.aclose()
 
 
-def build_export_app() -> FastAPI:
-    """The real app factory, with no dependency to probe or close."""
-    return create_app(export_settings(), Resources(readiness_checks=(), aclose=_nothing_to_close))
+def export_schema() -> dict[str, Any]:
+    """The schema of the real app factory and composition, which serves no request."""
+    return asyncio.run(_export_schema())
 
 
 def render_schema(schema: dict[str, Any]) -> str:
@@ -77,7 +85,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     output: Path = args.output
 
-    output.write_text(render_schema(build_export_app().openapi()), encoding="utf-8", newline="\n")
+    output.write_text(render_schema(export_schema()), encoding="utf-8", newline="\n")
     sys.stderr.write(f"OpenAPI schema written to {output}\n")
     return 0
 

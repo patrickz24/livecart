@@ -20,6 +20,8 @@ from livecart_core.domain.reference import RandomSource
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
+    AuthBackend,
+    Backend,
     BackendFactory,
     InMemoryBackend,
     PostgresBackend,
@@ -112,7 +114,7 @@ def make_backend(request: pytest.FixtureRequest) -> BackendFactory:
     app_engine: AsyncEngine = request.getfixturevalue("app_engine")
     migrator_engine: AsyncEngine = request.getfixturevalue("migrator_engine")
 
-    def postgres(*, random_source: RandomSource = secrets) -> ReservationBackend:
+    def postgres(*, random_source: RandomSource = secrets) -> Backend:
         return PostgresBackend(app_engine, migrator_engine, random_source=random_source)
 
     return postgres
@@ -121,6 +123,12 @@ def make_backend(request: pytest.FixtureRequest) -> BackendFactory:
 @pytest.fixture
 def backend(make_backend: BackendFactory) -> ReservationBackend:
     """The backend of this run of a contract scenario, drawing references at random."""
+    return make_backend()
+
+
+@pytest.fixture
+def auth_backend(make_backend: BackendFactory) -> AuthBackend:
+    """The seller and refresh token repositories of this run of a contract scenario."""
     return make_backend()
 
 

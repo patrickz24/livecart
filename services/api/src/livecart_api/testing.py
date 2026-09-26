@@ -9,6 +9,7 @@ their types, from an installed module instead of receiving untyped fixtures.
 
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 
 import httpx2
 from fastapi import FastAPI
@@ -16,8 +17,13 @@ from pydantic import SecretStr
 
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, Resources
+from livecart_core.application.ports import Clock, PasswordHasher
 from livecart_core.settings import AppEnv, Settings
+from livecart_core.testing.fakes import FakeClock, FakePasswordHasher, InMemoryDatabase
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+
+# The origin of open_client's requests, as a browser would send it in Origin.
+TEST_ORIGIN = "http://test"
 
 
 class FakeProbe:
@@ -44,6 +50,11 @@ def make_settings(app_env: AppEnv = AppEnv.DEVELOPMENT) -> Settings:
     )
 
 
+def current_time_clock() -> FakeClock:
+    """A fake clock that starts now: PyJWT checks ``exp`` against the system clock."""
+    return FakeClock(datetime.now(UTC))
+
+
 async def _noop() -> None:
     return None
 
@@ -53,9 +64,20 @@ def make_app(
     *,
     app_env: AppEnv = AppEnv.DEVELOPMENT,
     timeout_s: float = 1.0,
+    database: InMemoryDatabase | None = None,
+    passwords: PasswordHasher | None = None,
+    clock: Clock | None = None,
 ) -> FastAPI:
-    """The app around ``checks``, with resources that hold nothing to close."""
-    resources = Resources(readiness_checks=checks, aclose=_noop)
+    """The app around ``checks`` and in-memory repositories, with nothing to close."""
+    database = database if database is not None else InMemoryDatabase()
+    resources = Resources(
+        readiness_checks=checks,
+        aclose=_noop,
+        sellers=database.sellers,
+        refresh_tokens=database.refresh_tokens,
+        passwords=passwords if passwords is not None else FakePasswordHasher(),
+        clock=clock if clock is not None else current_time_clock(),
+    )
     return create_app(make_settings(app_env), resources, readiness_timeout_s=timeout_s)
 
 
@@ -63,5 +85,5 @@ def make_app(
 async def open_client(app: FastAPI) -> AsyncIterator[httpx2.AsyncClient]:
     """An in-process HTTP client of ``app`` (the lifespan is tested separately)."""
     transport = httpx2.ASGITransport(app=app)
-    async with httpx2.AsyncClient(transport=transport, base_url="http://test") as client:
+    async with httpx2.AsyncClient(transport=transport, base_url=TEST_ORIGIN) as client:
         yield client

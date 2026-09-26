@@ -1,5 +1,5 @@
 from dataclasses import FrozenInstanceError, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -22,6 +22,7 @@ from livecart_core.application.dto import (
     InboxComment,
     IncomingComment,
     IntentSource,
+    IssuedRefreshToken,
     LlmProposal,
     OrderRecord,
     PaymentEvent,
@@ -31,9 +32,11 @@ from livecart_core.application.dto import (
     PurchaseIntentRecord,
     QueuedComment,
     QueueDelivery,
+    RefreshTokenRecord,
     RegisteredEvent,
     ReservationRequest,
     ReservationResult,
+    SellerRecord,
     SessionEvent,
     SessionEventType,
     ShippingAddress,
@@ -570,3 +573,49 @@ def test_the_access_token_stays_out_of_the_repr() -> None:
     assert "token-value-of-order-1" not in repr(notification)
     assert "LC-7K3F9Q" in repr(notification)
     assert notification.access_token == "token-value-of-order-1"
+
+
+# --- Sellers and refresh tokens --------------------------------------------------------
+
+
+def _refresh_token(
+    *, used_at: datetime | None = None, replaced_by_id: UUID | None = None
+) -> RefreshTokenRecord:
+    return RefreshTokenRecord(
+        id=ID,
+        seller_id=UUID(int=2),
+        family_id=UUID(int=3),
+        expires_at=FAKE_CLOCK_START + timedelta(days=30),
+        created_at=FAKE_CLOCK_START,
+        used_at=used_at,
+        replaced_by_id=replaced_by_id,
+    )
+
+
+def test_a_refresh_token_is_active_until_used_revoked_or_expired() -> None:
+    token = _refresh_token()
+    later = FAKE_CLOCK_START + timedelta(seconds=1)
+
+    assert token.is_active(FAKE_CLOCK_START)
+    assert not token.is_active(token.expires_at)
+    assert not replace(token, revoked_at=later).is_active(later)
+    assert not replace(token, used_at=later, replaced_by_id=UUID(int=4)).is_active(later)
+
+
+def test_a_used_refresh_token_and_only_a_used_one_names_its_successor() -> None:
+    with pytest.raises(ValueError, match="successor"):
+        _refresh_token(used_at=FAKE_CLOCK_START)
+    with pytest.raises(ValueError, match="successor"):
+        _refresh_token(replaced_by_id=UUID(int=4))
+
+
+def test_secrets_of_sellers_stay_out_of_the_repr() -> None:
+    seller = SellerRecord(
+        ID, "seller@example.test", "demo-seller", "Demo", "argon2-hash-value", FAKE_CLOCK_START
+    )
+    issued = IssuedRefreshToken("refresh-token-value", FAKE_CLOCK_START)
+
+    assert "argon2-hash-value" not in repr(seller)
+    assert "demo-seller" in repr(seller)
+    assert "refresh-token-value" not in repr(issued)
+    assert issued.value == "refresh-token-value"

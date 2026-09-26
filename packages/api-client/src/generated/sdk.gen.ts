@@ -2,7 +2,7 @@
 
 import type { Client, ClientMeta, Options as Options2, RequestResult, TDataShape } from './client';
 import { client } from './client.gen';
-import type { GetHealthData, GetHealthResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses } from './types.gen';
+import type { GetCurrentSellerData, GetCurrentSellerErrors, GetCurrentSellerResponses, GetHealthData, GetHealthResponses, GetReadinessData, GetReadinessErrors, GetReadinessResponses, LoginData, LoginErrors, LoginResponses, LogoutData, LogoutErrors, LogoutResponses, RefreshAccessTokenData, RefreshAccessTokenErrors, RefreshAccessTokenResponses } from './types.gen';
 
 export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends boolean = boolean, TResponse = unknown> = Options2<TData, ThrowOnError, TResponse> & {
     /**
@@ -17,6 +17,37 @@ export type Options<TData extends TDataShape = TDataShape, ThrowOnError extends 
      */
     meta?: keyof ClientMeta extends never ? Record<string, unknown> : ClientMeta;
 };
+
+/**
+ * Log in with an e-mail and a password
+ */
+export const login = <ThrowOnError extends boolean = false>(options: Options<LoginData, ThrowOnError>): RequestResult<LoginResponses, LoginErrors, ThrowOnError> => (options.client ?? client).post<LoginResponses, LoginErrors, ThrowOnError>({
+    url: '/api/v1/auth/login',
+    ...options,
+    headers: {
+        'Content-Type': 'application/json',
+        ...options.headers
+    }
+});
+
+/**
+ * Revoke the refresh cookie's session and clear the cookie
+ */
+export const logout = <ThrowOnError extends boolean = false>(options?: Options<LogoutData, ThrowOnError>): RequestResult<LogoutResponses, LogoutErrors, ThrowOnError> => (options?.client ?? client).post<LogoutResponses, LogoutErrors, ThrowOnError>({ url: '/api/v1/auth/logout', ...options });
+
+/**
+ * The profile of the seller the access token names
+ */
+export const getCurrentSeller = <ThrowOnError extends boolean = false>(options?: Options<GetCurrentSellerData, ThrowOnError>): RequestResult<GetCurrentSellerResponses, GetCurrentSellerErrors, ThrowOnError> => (options?.client ?? client).get<GetCurrentSellerResponses, GetCurrentSellerErrors, ThrowOnError>({
+    security: [{ scheme: 'bearer', type: 'http' }],
+    url: '/api/v1/auth/me',
+    ...options
+});
+
+/**
+ * Trade the refresh cookie for a new access token
+ */
+export const refreshAccessToken = <ThrowOnError extends boolean = false>(options?: Options<RefreshAccessTokenData, ThrowOnError>): RequestResult<RefreshAccessTokenResponses, RefreshAccessTokenErrors, ThrowOnError> => (options?.client ?? client).post<RefreshAccessTokenResponses, RefreshAccessTokenErrors, ThrowOnError>({ url: '/api/v1/auth/refresh', ...options });
 
 /**
  * Liveness probe

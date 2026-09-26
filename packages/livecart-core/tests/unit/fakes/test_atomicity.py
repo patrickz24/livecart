@@ -25,6 +25,8 @@ _SUSPENDING = (ast.Await, ast.AsyncFor, ast.AsyncWith)
 
 def test_every_repository_fake_is_found() -> None:
     assert {node.name for node in _REPOSITORIES} == {
+        "InMemorySellerRepository",
+        "InMemoryRefreshTokenRepository",
         "InMemoryCommentInbox",
         "InMemoryLiveSessionRepository",
         "InMemoryProductStockRepository",

@@ -59,11 +59,18 @@ def test_the_export_ignores_the_environment_and_the_env_file(
     assert exported.read_bytes() == baseline.read_bytes()
 
 
-def test_the_exported_schema_holds_the_probes_only(tmp_path: Path) -> None:
+def test_the_exported_schema_holds_the_probes_and_the_seller_auth(tmp_path: Path) -> None:
     output = tmp_path / "openapi.json"
     load_script().main(["--output", str(output)])
 
     schema = json.loads(output.read_text(encoding="utf-8"))
 
-    assert set(schema["paths"]) == {"/health", "/ready"}
+    assert set(schema["paths"]) == {
+        "/health",
+        "/ready",
+        "/api/v1/auth/login",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+        "/api/v1/auth/me",
+    }
     assert schema["info"]["title"] == "LiveCart API"

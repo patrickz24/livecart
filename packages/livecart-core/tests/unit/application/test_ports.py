@@ -16,12 +16,16 @@ from livecart_core.application.ports import (
     LiveSessionRepository,
     NullIntentFallback,
     OrderRepository,
+    PasswordHasher,
     PaymentProvider,
     PaymentRepository,
     PlatformAdapter,
     PortError,
     ProductStockRepository,
     RecordNotFound,
+    RefreshTokenRepository,
+    SellerConflict,
+    SellerRepository,
     ServiceUnavailable,
     ShipmentRepository,
     StockConflict,
@@ -37,6 +41,7 @@ from livecart_core.testing.fakes import (
     FakeCommentQueue,
     FakeEventPublisher,
     FakeIntentFallback,
+    FakePasswordHasher,
     FakePaymentProvider,
     FakePlatformAdapter,
     InMemoryDatabase,
@@ -57,6 +62,9 @@ def test_every_fake_satisfies_its_port() -> None:
     notifiers: list[BuyerNotifier] = [FakeBuyerNotifier()]
     payment_providers: list[PaymentProvider] = [FakePaymentProvider()]
     carriers: list[CarrierProvider] = [FakeCarrierProvider(clock)]
+    password_hashers: list[PasswordHasher] = [FakePasswordHasher()]
+    sellers: list[SellerRepository] = [database.sellers]
+    refresh_tokens: list[RefreshTokenRepository] = [database.refresh_tokens]
     inboxes: list[CommentInbox] = [database.comments]
     sessions: list[LiveSessionRepository] = [database.live_sessions]
     products: list[ProductStockRepository] = [database.products]
@@ -74,6 +82,9 @@ def test_every_fake_satisfies_its_port() -> None:
         notifiers,
         payment_providers,
         carriers,
+        password_hashers,
+        sellers,
+        refresh_tokens,
         inboxes,
         sessions,
         products,
@@ -102,10 +113,17 @@ async def test_the_null_fallback_leaves_every_ambiguity_unresolved() -> None:
 
 
 @pytest.mark.parametrize(
-    "error", [RecordNotFound, ServiceUnavailable, InvalidSignature, StockConflict]
+    "error", [RecordNotFound, ServiceUnavailable, InvalidSignature, StockConflict, SellerConflict]
 )
 def test_every_port_error_belongs_to_one_family(error: type[PortError]) -> None:
     assert issubclass(error, PortError)
+
+
+def test_a_seller_conflict_names_the_taken_field() -> None:
+    conflict = SellerConflict("slug")
+
+    assert conflict.field == "slug"
+    assert str(conflict) == "another seller has this slug"
 
 
 def test_a_missing_record_is_also_a_lookup_error() -> None:
