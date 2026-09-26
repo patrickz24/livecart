@@ -13,8 +13,10 @@ The pools follow the plan's connection budget (97 connections available):
 
 - the API holds 5 connections plus 10 on overflow;
 - the worker holds one connection per comment handler (``WORKER_CONCURRENCY``,
-  16) and one per background loop that uses the database (4), so 20, plus 2
-  on overflow: 22 at most.
+  16) and one per background loop that uses the database (4: the reclaim and
+  dead-letter loop, the expiry sweep, and from milestones 5 and 6 the payment
+  registry and the shipments), so 20, plus 2 on overflow: 22 at most, which
+  ``WORKER_DB_MAX_CONNECTIONS`` caps at startup (``worker_pool``).
 
 That is 37 connections for one API and one worker, 81 with three workers.
 """
@@ -52,8 +54,22 @@ class PoolSize:
         return self.size + self.max_overflow
 
 
+# The worker's background loops that use the database, each sequential and on
+# one connection at a time, and the overflow above them.
+WORKER_DB_LOOPS: Final = 4
+WORKER_POOL_OVERFLOW: Final = 2
+
+
+def worker_pool(concurrency: int) -> PoolSize:
+    """The worker's pool: a connection per comment handler and per database loop, plus overflow."""
+    if concurrency < 1:
+        raise ValueError(f"a worker runs at least one comment handler, not {concurrency}")
+    return PoolSize(size=concurrency + WORKER_DB_LOOPS, max_overflow=WORKER_POOL_OVERFLOW)
+
+
 API_POOL: Final = PoolSize(size=5, max_overflow=10)
-WORKER_POOL: Final = PoolSize(size=20, max_overflow=2)
+# With the default WORKER_CONCURRENCY of 16: 20 connections, 22 at most.
+WORKER_POOL: Final = worker_pool(16)
 
 
 def create_db_engine(

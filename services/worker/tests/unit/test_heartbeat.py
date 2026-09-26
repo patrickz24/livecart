@@ -13,10 +13,18 @@ FAST = 0.01
 
 
 def start(
-    ping: Callable[[], Awaitable[None]], path: Path, stop: asyncio.Event, **kwargs: float
+    ping: Callable[[], Awaitable[None]],
+    path: Path,
+    stop: asyncio.Event,
+    *,
+    interval_s: float = FAST,
+    ping_timeout_s: float = 0.5,
 ) -> asyncio.Task[None]:
-    options = {"interval_s": FAST, "ping_timeout_s": 0.5, **kwargs}
-    return asyncio.create_task(run_heartbeat(ping=ping, path=path, stop=stop, **options))
+    return asyncio.create_task(
+        run_heartbeat(
+            ping=ping, path=path, stop=stop, interval_s=interval_s, ping_timeout_s=ping_timeout_s
+        )
+    )
 
 
 async def test_a_successful_ping_touches_the_file(tmp_path: Path) -> None:
@@ -111,3 +119,25 @@ async def test_cancellation_also_removes_the_file(tmp_path: Path) -> None:
         await task
 
     assert not path.exists()
+
+
+async def test_a_stalled_loop_never_refreshes_the_file(tmp_path: Path) -> None:
+    path, stop = tmp_path / "worker.heartbeat", asyncio.Event()
+    seen: list[bool] = []
+
+    def progressing() -> bool:
+        # Called before each beat: no earlier beat may have touched the file.
+        seen.append(path.exists())
+        if len(seen) == 3:
+            stop.set()
+        return False
+
+    async def ping() -> None:
+        raise AssertionError("a stalled worker is not pinged: it is unhealthy already")
+
+    task = asyncio.create_task(
+        run_heartbeat(ping=ping, path=path, stop=stop, interval_s=FAST, progressing=progressing)
+    )
+    await asyncio.wait_for(task, timeout=2)
+
+    assert seen == [False, False, False]

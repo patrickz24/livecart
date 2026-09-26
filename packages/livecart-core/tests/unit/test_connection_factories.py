@@ -1,7 +1,13 @@
+import pytest
 from pydantic import SecretStr
 from sqlalchemy.pool import AsyncAdaptedQueuePool
 
-from livecart_core.infrastructure.db.engine import API_POOL, WORKER_POOL, create_db_engine
+from livecart_core.infrastructure.db.engine import (
+    API_POOL,
+    WORKER_POOL,
+    create_db_engine,
+    worker_pool,
+)
 from livecart_core.infrastructure.redis_client import create_redis_client
 
 
@@ -42,3 +48,14 @@ def test_the_pools_fit_the_connection_budget_with_three_workers() -> None:
     assert API_POOL.max_connections + WORKER_POOL.max_connections == 37
     assert API_POOL.max_connections + 3 * WORKER_POOL.max_connections == 81
     assert API_POOL.max_connections + 3 * WORKER_POOL.max_connections <= AVAILABLE_CONNECTIONS
+
+
+def test_the_worker_pool_holds_a_connection_per_handler_and_per_loop() -> None:
+    assert worker_pool(16) == WORKER_POOL
+    assert (WORKER_POOL.size, WORKER_POOL.max_overflow) == (20, 2)
+    assert worker_pool(1).max_connections == 7
+
+
+def test_a_worker_runs_at_least_one_handler() -> None:
+    with pytest.raises(ValueError, match="at least one"):
+        worker_pool(0)

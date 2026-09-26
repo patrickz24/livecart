@@ -1,26 +1,49 @@
 """Composition root of the worker process, started as ``livecart-worker``.
 
-The worker's background loops run in one TaskGroup; the heartbeat is the only
-one so far. SIGTERM (``docker stop``) and SIGINT (Ctrl+C) set a stop event that
-every loop watches, so the process finishes its current step, releases its
-connections and exits with status 0.
+``serve`` builds the adapters once per process (one engine, whose pool fits
+``WORKER_DB_MAX_CONNECTIONS``, one Redis client) and the use cases over them,
+then runs the worker's loops in one TaskGroup:
+
+- the comment consumer (``consumer.CommentConsumer`` over ``ProcessComment``);
+- the heartbeat, which also checks that the consumer keeps going round.
+
+SIGTERM (``docker stop``) and SIGINT (Ctrl+C) set a stop event that every
+loop watches: the consumer stops reading, lets its handlers finish (each by
+its deadline), and the process releases its connections and exits with
+status 0. A delivery cut short is only left pending, never lost.
 """
 
 import asyncio
 import signal
 from collections.abc import Callable
 from functools import partial
+from typing import Final
 
 import structlog
 
+from livecart_core.application.ports import Clock
+from livecart_core.application.process_comment import ProcessComment
+from livecart_core.infrastructure.clock import SystemClock
+from livecart_core.infrastructure.comment_queue import RedisCommentQueue
+from livecart_core.infrastructure.db.comments import SqlCommentInbox
+from livecart_core.infrastructure.db.engine import create_db_engine
+from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
+from livecart_core.infrastructure.db.orders import SqlOrderRepository
+from livecart_core.infrastructure.events import NullEventPublisher
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.logging import configure_logging
+from livecart_core.order_tokens import OrderTokens
 from livecart_core.settings import Settings
+from livecart_worker.consumer import CommentConsumer, default_consumer_name
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
 
 logger = structlog.get_logger(__name__)
 
 STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT)
+APPLICATION_NAME: Final = "livecart-worker"
+# How long the consumer may go without a round of its loop before the
+# heartbeat stops beating: it goes round at least every RECEIVE_BLOCK_S (2 s).
+CONSUMER_STALL_S: Final = 30.0
 
 
 def install_stop_handlers(
@@ -55,20 +78,60 @@ async def serve(
     stop: asyncio.Event,
     *,
     heartbeat_interval_s: float = HEARTBEAT_INTERVAL_S,
+    clock: Clock | None = None,
+    consumer_name: str | None = None,
 ) -> None:
-    """Run every worker loop until ``stop`` is set."""
+    """Run every worker loop until ``stop`` is set.
+
+    ``clock`` and ``consumer_name`` default to the system clock and to
+    ``<host>-<pid>``; the tests fix them.
+    """
+    clock = clock if clock is not None else SystemClock()
     redis = create_redis_client(settings.redis_url)
+    engine = create_db_engine(
+        settings.database_url,
+        application_name=APPLICATION_NAME,
+        pool_size=settings.worker_pool.size,
+        max_overflow=settings.worker_pool.max_overflow,
+    )
     try:
+        queue = RedisCommentQueue(redis, prefix=settings.redis_key_prefix)
+        process = ProcessComment(
+            inbox=SqlCommentInbox(engine),
+            sessions=SqlLiveSessionRepository(engine),
+            orders=SqlOrderRepository(
+                engine,
+                currency=settings.default_currency,
+                access_token_hash=OrderTokens(settings.order_token_key).stored_hash,
+            ),
+            queue=queue,
+            events=NullEventPublisher(),
+            clock=clock,
+            lease=settings.message_process_timeout,
+            reservation_ttl=settings.reservation_ttl,
+            max_quantity=settings.max_quantity_per_comment,
+        )
+        consumer = CommentConsumer(
+            queue,
+            process,
+            name=consumer_name if consumer_name is not None else default_consumer_name(),
+            batch=settings.worker_batch,
+            concurrency=settings.worker_concurrency,
+            deadline_s=settings.message_process_timeout_s,
+        )
         async with asyncio.TaskGroup() as loops:
+            loops.create_task(consumer.run(stop))
             loops.create_task(
                 run_heartbeat(
                     ping=partial(ping_redis, redis),
                     path=settings.worker_heartbeat_file,
                     stop=stop,
                     interval_s=heartbeat_interval_s,
+                    progressing=partial(consumer.progressed_within, CONSUMER_STALL_S),
                 )
             )
     finally:
+        await engine.dispose()
         await redis.aclose()
 
 

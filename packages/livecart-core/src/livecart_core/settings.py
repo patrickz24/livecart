@@ -20,6 +20,12 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from livecart_core.application.dto import Platform
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
+from livecart_core.infrastructure.db.engine import (
+    WORKER_DB_LOOPS,
+    WORKER_POOL_OVERFLOW,
+    PoolSize,
+    worker_pool,
+)
 from livecart_core.order_tokens import MIN_KEY_BYTES
 
 # Marker of the development placeholders shipped in .env.example.
@@ -72,6 +78,15 @@ QUEUE_MEMORY_SHARE: Final = Fraction(1, 2)
 COMMENT_WEBHOOK_SECRETS: Final = {
     platform: f"comment_webhook_secret_{platform.value}" for platform in Platform
 }
+# The bounds of the worker's settings. A message deadline shorter than a few
+# seconds would cut units that wait on a lock (lock_timeout is 2 s); a longer
+# one than five minutes would hold a comment, and its buyer, for as long.
+MAX_WORKER_CONCURRENCY: Final = 64
+MAX_WORKER_BATCH: Final = 256
+MIN_MESSAGE_PROCESS_TIMEOUT_S: Final = 5
+MAX_MESSAGE_PROCESS_TIMEOUT_S: Final = 300
+# PostgreSQL's 100 connections, less the 3 it keeps for superusers.
+MAX_DB_CONNECTIONS: Final = 97
 
 
 class AppEnv(StrEnum):
@@ -234,10 +249,32 @@ class Settings(BaseAppSettings):
     # Redis's maxmemory (256 MiB in compose, which passes the same value to
     # both): startup checks that a full queue fits in half of it.
     redis_maxmemory_bytes: int = 256 * 1024 * 1024
+    # The worker's comment handlers that run at once, each on a pooled
+    # connection of its own (Semaphore(WORKER_CONCURRENCY)).
+    worker_concurrency: int = 16
+    # The deliveries a worker holds at most, read and not finished yet: the
+    # COUNT of its XREADGROUP.
+    worker_batch: int = 32
+    # The deadline of one delivery, from when its handler starts, and the
+    # length of the comment's lease, which therefore outlives the handler.
+    message_process_timeout_s: int = 30
+    # The connections the worker's pool may open at most: startup refuses a
+    # WORKER_CONCURRENCY whose pool (livecart_core.infrastructure.db.engine)
+    # would open more.
+    worker_db_max_connections: int = 22
 
     @property
     def reservation_ttl(self) -> timedelta:
         return timedelta(seconds=self.reservation_ttl_seconds)
+
+    @property
+    def message_process_timeout(self) -> timedelta:
+        return timedelta(seconds=self.message_process_timeout_s)
+
+    @property
+    def worker_pool(self) -> PoolSize:
+        """The worker's pool: a connection per comment handler and per database loop."""
+        return worker_pool(self.worker_concurrency)
 
     def comment_webhook_secret(self, platform: Platform) -> SecretStr | None:
         """``COMMENT_WEBHOOK_SECRET_<PLATFORM>``, or ``None`` when it is not set."""
@@ -317,6 +354,55 @@ class Settings(BaseAppSettings):
                 "QUEUE_MAX_DEPTH x QUEUE_MAX_ENVELOPE_BYTES x 1.25 (the allocator's rounding) "
                 f"is {self.queue_memory_bytes} bytes: it must stay within half of "
                 f"REDIS_MAXMEMORY_BYTES, {budget} bytes"
+            )
+        return self
+
+    @field_validator("worker_concurrency")
+    @classmethod
+    def _check_worker_concurrency(cls, value: int) -> int:
+        if not 1 <= value <= MAX_WORKER_CONCURRENCY:
+            raise ValueError(f"must be from 1 to {MAX_WORKER_CONCURRENCY} handlers")
+        return value
+
+    @field_validator("worker_batch")
+    @classmethod
+    def _check_worker_batch(cls, value: int) -> int:
+        if not 1 <= value <= MAX_WORKER_BATCH:
+            raise ValueError(f"must be from 1 to {MAX_WORKER_BATCH} deliveries")
+        return value
+
+    @field_validator("message_process_timeout_s")
+    @classmethod
+    def _check_message_process_timeout_s(cls, value: int) -> int:
+        if not MIN_MESSAGE_PROCESS_TIMEOUT_S <= value <= MAX_MESSAGE_PROCESS_TIMEOUT_S:
+            raise ValueError(
+                f"must be from {MIN_MESSAGE_PROCESS_TIMEOUT_S} to "
+                f"{MAX_MESSAGE_PROCESS_TIMEOUT_S} seconds"
+            )
+        return value
+
+    @field_validator("worker_db_max_connections")
+    @classmethod
+    def _check_worker_db_max_connections(cls, value: int) -> int:
+        if not 1 <= value <= MAX_DB_CONNECTIONS:
+            raise ValueError(f"must be from 1 to {MAX_DB_CONNECTIONS} connections")
+        return value
+
+    @model_validator(mode="after")
+    def _the_worker_pool_fits_its_cap(self) -> Self:
+        """WORKER_CONCURRENCY + 4 loops + 2 on overflow within WORKER_DB_MAX_CONNECTIONS.
+
+        The cap is the worker's share of PostgreSQL's connections: a
+        concurrency raised alone would let three workers and the API open
+        more than the server accepts, and the last to connect would fail.
+        """
+        needed = self.worker_pool.max_connections
+        if needed > self.worker_db_max_connections:
+            raise ValueError(
+                f"WORKER_CONCURRENCY={self.worker_concurrency} needs a pool of {needed} "
+                f"connections (a handler each, {WORKER_DB_LOOPS} loops, "
+                f"{WORKER_POOL_OVERFLOW} on overflow), above "
+                f"WORKER_DB_MAX_CONNECTIONS={self.worker_db_max_connections}"
             )
         return self
 

@@ -19,6 +19,7 @@ from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 
 APP_URL = "postgresql+asyncpg://livecart_app:{password}@localhost:55432/livecart"
 REDIS_URL = "redis://:{password}@localhost:56379/0"
+WORKER_SETTINGS = ("WORKER_CONCURRENCY", "WORKER_BATCH", "MESSAGE_PROCESS_TIMEOUT_S")
 # Signing keys that pass every check, in production too.
 KEYS = {
     "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
@@ -43,6 +44,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     http = ("ALLOWED_HOSTS", "HSTS_ENABLED")
     webhooks = ("ENABLED_PLATFORMS", *(name.upper() for name in COMMENT_WEBHOOK_SECRETS.values()))
     webhooks += ("QUEUE_MAX_DEPTH", "QUEUE_MAX_ENVELOPE_BYTES", "REDIS_MAXMEMORY_BYTES")
+    worker = (*WORKER_SETTINGS, "WORKER_DB_MAX_CONNECTIONS")
     for name in (
         *names,
         *extra,
@@ -50,6 +52,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
         *limits,
         *http,
         *webhooks,
+        *worker,
         "DEFAULT_CURRENCY",
         "REDIS_KEY_PREFIX",
     ):
@@ -515,6 +518,48 @@ def test_a_full_queue_must_fit_in_half_of_redis() -> None:
         QUEUE_MAX_DEPTH="40000", REDIS_MAXMEMORY_BYTES=str(512 * 1024 * 1024), **dev_env()
     )
     assert deeper.queue_max_depth == 40_000
+
+
+def test_the_worker_runs_16_handlers_on_a_pool_of_22_connections_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert (settings.worker_concurrency, settings.worker_batch) == (16, 32)
+    assert settings.message_process_timeout == timedelta(seconds=30)
+    assert settings.worker_db_max_connections == 22
+    assert (settings.worker_pool.size, settings.worker_pool.max_overflow) == (20, 2)
+
+
+@pytest.mark.parametrize(
+    ("name", "refused", "message"),
+    [
+        ("WORKER_CONCURRENCY", "0", "from 1 to 64 handlers"),
+        ("WORKER_CONCURRENCY", "65", "from 1 to 64 handlers"),
+        ("WORKER_BATCH", "0", "from 1 to 256 deliveries"),
+        ("WORKER_BATCH", "257", "from 1 to 256 deliveries"),
+        ("MESSAGE_PROCESS_TIMEOUT_S", "4", "from 5 to 300 seconds"),
+        ("MESSAGE_PROCESS_TIMEOUT_S", "301", "from 5 to 300 seconds"),
+        ("WORKER_DB_MAX_CONNECTIONS", "0", "from 1 to 97 connections"),
+        ("WORKER_DB_MAX_CONNECTIONS", "98", "from 1 to 97 connections"),
+    ],
+)
+def test_the_worker_settings_stay_within_their_bounds(
+    name: str, refused: str, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(**{name: refused}, **dev_env())
+
+
+def test_the_worker_pool_must_fit_its_connection_cap() -> None:
+    with pytest.raises(ValidationError, match="needs a pool of 23 connections"):
+        load(WORKER_CONCURRENCY="17", **dev_env())
+    with pytest.raises(ValidationError, match="above WORKER_DB_MAX_CONNECTIONS=21"):
+        load(WORKER_DB_MAX_CONNECTIONS="21", **dev_env())
+
+    wider = load(WORKER_CONCURRENCY="17", WORKER_DB_MAX_CONNECTIONS="23", **dev_env())
+    fewer = load(WORKER_CONCURRENCY="4", **dev_env())
+
+    assert wider.worker_pool.max_connections == 23
+    assert fewer.worker_pool.size == 8
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

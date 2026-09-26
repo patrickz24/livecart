@@ -1,4 +1,8 @@
-"""The worker loops against the compose Redis: a real PING refreshes the heartbeat."""
+"""The worker loops against the compose Redis: a real PING refreshes the heartbeat.
+
+The comment consumer runs too, and goes round on its empty stream, which is
+the progress the heartbeat also checks.
+"""
 
 import asyncio
 from pathlib import Path
@@ -15,12 +19,14 @@ pytestmark = pytest.mark.integration
 
 
 async def test_a_real_ping_keeps_the_heartbeat_fresh(
-    integration_settings: IntegrationSettings, tmp_path: Path
+    integration_settings: IntegrationSettings, redis_key_prefix: str, tmp_path: Path
 ) -> None:
     heartbeat = tmp_path / "worker.heartbeat"
     settings = Settings(
         database_url=integration_settings.database_url,
         redis_url=integration_settings.redis_url,
+        # The consumer reads a stream of this test alone, and finds it empty.
+        redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
         worker_heartbeat_file=heartbeat,

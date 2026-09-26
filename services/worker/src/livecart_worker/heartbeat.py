@@ -1,9 +1,12 @@
 """Liveness heartbeat of the worker.
 
 The loop pings Redis every ``interval_s``, and only a successful PING touches the
-heartbeat file. ``livecart-healthcheck heartbeat`` then reports the container
-unhealthy once the file is older than three intervals, whether Redis is out of
-reach or the event loop is stuck. The loop needs no database.
+heartbeat file, while the worker's other loops are progressing (``progressing``,
+the comment consumer going round at least every few seconds).
+``livecart-healthcheck heartbeat`` then reports the container unhealthy once the
+file is older than three intervals, whether Redis is out of reach, the event
+loop is stuck or the consumer hangs on a read that never returns. The loop
+needs no database.
 """
 
 import asyncio
@@ -48,12 +51,15 @@ async def run_heartbeat(
     stop: asyncio.Event,
     interval_s: float = HEARTBEAT_INTERVAL_S,
     ping_timeout_s: float = PING_TIMEOUT_S,
+    progressing: Callable[[], bool] = lambda: True,
 ) -> None:
     """Beat until ``stop`` is set, then remove the file so no stale beat survives."""
     logger.info("heartbeat_started", path=str(path), interval_s=interval_s)
     try:
         while not stop.is_set():
-            if await _ping_succeeds(ping, ping_timeout_s):
+            if not progressing():
+                logger.warning("heartbeat_loop_stalled")
+            elif await _ping_succeeds(ping, ping_timeout_s):
                 _touch(path)
             with contextlib.suppress(TimeoutError):
                 async with asyncio.timeout(interval_s):

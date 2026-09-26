@@ -220,7 +220,18 @@ services:
   worker:
     <<: *python-service
     command: ["livecart-worker"]
-    environment: *runtime-environment
+    environment:
+      <<: *runtime-environment
+      # Comment handlers, window and deadline (.env.example); the pool of
+      # WORKER_CONCURRENCY + 6 connections must fit WORKER_DB_MAX_CONNECTIONS.
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-16}
+      WORKER_BATCH: ${WORKER_BATCH:-32}
+      MESSAGE_PROCESS_TIMEOUT_S: ${MESSAGE_PROCESS_TIMEOUT_S:-30}
+      WORKER_DB_MAX_CONNECTIONS: ${WORKER_DB_MAX_CONNECTIONS:-22}
+    # On SIGTERM the worker stops reading and lets its handlers finish, each
+    # within MESSAGE_PROCESS_TIMEOUT_S (30 s): Docker's default 10 s would kill
+    # them midway, which only leaves their deliveries for a reclaim.
+    stop_grace_period: 40s
     healthcheck:
       # The heartbeat file in /tmp, touched every 10 s while Redis answers PING.
       test: ["CMD", "livecart-healthcheck", "heartbeat"]
