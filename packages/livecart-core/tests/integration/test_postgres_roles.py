@@ -8,6 +8,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.infrastructure.db.engine import create_db_engine
+from livecart_core.infrastructure.db.tables import metadata
 from livecart_core.migrate import execute, parse_args
 from livecart_core.testing.database import IntegrationSettings
 
@@ -127,6 +128,31 @@ def test_the_runtime_role_cannot_touch_the_migration_history(
             await engine.dispose()
 
     assert asyncio.run(sqlstates()) == [INSUFFICIENT_PRIVILEGE] * 3
+
+
+TABLE_PRIVILEGES = ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER")
+
+
+async def test_the_runtime_role_reads_and_writes_every_table_but_never_deletes(
+    database_schema: None, migrator_engine: AsyncEngine
+) -> None:
+    # The tables of the migrations inherit the default privileges of grants.sql.
+    async with migrator_engine.connect() as connection:
+        granted = {
+            table: {
+                privilege
+                for privilege in TABLE_PRIVILEGES
+                if (
+                    await connection.execute(
+                        text("SELECT has_table_privilege('livecart_app', :table, :privilege)"),
+                        {"table": f"public.{table}", "privilege": privilege},
+                    )
+                ).scalar_one()
+            }
+            for table in metadata.tables
+        }
+
+    assert granted == {table: {"SELECT", "INSERT", "UPDATE"} for table in metadata.tables}
 
 
 async def test_no_role_can_use_the_maintenance_databases(app_engine: AsyncEngine) -> None:

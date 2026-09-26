@@ -10,10 +10,13 @@ from pydantic import SecretStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from livecart_core.infrastructure.db.tables import metadata
 from livecart_core.migrate import execute, parse_args
 from livecart_core.testing.database import IntegrationSettings
 
 pytestmark = pytest.mark.integration
+
+HEAD = "0002"
 
 
 def migrate(url: SecretStr, *argv: str) -> None:
@@ -41,15 +44,57 @@ def recorded_versions(url: SecretStr) -> list[str] | None:
     return asyncio.run(fetch())
 
 
-def test_upgrade_then_downgrade_the_baseline(integration_settings: IntegrationSettings) -> None:
+def schema_tables(url: SecretStr) -> set[str]:
+    """The tables of the public schema, the migration history left aside."""
+
+    async def fetch() -> set[str]:
+        engine = create_async_engine(url.get_secret_value())
+        try:
+            async with engine.connect() as connection:
+                rows = await connection.execute(
+                    text(
+                        "SELECT tablename FROM pg_tables WHERE schemaname = 'public'"
+                        " AND tablename <> 'alembic_version'"
+                    )
+                )
+                return {row[0] for row in rows}
+        finally:
+            await engine.dispose()
+
+    return asyncio.run(fetch())
+
+
+def test_upgrade_downgrade_then_upgrade_again(integration_settings: IntegrationSettings) -> None:
     url = integration_settings.migrator_url
     migrate(url, "downgrade", "base")
 
     migrate(url, "upgrade", "head")
-    assert recorded_versions(url) == ["0001"]
+    assert recorded_versions(url) == [HEAD]
+    assert schema_tables(url) == set(metadata.tables)
 
     migrate(url, "downgrade", "base")
     assert recorded_versions(url) in (None, [])
+    assert schema_tables(url) == set()
 
     migrate(url, "upgrade", "head")
-    assert recorded_versions(url) == ["0001"]
+    assert recorded_versions(url) == [HEAD]
+    assert schema_tables(url) == set(metadata.tables)
+
+
+def test_each_revision_steps_up_and_down_on_its_own(
+    integration_settings: IntegrationSettings,
+) -> None:
+    url = integration_settings.migrator_url
+    migrate(url, "downgrade", "base")
+
+    migrate(url, "upgrade", "0001")
+    assert (recorded_versions(url), schema_tables(url)) == (["0001"], set())
+
+    migrate(url, "upgrade", "+1")
+    assert (recorded_versions(url), schema_tables(url)) == ([HEAD], set(metadata.tables))
+
+    migrate(url, "downgrade", "-1")
+    assert (recorded_versions(url), schema_tables(url)) == (["0001"], set())
+
+    migrate(url, "upgrade", "head")
+    assert recorded_versions(url) == [HEAD]

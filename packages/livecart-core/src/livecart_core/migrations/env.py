@@ -3,6 +3,10 @@
 The database URL comes from ``config.attributes["database_url"]`` (the
 ``MIGRATOR_URL`` setting), never from an ini file, so no credential sits in a
 configuration file. Migrations run as ``livecart_migrator``, the schema owner.
+
+``target_metadata`` is the schema of ``livecart_core.infrastructure.db.tables``,
+which ``alembic revision --autogenerate`` compares with the database to draft
+the next revision. The revisions themselves never import it.
 """
 
 import asyncio
@@ -12,10 +16,11 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from livecart_core.infrastructure.db.tables import metadata
+
 config = context.config
 
-# No table is declared yet: the baseline revision is empty.
-target_metadata = None
+target_metadata = metadata
 
 
 def _database_url() -> str:

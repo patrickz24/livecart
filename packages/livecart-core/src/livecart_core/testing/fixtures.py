@@ -5,7 +5,8 @@ the TEST_* variables. Only tests marked ``integration`` request them, so the
 unit suite never needs Docker. Every fixture goes through
 ``load_integration_settings``, which refuses a PostgreSQL database not named
 ``*_test`` and a Redis database other than 15; ``redis_key_prefix`` gives each
-test its own Redis keys.
+test its own Redis keys, and ``clean_database`` empty tables at the head
+revision.
 """
 
 from collections.abc import AsyncIterator
@@ -23,6 +24,7 @@ from livecart_core.testing.database import (
     load_integration_settings,
     unreachable_servers,
 )
+from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
 
 
@@ -70,6 +72,23 @@ async def migrator_engine(integration_settings: IntegrationSettings) -> AsyncIte
         yield engine
     finally:
         await engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def database_schema(integration_settings: IntegrationSettings) -> None:
+    """livecart_test at the head revision, migrated once per session.
+
+    Synchronous, because the Alembic environment runs its own event loop. A
+    migration test that goes down to base in the middle of the session goes
+    back up to head before it ends.
+    """
+    migrate_to_head(integration_settings.migrator_url)
+
+
+@pytest.fixture
+async def clean_database(database_schema: None, migrator_engine: AsyncEngine) -> None:
+    """Every table of the schema, empty: earlier tests' rows are truncated as the migrator."""
+    await truncate_all(migrator_engine)
 
 
 @pytest.fixture
