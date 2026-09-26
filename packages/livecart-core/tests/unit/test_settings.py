@@ -4,8 +4,10 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
+from livecart_core.application.dto import Platform
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.settings import (
+    COMMENT_WEBHOOK_SECRETS,
     RATE_LIMITS,
     AppEnv,
     LogLevel,
@@ -39,7 +41,17 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
     keys = ("JWT_SECRET", "ORDER_TOKEN_KEY")
     limits = (*(name.upper() for name in RATE_LIMITS), "RATE_LIMIT_LOGIN_FAILURE_WINDOW_SECONDS")
     http = ("ALLOWED_HOSTS", "HSTS_ENABLED")
-    for name in (*names, *extra, *keys, *limits, *http, "DEFAULT_CURRENCY", "REDIS_KEY_PREFIX"):
+    webhooks = ("ENABLED_PLATFORMS", *(name.upper() for name in COMMENT_WEBHOOK_SECRETS.values()))
+    for name in (
+        *names,
+        *extra,
+        *keys,
+        *limits,
+        *http,
+        *webhooks,
+        "DEFAULT_CURRENCY",
+        "REDIS_KEY_PREFIX",
+    ):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -390,6 +402,74 @@ def test_placeholder_signing_keys_are_rejected_in_production() -> None:
     assert "JWT_SECRET" in message
     assert "ORDER_TOKEN_KEY" in message
     assert "change-me-jwt" not in message
+
+
+WEBHOOK_SECRET = "simulator-webhook-" * 2
+WEBHOOK_SECRET_NAMES = [name.upper() for name in COMMENT_WEBHOOK_SECRETS.values()]
+
+
+def test_the_api_serves_the_simulator_webhook_only_by_default() -> None:
+    settings = load(**dev_env())
+
+    assert settings.enabled_platforms == (Platform.SIMULATOR,)
+    assert all(settings.comment_webhook_secret(platform) is None for platform in Platform)
+
+
+def test_enabled_platforms_are_listed_between_commas_each_once() -> None:
+    settings = load(ENABLED_PLATFORMS=" Simulator, tiktok,simulator,", **dev_env())
+
+    assert settings.enabled_platforms == (Platform.SIMULATOR, Platform.TIKTOK)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [("", "at least one platform"), (" , ", "at least one platform"), ("myspace", "enum")],
+)
+def test_enabled_platforms_refuse_an_empty_list_and_unknown_platforms(
+    value: str, message: str
+) -> None:
+    with pytest.raises(ValidationError, match=message) as excinfo:
+        load(ENABLED_PLATFORMS=value, **dev_env())
+
+    assert "enabled_platforms" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("platform", list(Platform))
+def test_each_platform_has_its_own_webhook_secret(platform: Platform) -> None:
+    settings = load(**{f"COMMENT_WEBHOOK_SECRET_{platform.upper()}": WEBHOOK_SECRET}, **dev_env())
+
+    secret = settings.comment_webhook_secret(platform)
+    assert secret is not None
+    assert secret.get_secret_value() == WEBHOOK_SECRET
+    assert WEBHOOK_SECRET not in repr(settings)
+    others = [other for other in Platform if other is not platform]
+    assert all(settings.comment_webhook_secret(other) is None for other in others)
+
+
+@pytest.mark.parametrize("name", WEBHOOK_SECRET_NAMES)
+def test_a_webhook_secret_needs_32_bytes(name: str) -> None:
+    short = "s3cr3t-" * 4 + "abc"  # 31 bytes
+
+    with pytest.raises(ValidationError, match="at least 32 bytes long") as excinfo:
+        load(**{**dev_env(), name: short})
+
+    assert name.lower() in str(excinfo.value)
+    assert short not in str(excinfo.value)
+
+
+def test_placeholder_webhook_secrets_are_rejected_in_production() -> None:
+    env = {
+        **dev_env(password="p4ss", redis_password="p4ss"),
+        "COMMENT_WEBHOOK_SECRET_SIMULATOR": "change-me-simulator-change-me-simulator",
+    }
+
+    assert load(**env)  # accepted in development
+    with pytest.raises(ValidationError) as excinfo:
+        load(APP_ENV="production", **env)
+
+    message = str(excinfo.value)
+    assert "COMMENT_WEBHOOK_SECRET_SIMULATOR" in message
+    assert "change-me-simulator" not in message
 
 
 MIGRATOR_URL = "postgresql+asyncpg://livecart_migrator:{password}@localhost:55432/livecart"

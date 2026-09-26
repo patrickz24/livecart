@@ -16,6 +16,7 @@ from typing import Annotated, Final, Self
 from pydantic import SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from livecart_core.application.dto import Platform
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.order_tokens import MIN_KEY_BYTES
@@ -45,6 +46,10 @@ RATE_LIMITS: Final = (
     "rate_limit_buyer_token_per_minute",
     "rate_limit_storefront_per_minute",
 )
+# One HMAC key per platform's comment webhook (livecart_core.signing).
+COMMENT_WEBHOOK_SECRETS: Final = {
+    platform: f"comment_webhook_secret_{platform.value}" for platform in Platform
+}
 
 
 class AppEnv(StrEnum):
@@ -179,10 +184,27 @@ class Settings(BaseAppSettings):
     # Strict-Transport-Security on every response, once the API is only reached
     # over HTTPS: browsers then refuse plain HTTP to it for a year.
     hsts_enabled: bool = False
+    # The platforms whose comment webhook the API serves, comma-separated in the
+    # environment. Only the simulator has a real adapter: the others are
+    # documented stubs, which stop the API at startup when listed
+    # (livecart_core.infrastructure.platforms).
+    enabled_platforms: Annotated[tuple[Platform, ...], NoDecode] = (Platform.SIMULATOR,)
+    # The HMAC key of each platform's comment webhook, 32 bytes at least. Optional
+    # here, since the worker never checks a webhook: the API refuses to start
+    # without the key of each platform it serves.
+    comment_webhook_secret_simulator: SecretStr | None = None
+    comment_webhook_secret_facebook: SecretStr | None = None
+    comment_webhook_secret_instagram: SecretStr | None = None
+    comment_webhook_secret_tiktok: SecretStr | None = None
 
     @property
     def reservation_ttl(self) -> timedelta:
         return timedelta(seconds=self.reservation_ttl_seconds)
+
+    def comment_webhook_secret(self, platform: Platform) -> SecretStr | None:
+        """``COMMENT_WEBHOOK_SECRET_<PLATFORM>``, or ``None`` when it is not set."""
+        secret: SecretStr | None = getattr(self, COMMENT_WEBHOOK_SECRETS[platform])
+        return secret
 
     @field_validator("database_url")
     @classmethod
@@ -206,11 +228,11 @@ class Settings(BaseAppSettings):
             )
         return value
 
-    @field_validator("jwt_secret", "order_token_key")
+    @field_validator("jwt_secret", "order_token_key", *COMMENT_WEBHOOK_SECRETS.values())
     @classmethod
-    def _check_key_length(cls, value: SecretStr) -> SecretStr:
+    def _check_key_length(cls, value: SecretStr | None) -> SecretStr | None:
         """An HMAC key shorter than its SHA-256 output weakens it; the length alone is reported."""
-        if len(value.get_secret_value().encode()) < MIN_KEY_BYTES:
+        if value is not None and len(value.get_secret_value().encode()) < MIN_KEY_BYTES:
             raise ValueError(f"must be at least {MIN_KEY_BYTES} bytes long")
         return value
 
@@ -278,6 +300,22 @@ class Settings(BaseAppSettings):
                     f"{host!r} is no host: a lower-case DNS name, possibly under *., "
                     "or an IP address"
                 )
+        return value
+
+    @field_validator("enabled_platforms", mode="before")
+    @classmethod
+    def _split_enabled_platforms(cls, value: object) -> object:
+        """``simulator, facebook`` from the environment: platforms between commas, each once."""
+        if isinstance(value, str):
+            names = (name.strip().lower() for name in value.split(","))
+            return tuple(dict.fromkeys(name for name in names if name))
+        return value
+
+    @field_validator("enabled_platforms")
+    @classmethod
+    def _check_enabled_platforms(cls, value: tuple[Platform, ...]) -> tuple[Platform, ...]:
+        if not value:
+            raise ValueError("must name at least one platform, such as simulator")
         return value
 
     @field_validator("rate_limit_login_failure_window_seconds")
