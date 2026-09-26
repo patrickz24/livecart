@@ -8,18 +8,12 @@ import pytest
 from livecart_core.application.dto import (
     IntentSource,
     ReservationRequest,
-    StockLevel,
 )
-from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import (
     RandomSource,
-)
-from livecart_core.domain.state_machines import (
-    OrderStatus,
-    TransitionOutcome,
 )
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import FAKE_CLOCK_START, InMemoryDatabase
@@ -91,39 +85,3 @@ async def test_the_sweep_needs_an_aware_time() -> None:
 
     with pytest.raises(ValueError, match="naive"):
         await database.orders.expire_due(now=NOW.replace(tzinfo=None), limit=1)
-
-
-async def test_a_payment_sells_the_reserved_units_once() -> None:
-    database, session_id, product_id = _database()
-    order_id = await _order_id(database, session_id, "comment-1")
-    paid_at = NOW + timedelta(minutes=3)
-
-    paid = await database.orders.record_payment(order_id, now=paid_at)
-    replayed = await database.orders.record_payment(order_id, now=paid_at + timedelta(minutes=1))
-
-    assert paid.outcome is TransitionOutcome.APPLIED
-    assert (paid.order.status, paid.order.paid_at) == (OrderStatus.PAID, paid_at)
-    assert replayed.outcome is TransitionOutcome.NOOP
-    assert replayed.order == paid.order
-    product = await database.products.get(product_id)
-    assert product is not None
-    assert product.stock == StockLevel(10, sold=1)
-
-
-async def test_a_payment_after_expiry_has_no_stock_effect() -> None:
-    database, session_id, product_id = _database()
-    order_id = await _order_id(database, session_id, "comment-1")
-    await database.orders.expire_due(now=NOW + 2 * TTL, limit=10)
-
-    late = await database.orders.record_payment(order_id, now=NOW + 3 * TTL)
-    replayed = await database.orders.record_payment(order_id, now=NOW + 4 * TTL)
-
-    assert late.outcome is TransitionOutcome.APPLIED
-    assert late.order.status is OrderStatus.PAID_AFTER_EXPIRY
-    assert late.order.paid_at == NOW + 3 * TTL
-    assert replayed.outcome is TransitionOutcome.NOOP
-    product = await database.products.get(product_id)
-    assert product is not None
-    assert product.stock == StockLevel(10)
-    with pytest.raises(RecordNotFound):
-        await database.orders.record_payment(UNKNOWN, now=NOW)

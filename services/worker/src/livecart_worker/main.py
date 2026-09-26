@@ -10,6 +10,9 @@ then runs the worker's loops in one TaskGroup:
   the stream;
 - the expiry sweep, every 5 s (``sweeps``): the reservations nobody paid in
   time expired, and their stock released;
+- the payment events loop, every 2 s (``payments``): the events the payment
+  webhook recorded in ``processed_webhook_events``, applied to their
+  attempts and orders;
 - the heartbeat, which also checks that the consumer keeps going round.
 
 ``ProcessComment`` asks Claude (``livecart_worker.llm.claude``) about the
@@ -19,7 +22,7 @@ Redis (``RedisLlmBudget``), then one of ``LLM_SLOTS`` (4) slots, waited for
 ``LLM_SLOT_WAIT_S`` at most. Otherwise ``NullIntentFallback`` leaves them
 unresolved, and the worker runs on the parser alone.
 
-The consumer and the sweep publish the session events of what they commit
+The consumer, the sweep and the payment events loop publish the session events of what they commit
 to each session's Redis stream (``RedisSessionEvents``), after the commit
 and best effort: a failure is logged, counted in the metrics, and never
 undoes the commit.
@@ -45,6 +48,10 @@ from typing import Final
 import structlog
 from anthropic import AsyncAnthropic
 
+from livecart_core.application.apply_payment_events import (
+    ApplyPaymentEvent,
+    ProcessPaymentEvents,
+)
 from livecart_core.application.expire_reservations import ExpireReservations
 from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.ports import Clock, IntentFallback, LlmBudget, NullIntentFallback
@@ -56,6 +63,7 @@ from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
+from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.llm_budget import RedisLlmBudget
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
@@ -72,6 +80,11 @@ from livecart_worker.consumer import (
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
 from livecart_worker.llm.claude import AnthropicIntentFallback
 from livecart_worker.metrics import WorkerMetrics
+from livecart_worker.payments import (
+    PAYMENT_EVENTS_BUDGET,
+    PAYMENT_EVENTS_INTERVAL_S,
+    run_payment_events,
+)
 from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
 logger = structlog.get_logger(__name__)
@@ -156,6 +169,7 @@ async def serve(
     consumer_name: str | None = None,
     reclaim_interval_s: float = RECLAIM_INTERVAL_S,
     expiry_interval_s: float = EXPIRY_INTERVAL_S,
+    payment_events_interval_s: float = PAYMENT_EVENTS_INTERVAL_S,
     metrics: WorkerMetrics | None = None,
 ) -> None:
     """Run every worker loop until ``stop`` is set.
@@ -227,10 +241,25 @@ async def serve(
             metrics=metrics,
         )
         expire = ExpireReservations(orders, events, clock, budget=EXPIRY_BUDGET)
+        registry = SqlWebhookEventRegistry(engine)
+        payment_events = ProcessPaymentEvents(
+            registry,
+            ApplyPaymentEvent(registry, events, clock),
+            clock,
+            budget=PAYMENT_EVENTS_BUDGET,
+        )
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
             loops.create_task(
                 run_expiry_sweep(expire, stop, interval_s=expiry_interval_s, metrics=metrics)
+            )
+            loops.create_task(
+                run_payment_events(
+                    payment_events,
+                    stop,
+                    interval_s=payment_events_interval_s,
+                    metrics=metrics,
+                )
             )
             loops.create_task(
                 run_heartbeat(

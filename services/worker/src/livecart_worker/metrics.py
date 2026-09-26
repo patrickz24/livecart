@@ -20,7 +20,14 @@ loops record what they do:
   (``livecart_comments_reclaimed_total``), the dead letters
   (``livecart_comments_dead_lettered_total``), the entries trimmed, and the
   queue's backlog as the reclaim saw it (``livecart_queue_backlog``);
-- each sweep tick: the reservations expired and their unpublished events.
+- each sweep tick: the reservations expired and their unpublished events;
+- each tick of the payment events loop: every event it claimed, by result
+  (``livecart_payment_events_total{result}``, the closed list of
+  ``PaymentEventResult``: ``amount_mismatch`` and ``attempts_exhausted`` are
+  the failures to alert on), the orders paid
+  (``livecart_orders_paid_total``) and those paid after the sweep released
+  their stock (``livecart_orders_paid_after_expiry_total``, each a refund to
+  make by hand).
 - with the LLM fallback on (``watch_llm``), the plain counters of its
   ``LlmGuard``, read at scrape time: the receipts by outcome
   (``livecart_llm_outcomes_total{outcome}``, the closed list of
@@ -42,6 +49,7 @@ from prometheus_client import CollectorRegistry, Counter, Gauge, Histogram
 from prometheus_client.core import CounterMetricFamily, Metric
 from prometheus_client.registry import Collector
 
+from livecart_core.application.apply_payment_events import PaymentEventResult, PaymentEventsTick
 from livecart_core.application.dto import IntentSource
 from livecart_core.application.expire_reservations import SweepResult
 from livecart_core.application.llm_guard import LlmGuard
@@ -177,6 +185,22 @@ class WorkerMetrics:
             "Unpaid reservations expired by the sweep, their stock released.",
             registry=registry,
         )
+        self.payment_events = Counter(
+            "livecart_payment_events_total",
+            "Payment events the registry loop claimed, by result (a closed list).",
+            ["result"],
+            registry=registry,
+        )
+        self.orders_paid = Counter(
+            "livecart_orders_paid_total",
+            "Orders paid by a payment event, their reserved units sold.",
+            registry=registry,
+        )
+        self.orders_paid_after_expiry = Counter(
+            "livecart_orders_paid_after_expiry_total",
+            "Orders paid after the sweep released their stock: each one a refund to make by hand.",
+            registry=registry,
+        )
         # Every label of a closed list exists from the start, at zero.
         for source in IntentSource:
             self.intents_detected.labels(source=source.value)
@@ -184,6 +208,8 @@ class WorkerMetrics:
             self.comments_rejected.labels(reason=reason.value)
         for cause in FailureCause:
             self.comment_failures.labels(cause=cause.value)
+        for result in PaymentEventResult:
+            self.payment_events.labels(result=result.value)
 
     def watch_llm(self, guard: LlmGuard) -> None:
         """Serve the counters of the process's LLM guard with the other metrics."""
@@ -211,3 +237,12 @@ class WorkerMetrics:
     def record_sweep(self, result: SweepResult) -> None:
         self.reservations_expired.inc(result.expired)
         self.session_events_unpublished.inc(result.unpublished_events)
+
+    def record_payment_events(self, tick: PaymentEventsTick) -> None:
+        for handled in tick.handled:
+            self.payment_events.labels(result=handled.result.value).inc()
+            self.session_events_unpublished.inc(handled.unpublished_events)
+            if handled.paid:
+                self.orders_paid.inc()
+            elif handled.paid_after_expiry:
+                self.orders_paid_after_expiry.inc()

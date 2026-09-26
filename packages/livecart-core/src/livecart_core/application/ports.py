@@ -43,6 +43,7 @@ from livecart_core.application.dto import (
     CheckoutRequest,
     CheckoutSession,
     CommentClaim,
+    EventClaim,
     ExpiredReservations,
     FallbackReceipt,
     FallbackRequest,
@@ -57,12 +58,12 @@ from livecart_core.application.dto import (
     NewLiveSession,
     NewProduct,
     OrderRecord,
-    OrderTransition,
     Page,
     ParseSummary,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
+    PaymentSettlement,
     Platform,
     ProductChanges,
     ProductRecord,
@@ -70,7 +71,6 @@ from livecart_core.application.dto import (
     QueueDelivery,
     RateLimitKey,
     RefreshTokenRecord,
-    RegisteredEvent,
     ReservationRequest,
     ReservationResult,
     SellerRecord,
@@ -88,6 +88,7 @@ from livecart_core.application.dto import (
 from livecart_core.domain.catalog import Catalog
 from livecart_core.domain.live_sessions import CatalogConflict
 from livecart_core.domain.outcomes import LlmOutcome, RejectionReason
+from livecart_core.domain.payments import PaymentEffect
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import (
     LiveSessionStatus,
@@ -883,15 +884,12 @@ class BuyerOrders(OrderLookup, Protocol):
 
 
 class OrderRepository(OrderReservations, BuyerOrders, ReservationExpiry, Protocol):
-    """Purchase intents and orders, with the stock effects of their transitions."""
+    """Purchase intents and orders, with the stock effects of their transitions.
 
-    async def record_payment(self, order_id: UUID, *, now: datetime) -> OrderTransition:
-        """A confirmed payment, stamped ``paid_at``.
-
-        A pending order becomes paid, its reserved units sold; an expired order
-        becomes ``paid_after_expiry``, with no stock effect (its refund is
-        manual, by runbook). A replayed payment is a ``NOOP``.
-        """
+    A payment reaches an order through the registry of payment webhooks
+    (``WebhookEventRegistry.settle``), which moves the order, its stock and
+    its attempt in the unit that marks the provider's event processed.
+    """
 
 
 class PaymentAttempts(Protocol):
@@ -989,13 +987,41 @@ class WebhookEventRegistry(WebhookEventRecorder, Protocol):
     """The durable registry of payment webhooks, ``processed_webhook_events``: the worker's outbox.
 
     An event is recorded once per (provider, event_id) and processed once.
-    Two readers may see the same pending event: applying it is idempotent
-    (``OrderRepository.record_payment`` is a compare-and-set) and
-    ``mark_processed`` settles it once.
+    The workers take the unprocessed ones by claims, each claim an attempt:
+    ``attempts`` is counted in the claim's unit, before the attempt is made,
+    so that the registry, not a worker's memory, says how many were made, a
+    worker that died midway included. A claim leases its events until
+    ``now + lease``: no other claim takes them meanwhile, and one whose
+    attempt failed is tried again once its lease has ended. Applying an event
+    (``settle``) is one unit that marks it processed with its effects, so an
+    event applied is never applied again, whatever the claims.
     """
 
-    async def pending(self, *, limit: int) -> list[RegisteredEvent]:
-        """At most ``limit`` unprocessed events, oldest first."""
+    async def claim(
+        self, *, now: datetime, limit: int, lease: timedelta, max_attempts: int
+    ) -> EventClaim:
+        """One unit: at most ``limit`` unprocessed events whose lease has ended, oldest first.
+
+        Events another claim holds at that moment are skipped, never waited
+        for (``FOR UPDATE SKIP LOCKED``), so claims running at once take
+        disjoint events. Those of them that made ``max_attempts`` attempts
+        already are settled as ``failed`` (``exhausted``); the others count one
+        attempt more and are leased until ``now + lease`` (``claimed``).
+        """
+
+    async def settle(
+        self, event: PaymentEvent, effect: PaymentEffect, *, now: datetime
+    ) -> PaymentSettlement | None:
+        """One unit: apply an event of the registry to its attempt and its order, and mark it.
+
+        The attempt is the one whose ``provider_ref`` is the event's checkout
+        session, the order that attempt's; ``decide_payment`` moves them, with
+        the effect and ``charged``, the event's amount, against the order's
+        total. A paid order's reserved units become sold in the same unit.
+        The event is marked processed with the settlement's outcome, at
+        ``now``. ``None``, having written nothing, when it was processed
+        already: another claim got to it first.
+        """
 
     async def mark_processed(
         self,
@@ -1005,9 +1031,7 @@ class WebhookEventRegistry(WebhookEventRecorder, Protocol):
         *,
         now: datetime,
     ) -> bool:
-        """``True`` when this call processed the event, ``False`` when it was processed already."""
+        """Settle an event without effect; ``False`` when it was processed already.
 
-    async def record_failure(
-        self, provider: PaymentProviderName, event_id: str, *, max_attempts: int, now: datetime
-    ) -> RegisteredEvent:
-        """Count a failed attempt; at ``max_attempts``, the event is processed as ``failed``."""
+        Raises ``RecordNotFound`` when the registry holds no such event.
+        """

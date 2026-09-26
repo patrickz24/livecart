@@ -40,6 +40,7 @@ from livecart_core.application.dto import (
     CheckoutStatus,
     CommentBatch,
     CommentClaim,
+    EventClaim,
     ExpiredReservations,
     FallbackReceipt,
     FallbackRequest,
@@ -54,12 +55,12 @@ from livecart_core.application.dto import (
     NewLiveSession,
     NewProduct,
     OrderRecord,
-    OrderTransition,
     Page,
     ParseSummary,
     PaymentEvent,
     PaymentProviderName,
     PaymentRecord,
+    PaymentSettlement,
     Platform,
     ProductChanges,
     ProductRecord,
@@ -77,6 +78,7 @@ from livecart_core.application.dto import (
     SessionActivity,
     SessionEvent,
     SessionEventType,
+    SettlementKind,
     ShipmentRecord,
     ShipmentRef,
     ShipmentRequest,
@@ -114,6 +116,7 @@ from livecart_core.domain.live_sessions import (
 from livecart_core.domain.llm_decision import LlmProposal
 from livecart_core.domain.money import Money
 from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome, LlmReason, RejectionReason
+from livecart_core.domain.payments import PaymentEffect, decide_payment
 from livecart_core.domain.reference import (
     OrderReference,
     RandomSource,
@@ -1593,21 +1596,6 @@ class InMemoryOrderRepository(_Repository):
             {product_id: self._tables.products[product_id].stock for product_id in released},
         )
 
-    async def record_payment(self, order_id: UUID, *, now: datetime) -> OrderTransition:
-        _require_aware(now)
-        order = _row(self._tables.orders, order_id, "order")
-        if order.status in (OrderStatus.PENDING_PAYMENT, OrderStatus.PAID):
-            target = OrderStatus.PAID
-        else:
-            target = OrderStatus.PAID_AFTER_EXPIRY
-        outcome = transition(ORDER_TRANSITIONS, order.status, target)
-        if outcome is TransitionOutcome.APPLIED:
-            if target is OrderStatus.PAID:
-                self._move_stock(order, reserved=-order.quantity.value, sold=order.quantity.value)
-            order = replace(order, status=target, paid_at=now)
-            self._tables.orders[order_id] = order
-        return OrderTransition(order, outcome)
-
     def _pending_order(self, session_id: UUID, product_id: UUID, buyer: str) -> OrderRecord | None:
         return next(
             (
@@ -1794,6 +1782,8 @@ class InMemoryShipmentRepository(_Repository):
 
 
 class InMemoryWebhookEventRegistry(_Repository):
+    """The registry of payment webhooks, with the claims and leases of its SQL adapter."""
+
     async def record(self, event: PaymentEvent, *, now: datetime) -> bool:
         _require_aware(now)
         key = (event.provider, event.event_id)
@@ -1804,13 +1794,43 @@ class InMemoryWebhookEventRegistry(_Repository):
         self._tables.webhook_events[key] = replace(known, delivery_count=known.delivery_count + 1)
         return False
 
-    async def pending(self, *, limit: int) -> list[RegisteredEvent]:
+    async def claim(
+        self, *, now: datetime, limit: int, lease: timedelta, max_attempts: int
+    ) -> EventClaim:
+        _require_aware(now)
         _require_positive("limit", limit)
-        unprocessed = [
-            row for row in self._tables.webhook_events.values() if row.processed_at is None
+        _require_positive("lease", lease.total_seconds())
+        _require_positive("max_attempts", max_attempts)
+        free = [
+            row
+            for row in self._tables.webhook_events.values()
+            if row.processed_at is None and (row.claimed_until is None or row.claimed_until < now)
         ]
         # A stable sort: events received at the same instant keep their arrival order.
-        return sorted(unprocessed, key=lambda row: row.received_at)[:limit]
+        taken = sorted(free, key=lambda row: row.received_at)[:limit]
+        claimed, exhausted = [], []
+        for row in taken:
+            if row.attempts >= max_attempts:
+                row = replace(row, processed_at=now, outcome=WebhookOutcome.FAILED)
+                exhausted.append(row)
+            else:
+                row = replace(row, attempts=row.attempts + 1, claimed_until=now + lease)
+                claimed.append(row)
+            self._tables.webhook_events[row.key] = row
+        return EventClaim(tuple(claimed), tuple(exhausted))
+
+    async def settle(
+        self, event: PaymentEvent, effect: PaymentEffect, *, now: datetime
+    ) -> PaymentSettlement | None:
+        _require_aware(now)
+        key = (event.provider, event.event_id)
+        registered = _row(self._tables.webhook_events, key, "webhook event")
+        if registered.processed_at is not None:
+            return None
+        settlement = self._settle(event, effect, now)
+        outcome = settlement.kind.outcome
+        self._tables.webhook_events[key] = replace(registered, processed_at=now, outcome=outcome)
+        return settlement
 
     async def mark_processed(
         self,
@@ -1828,21 +1848,55 @@ class InMemoryWebhookEventRegistry(_Repository):
         self._tables.webhook_events[key] = replace(registered, processed_at=now, outcome=outcome)
         return True
 
-    async def record_failure(
-        self, provider: PaymentProviderName, event_id: str, *, max_attempts: int, now: datetime
-    ) -> RegisteredEvent:
-        _require_aware(now)
-        _require_positive("max_attempts", max_attempts)
-        key = (provider, event_id)
-        registered = _row(self._tables.webhook_events, key, "webhook event")
-        if registered.processed_at is not None:
-            return registered
-        attempts = registered.attempts + 1
-        if attempts >= max_attempts:
-            registered = replace(
-                registered, attempts=attempts, processed_at=now, outcome=WebhookOutcome.FAILED
+    def _settle(
+        self, event: PaymentEvent, effect: PaymentEffect, now: datetime
+    ) -> PaymentSettlement:
+        payment = next(
+            (
+                row
+                for row in self._tables.payments.values()
+                if event.checkout_ref is not None
+                and row.provider_ref == event.checkout_ref
+                and row.provider is event.provider
+            ),
+            None,
+        )
+        if payment is None:
+            return PaymentSettlement(SettlementKind.UNKNOWN_SESSION)
+        order = self._tables.orders[payment.order_id]
+        decision = decide_payment(
+            effect,
+            payment=payment.status,
+            order=order.status,
+            charged=event.amount,
+            due=order.total,
+        )
+        kind = SettlementKind.of(decision.verdict)
+        if kind is not SettlementKind.APPLIED:
+            return PaymentSettlement(kind, order)
+        if decision.payment is not None:
+            self._tables.payments[payment.id] = replace(
+                payment,
+                status=decision.payment,
+                provider_payment_ref=event.payment_ref or payment.provider_payment_ref,
             )
-        else:
-            registered = replace(registered, attempts=attempts)
-        self._tables.webhook_events[key] = registered
-        return registered
+        stock = None
+        if decision.order is OrderStatus.PAID:
+            product = self._tables.products[order.product_id]
+            quantity = order.quantity.value
+            stock = replace(
+                product.stock,
+                reserved=product.stock.reserved - quantity,
+                sold=product.stock.sold + quantity,
+            )
+            self._tables.products[product.id] = replace(product, stock=stock)
+        if decision.order is not None:
+            order = replace(order, status=decision.order, paid_at=now)
+            self._tables.orders[order.id] = order
+        return PaymentSettlement(
+            kind,
+            order,
+            order_changed=decision.order is not None,
+            payment_changed=decision.payment is not None,
+            stock=stock,
+        )

@@ -497,6 +497,8 @@ processed_webhook_events: Final = sa.Table(
     sa.Column("outcome", sa.String(16), nullable=True),
     _created_at(),
     _updated_at(),
+    # The lease of the worker's last claim: no other claim takes the event until then.
+    _timestamp("claimed_until"),
     # The durable idempotence of payment webhooks.
     sa.UniqueConstraint(
         "provider", "event_id", name="uq_processed_webhook_events_provider_event_id"

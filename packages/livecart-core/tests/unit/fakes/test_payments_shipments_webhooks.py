@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 from decimal import Decimal
 from uuid import UUID
@@ -9,11 +10,9 @@ from livecart_core.application.dto import (
     AttemptOpeningKind,
     CarrierName,
     IntentSource,
-    PaymentEvent,
     PaymentProviderName,
     ReservationRequest,
     ShipmentRef,
-    WebhookOutcome,
 )
 from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.codes import ProductCode, Variant
@@ -21,6 +20,7 @@ from livecart_core.domain.errors import InvalidTransition
 from livecart_core.domain.money import Money
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import (
+    OrderStatus,
     PaymentStatus,
     ShipmentStatus,
     TransitionOutcome,
@@ -81,14 +81,15 @@ async def _open(
 
 
 # --- Payments --------------------------------------------------------------------------
-# What every backend does is in tests/contract/test_payment_attempts.py; the
-# settlement of an attempt and a paid order have no SQL adapter yet.
+# What every backend does is in tests/contract/test_payment_attempts.py, and
+# the settlement of an attempt by a payment event in test_webhook_event_registry.py.
 
 
 async def test_an_order_past_its_reservation_or_paid_is_not_payable() -> None:
     database = InMemoryDatabase()
     due, paid = await _order(database, "comment-1"), await _order(database, "comment-2")
-    await database.orders.record_payment(paid, now=NOW)
+    order = database.tables.orders[paid]
+    database.tables.orders[paid] = replace(order, status=OrderStatus.PAID, paid_at=NOW)
 
     assert (await _open(database, due, now=TTL)).kind is AttemptOpeningKind.NOT_PAYABLE
     assert (await _open(database, paid)).kind is AttemptOpeningKind.NOT_PAYABLE
@@ -190,90 +191,3 @@ async def test_tracking_polls_shipments_still_in_flight_lowest_id_first() -> Non
     assert [row.id for row in await database.shipments.list_in_flight(limit=1)] == [moving.id]
     with pytest.raises(ValueError, match="limit"):
         await database.shipments.list_in_flight(limit=0)
-
-
-# --- Webhook registry ------------------------------------------------------------------
-
-
-def _event(event_id: str, event_type: str = "checkout.session.completed") -> PaymentEvent:
-    return PaymentEvent(
-        provider=PaymentProviderName.STRIPE,
-        event_id=event_id,
-        event_type=event_type,
-        checkout_ref="cs_1",
-        occurred_at=NOW,
-    )
-
-
-async def test_an_event_is_recorded_once_and_its_redeliveries_counted() -> None:
-    registry = InMemoryDatabase().webhook_events
-    first = _event("evt_1")
-
-    assert await registry.record(first, now=NOW) is True
-    assert await registry.record(_event("evt_1", "altered"), now=NOW) is False
-    assert await registry.record(first, now=NOW) is False
-
-    [registered] = await registry.pending(limit=10)
-    assert registered.event == first
-    assert registered.delivery_count == 3
-    assert registered.received_at == NOW
-
-
-async def test_pending_events_come_oldest_first_and_leave_once_processed() -> None:
-    registry = InMemoryDatabase().webhook_events
-    await registry.record(_event("evt_2"), now=NOW + timedelta(seconds=2))
-    await registry.record(_event("evt_1"), now=NOW)
-    await registry.record(_event("evt_3"), now=NOW + timedelta(seconds=2))
-
-    assert [r.event.event_id for r in await registry.pending(limit=10)] == [
-        "evt_1",
-        "evt_2",
-        "evt_3",
-    ]
-    assert [r.event.event_id for r in await registry.pending(limit=1)] == ["evt_1"]
-
-    stripe = PaymentProviderName.STRIPE
-    processed_at = NOW + timedelta(seconds=5)
-    assert await registry.mark_processed(stripe, "evt_1", WebhookOutcome.APPLIED, now=processed_at)
-    assert not await registry.mark_processed(stripe, "evt_1", WebhookOutcome.IGNORED, now=NOW)
-    assert [r.event.event_id for r in await registry.pending(limit=10)] == ["evt_2", "evt_3"]
-
-
-async def test_a_processed_event_keeps_its_first_outcome() -> None:
-    database = InMemoryDatabase()
-    registry = database.webhook_events
-    stripe = PaymentProviderName.STRIPE
-    await registry.record(_event("evt_1"), now=NOW)
-
-    await registry.mark_processed(stripe, "evt_1", WebhookOutcome.IGNORED, now=NOW)
-    await registry.mark_processed(stripe, "evt_1", WebhookOutcome.APPLIED, now=NOW)
-
-    stored = database.tables.webhook_events[(stripe, "evt_1")]
-    assert (stored.outcome, stored.processed_at) == (WebhookOutcome.IGNORED, NOW)
-
-
-async def test_an_event_fails_for_good_at_the_attempt_limit() -> None:
-    registry = InMemoryDatabase().webhook_events
-    stripe = PaymentProviderName.STRIPE
-    await registry.record(_event("evt_1"), now=NOW)
-
-    first = await registry.record_failure(stripe, "evt_1", max_attempts=2, now=NOW)
-    last = await registry.record_failure(stripe, "evt_1", max_attempts=2, now=NOW)
-    after = await registry.record_failure(stripe, "evt_1", max_attempts=2, now=NOW)
-
-    assert (first.attempts, first.outcome, first.processed_at) == (1, None, None)
-    assert (last.attempts, last.outcome, last.processed_at) == (2, WebhookOutcome.FAILED, NOW)
-    assert after == last
-    assert await registry.pending(limit=10) == []
-
-
-async def test_the_registry_knows_only_recorded_events() -> None:
-    registry = InMemoryDatabase().webhook_events
-    stripe = PaymentProviderName.STRIPE
-
-    with pytest.raises(RecordNotFound):
-        await registry.mark_processed(stripe, "evt_404", WebhookOutcome.APPLIED, now=NOW)
-    with pytest.raises(RecordNotFound):
-        await registry.record_failure(stripe, "evt_404", max_attempts=10, now=NOW)
-    with pytest.raises(ValueError, match="limit"):
-        await registry.pending(limit=0)

@@ -32,7 +32,6 @@ from livecart_core.application.dto import (
     ProductRecord,
     RegisteredEvent,
     StockLevel,
-    WebhookOutcome,
 )
 from livecart_core.application.ports import (
     BuyerNotifier,
@@ -48,7 +47,7 @@ from livecart_core.application.ports import (
     ReservationExpiry,
     SellerRepository,
     SessionEventLog,
-    WebhookEventRecorder,
+    WebhookEventRegistry,
 )
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
@@ -70,7 +69,10 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
-from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
+from livecart_core.infrastructure.db.webhook_events import (
+    SqlWebhookEventRegistry,
+    registered_event,
+)
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.fakes import (
     FAKE_CLOCK_START,
@@ -114,7 +116,7 @@ class ReservationBackend(Protocol):
     def payments(self) -> PaymentAttempts: ...
 
     @property
-    def webhook_events(self) -> WebhookEventRecorder: ...
+    def webhook_events(self) -> WebhookEventRegistry: ...
 
     async def add_seller(self) -> UUID:
         """A seller whose account no password opens."""
@@ -229,7 +231,7 @@ class InMemoryBackend:
         return self.database.payments
 
     @property
-    def webhook_events(self) -> WebhookEventRecorder:
+    def webhook_events(self) -> WebhookEventRegistry:
         return self.database.webhook_events
 
     @property
@@ -393,7 +395,7 @@ class PostgresBackend:
         return self._payments
 
     @property
-    def webhook_events(self) -> WebhookEventRecorder:
+    def webhook_events(self) -> WebhookEventRegistry:
         return self._webhook_events
 
     @property
@@ -619,16 +621,7 @@ class PostgresBackend:
                     )
                 )
             ).one_or_none()
-        if row is None:
-            return None
-        return RegisteredEvent(
-            PaymentEvent.model_validate(row.payload),
-            received_at=row.created_at,
-            delivery_count=row.delivery_count,
-            attempts=row.attempts,
-            processed_at=row.processed_at,
-            outcome=None if row.outcome is None else WebhookOutcome(row.outcome),
-        )
+        return None if row is None else registered_event(row)
 
 
 @dataclass(frozen=True, slots=True)

@@ -41,6 +41,7 @@ from livecart_core.domain.outcomes import (
     RejectionReason,
 )
 from livecart_core.domain.parser import Ambiguous, Match, ParseResult
+from livecart_core.domain.payments import PaymentVerdict
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import (
@@ -1060,18 +1061,102 @@ class WebhookOutcome(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class RegisteredEvent:
-    """A row of ``processed_webhook_events``."""
+    """A row of ``processed_webhook_events``.
+
+    ``attempts`` counts the worker's claims of the event, each counted before
+    it is tried, and ``claimed_until`` ends the lease of the last one: until
+    then, no other worker claims it.
+    """
 
     event: PaymentEvent
     received_at: datetime
     delivery_count: int = 1
     attempts: int = 0
+    claimed_until: datetime | None = None
     processed_at: datetime | None = None
     outcome: WebhookOutcome | None = None
 
     def __post_init__(self) -> None:
         if (self.processed_at is None) != (self.outcome is None):
             raise ValueError("a processed event has an outcome, and only a processed one")
+
+    @property
+    def key(self) -> tuple[PaymentProviderName, str]:
+        """(provider, event_id): what names the event in the registry."""
+        return self.event.provider, self.event.event_id
+
+
+@dataclass(frozen=True, slots=True)
+class EventClaim:
+    """What one claim of the registry took: the events to try, and those it gave up on.
+
+    ``claimed`` are leased to the claiming worker, their attempt counted;
+    ``exhausted`` had made every attempt allowed already, and the claim
+    settled them as ``failed`` instead of trying them again.
+    """
+
+    claimed: tuple[RegisteredEvent, ...] = ()
+    exhausted: tuple[RegisteredEvent, ...] = ()
+
+
+class SettlementKind(StrEnum):
+    """What applying a payment event to its attempt and its order came to."""
+
+    # The attempt or the order moved.
+    APPLIED = "applied"
+    # Both were where the event leads already: a replay of an applied event.
+    REPLAYED = "replayed"
+    # The attempt was settled otherwise first: an event out of order.
+    STALE = "stale"
+    # No attempt of LiveCart has this checkout session.
+    UNKNOWN_SESSION = "unknown_session"
+    # The provider charged another amount or currency than the order's.
+    AMOUNT_MISMATCH = "amount_mismatch"
+
+    @classmethod
+    def of(cls, verdict: PaymentVerdict) -> "SettlementKind":
+        """The settlement of an event that ``decide_payment`` judged so."""
+        return _SETTLEMENTS[verdict]
+
+    @property
+    def outcome(self) -> WebhookOutcome:
+        """The registry's outcome of an event settled so."""
+        if self is SettlementKind.APPLIED:
+            return WebhookOutcome.APPLIED
+        if self is SettlementKind.AMOUNT_MISMATCH:
+            return WebhookOutcome.FAILED
+        return WebhookOutcome.IGNORED
+
+
+_SETTLEMENTS: Final = {
+    PaymentVerdict.APPLY: SettlementKind.APPLIED,
+    PaymentVerdict.REPLAYED: SettlementKind.REPLAYED,
+    PaymentVerdict.STALE: SettlementKind.STALE,
+    PaymentVerdict.AMOUNT_MISMATCH: SettlementKind.AMOUNT_MISMATCH,
+}
+
+
+@dataclass(frozen=True, slots=True)
+class PaymentSettlement:
+    """One payment event applied, in the unit that marked it processed.
+
+    ``order`` is the order as the unit left it (``None`` for an unknown
+    session), and ``stock`` its product's counters when its units moved from
+    reserved to sold.
+    """
+
+    kind: SettlementKind
+    order: OrderRecord | None = None
+    order_changed: bool = False
+    payment_changed: bool = False
+    stock: StockLevel | None = None
+
+    def __post_init__(self) -> None:
+        changed = self.order_changed or self.payment_changed
+        if changed != (self.kind is SettlementKind.APPLIED):
+            raise ValueError("a settlement changes a row exactly when it is applied")
+        if self.order_changed and self.order is None:
+            raise ValueError("a settlement that changed the order carries it")
 
 
 # --- Shipments -------------------------------------------------------------------------
