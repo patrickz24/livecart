@@ -22,6 +22,7 @@ from sqlalchemy import func, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import (
+    BuyerNotification,
     LiveSessionRecord,
     PaymentProviderName,
     Platform,
@@ -29,6 +30,7 @@ from livecart_core.application.dto import (
     StockLevel,
 )
 from livecart_core.application.ports import (
+    BuyerNotifier,
     CommentInbox,
     LiveSessionActivity,
     LiveSessionRepository,
@@ -553,6 +555,20 @@ class EventsBackend:
     events: SessionEventLog
     let_retention_pass: Callable[[], Awaitable[None]]
     expire: Callable[[UUID], Awaitable[None]]
+
+
+@dataclass(frozen=True, slots=True)
+class NotifierBackend:
+    """The buyer notifier under test, what it delivered, and a notifier that fails.
+
+    ``delivered`` reads the notices back from where the backend keeps them,
+    oldest first. ``failing`` gives a notifier whose next notice fails, as an
+    outage of its store would, over the store ``delivered`` reads.
+    """
+
+    notifier: BuyerNotifier
+    delivered: Callable[[], Awaitable[list[BuyerNotification]]]
+    failing: Callable[[], BuyerNotifier]
 
 
 class BackendFactory(Protocol):

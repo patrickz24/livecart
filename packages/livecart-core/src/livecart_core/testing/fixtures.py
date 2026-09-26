@@ -13,19 +13,29 @@ import asyncio
 import secrets
 from collections.abc import AsyncIterator
 from datetime import timedelta
+from typing import Any
 from uuid import UUID
 
 import pytest
+from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.ports import CommentQueue, IdempotencyStore, LlmBudget, RateLimiter
-from livecart_core.domain.reference import RandomSource
+from livecart_core.application.dto import BuyerNotification, Platform
+from livecart_core.application.ports import (
+    BuyerNotifier,
+    CommentQueue,
+    IdempotencyStore,
+    LlmBudget,
+    RateLimiter,
+)
+from livecart_core.domain.reference import OrderReference, RandomSource
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.engine import WORKER_POOL, create_db_engine
 from livecart_core.infrastructure.events import EVENT_RETENTION, RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.llm_budget import RedisLlmBudget
+from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
@@ -34,6 +44,7 @@ from livecart_core.testing.backends import (
     BackendFactory,
     EventsBackend,
     InMemoryBackend,
+    NotifierBackend,
     PostgresBackend,
     ReservationBackend,
 )
@@ -45,6 +56,7 @@ from livecart_core.testing.database import (
     unreachable_servers,
 )
 from livecart_core.testing.fakes import (
+    FakeBuyerNotifier,
     FakeClock,
     FakeCommentQueue,
     InMemoryIdempotencyStore,
@@ -282,3 +294,67 @@ def session_events(request: pytest.FixtureRequest) -> EventsBackend:
         await client.delete(redis.stream_key(session_id))
 
     return EventsBackend(redis, wait_past_retention, delete)
+
+
+# A Redis nobody listens on: every command fails before it reaches a server.
+UNREACHABLE_REDIS_URL = SecretStr("redis://127.0.0.1:1/15")
+
+
+@pytest.fixture
+async def unreachable_redis_client() -> AsyncIterator[Redis]:
+    """A client of a closed port, for the scenarios of a Redis that is down."""
+    client = create_redis_client(UNREACHABLE_REDIS_URL)
+    try:
+        yield client
+    finally:
+        await client.aclose()
+
+
+def _streamed_notice(fields: dict[bytes, bytes]) -> BuyerNotification:
+    """A notice read back from an entry of the development stream."""
+    text = {key.decode(): value.decode() for key, value in fields.items()}
+    return BuyerNotification(
+        order_id=UUID(text["order_id"]),
+        platform=Platform(text["platform"]),
+        recipient=text["recipient"],
+        reference=OrderReference(text["reference"]),
+        access_token=text["token"],
+    )
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def buyer_notifier(request: pytest.FixtureRequest) -> NotifierBackend:
+    """The buyer notifier of this run of a contract scenario: the fake, then the Redis stream.
+
+    The fake fails its next notice when asked; on Redis, the failing notifier
+    writes to a closed port under the same key prefix, so that the stream
+    read back is the one it would have written.
+    """
+    if request.param == "memory":
+        fake = FakeBuyerNotifier()
+
+        async def sent() -> list[BuyerNotification]:
+            return list(fake.sent)
+
+        def failing_fake() -> BuyerNotifier:
+            fake.fail_next()
+            return fake
+
+        return NotifierBackend(fake, sent, failing_fake)
+    client: Redis = request.getfixturevalue("redis_client")
+    unreachable: Redis = request.getfixturevalue("unreachable_redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    notifier = SimulatedBuyerNotifier(
+        client, prefix=prefix, link_scheme="livecart", production=False
+    )
+
+    async def streamed() -> list[BuyerNotification]:
+        entries: Any = await client.xrange(notifier.stream_key)
+        return [_streamed_notice(fields) for _, fields in entries]
+
+    def failing_redis() -> BuyerNotifier:
+        return SimulatedBuyerNotifier(
+            unreachable, prefix=prefix, link_scheme="livecart", production=False
+        )
+
+    return NotifierBackend(notifier, streamed, failing_redis)
