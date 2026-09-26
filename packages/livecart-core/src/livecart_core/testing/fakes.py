@@ -281,7 +281,8 @@ class FakeCommentQueue(_ScriptedFailures):
     """An at-least-once queue with a pending list, idle-time reclaim and a dead-letter list.
 
     It never blocks: ``receive`` on an empty queue returns an empty list at
-    once. Idle time is measured on the clock it is given.
+    once. Idle time is measured on the clock it is given. It keeps no settled
+    history, so ``trim`` has nothing to drop.
     """
 
     def __init__(self, clock: Clock) -> None:
@@ -338,6 +339,9 @@ class FakeCommentQueue(_ScriptedFailures):
     async def dead_letter(self, delivery: QueueDelivery) -> None:
         if self._pending.pop(delivery.delivery_id, None) is not None:
             self.dead_letters.append(delivery)
+
+    async def trim(self) -> int:
+        return 0
 
     def _pending_in_order(self) -> list[_QueueEntry]:
         return sorted(self._pending.values(), key=lambda entry: entry.sequence)

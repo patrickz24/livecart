@@ -213,7 +213,9 @@ class CommentQueue(Protocol):
     comment idle for too long to a consumer again, with its delivery count
     incremented. A comment may therefore be processed twice, which the inbox
     (``CommentInbox.claim``) makes harmless. The order is first come, first
-    served at best: a reclaimed comment comes back after newer ones.
+    served at best: a reclaimed comment comes back after newer ones. Nothing
+    caps the queue's length: the API stops enqueueing once the backlog
+    reaches its limit (backpressure), and ``trim`` drops the settled history.
     """
 
     async def backlog(self) -> int:
@@ -250,7 +252,15 @@ class CommentQueue(Protocol):
     async def dead_letter(self, delivery: QueueDelivery) -> None:
         """Move a delivery to the dead-letter queue, which settles it.
 
-        The caller then marks its inbox row with ``CommentInbox.dead_letter``.
+        A delivery settled already (acknowledged or dead-lettered) is left as
+        it is. The caller then marks its inbox row with ``CommentInbox.dead_letter``.
+        """
+
+    async def trim(self) -> int:
+        """Drop the settled history: entries delivered and then acknowledged or dead-lettered.
+
+        Never an entry that is new or pending. Returns how many entries went;
+        an adapter may keep some settled ones for a later trim.
         """
 
 

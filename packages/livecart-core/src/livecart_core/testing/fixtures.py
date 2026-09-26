@@ -16,8 +16,9 @@ import pytest
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.ports import IdempotencyStore, RateLimiter
+from livecart_core.application.ports import CommentQueue, IdempotencyStore, RateLimiter
 from livecart_core.domain.reference import RandomSource
+from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
@@ -37,7 +38,12 @@ from livecart_core.testing.database import (
     load_integration_settings,
     unreachable_servers,
 )
-from livecart_core.testing.fakes import FakeClock, InMemoryIdempotencyStore, InMemoryRateLimiter
+from livecart_core.testing.fakes import (
+    FakeClock,
+    FakeCommentQueue,
+    InMemoryIdempotencyStore,
+    InMemoryRateLimiter,
+)
 from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
 
@@ -177,3 +183,18 @@ def rate_limiter(request: pytest.FixtureRequest) -> RateLimiter:
     client: Redis = request.getfixturevalue("redis_client")
     prefix: str = request.getfixturevalue("redis_key_prefix")
     return RedisRateLimiter(client, prefix=prefix)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
+def comment_queue(request: pytest.FixtureRequest) -> CommentQueue:
+    """The comment queue of this run of a contract scenario: the fake, then Redis Streams.
+
+    The fake's clock stands still, so the scenarios reclaim with a minimum
+    idle time of 0 (every pending comment) or of minutes (none yet), which
+    Redis agrees with at once.
+    """
+    if request.param == "memory":
+        return FakeCommentQueue(FakeClock())
+    client: Redis = request.getfixturevalue("redis_client")
+    prefix: str = request.getfixturevalue("redis_key_prefix")
+    return RedisCommentQueue(client, prefix=prefix)
