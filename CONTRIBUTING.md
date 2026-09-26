@@ -91,13 +91,13 @@ Other useful commands:
 - Unit tests only, without Docker: `uv run --locked pytest -m "not integration"`, then `pnpm -r test`.
 - Coverage gate: `--cov` measures the branch coverage of `livecart_core.domain` and `livecart_core.application`, every module of both (`[tool.coverage]` in `pyproject.toml`), and fails below 80 %. The unit tests reach it on their own, without Docker: `uv run --locked pytest -m "not integration" --cov`. A subset of the tests covers a subset of the code and fails the gate; and since `--cov` takes an optional value, put it after any test path.
 - Formatting fixes: `uv run --locked ruff format .` and `pnpm run format`.
-- The compose smoke test that CI runs (starts the stack, checks every service and endpoint): `pnpm run smoke:compose`.
+- The compose smoke test that CI runs (starts the stack with `docker compose up --wait`, which must succeed on its own, then checks every service and endpoint): `pnpm run smoke:compose`. It checks the compose project the environment names and asks `docker compose port` where the API and nginx are published, so a throwaway second stack (`COMPOSE_PROJECT_NAME` set, other `PG_HOST_PORT`, `REDIS_HOST_PORT`, `COMPOSE_SUBNET`, `COMPOSE_IP_RANGE` and `NGINX_IP` in its `.env`, and a `compose.override.yaml` that republishes 8000 and 8080 with `ports: !override`) is checked the same way; remove it afterwards with `docker compose -p <name> down --volumes`.
 - The OpenAPI drift check of CI: `pnpm run check:openapi`. `packages/api-client/openapi.json` and `packages/api-client/src/generated/` are generated: never edit them by hand, run `make gen-api` and commit the result with the API change.
 - The PostgreSQL roles and grants of `infra/postgres` are applied once, when the postgres volume is created. After a change to them, re-apply them to the existing volume with `docker compose exec postgres bash /docker-entrypoint-initdb.d/10-init-roles.sh` (idempotent; in Git Bash, prefix it with `MSYS_NO_PATHCONV=1`), or start over with `make reset`, which deletes the data.
 
 ## Demo data
 
-`docker compose up` runs the one-shot `seed` service after `migrate`: `livecart-seed` creates, as `livecart_migrator`, only what is missing of the demo data, so running it again changes nothing (`make seed`):
+`docker compose up` runs the one-shot `seed` service after `migrate`, and the worker starts once it has completed (the API does not wait for it): `livecart-seed` creates, as `livecart_migrator`, only what is missing of the demo data, so running it again changes nothing (`make seed`):
 
 - the seller `demo-seller` (`demo-seller@livecart.test`), with two live sessions on the simulator: `friday-drop`, whose seven products are the catalog the parser corpus is written against (A12 in S, M and L, B07, C3 in four colours, D4 in four sizes, E15, Z99) and F8; and `loadtest`, Z99 alone with 200 in stock;
 - the seller `sample-shop` (`sample-shop@livecart.test`), without a session, for the second brand of the buyer app.

@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { containerState, parseComposePs, runningJobs, serviceProblems } from "./smoke-compose.mjs";
+import {
+  containerState,
+  EXPECTED_SERVICES,
+  HTTP_CHECKS,
+  parseComposePs,
+  PUBLISHED_PORTS,
+  publishedBaseUrl,
+  serviceProblems,
+} from "./smoke-compose.mjs";
 
 const running = (service, health = "healthy", name = `livecart-${service}-1`) => ({
   Name: name,
@@ -69,22 +77,32 @@ describe("serviceProblems", () => {
   });
 });
 
-describe("runningJobs", () => {
-  const expected = { migrate: "completed", seed: "completed", api: "healthy" };
-  const exited = (service) => ({
-    Name: `livecart-${service}-1`,
-    Service: service,
-    State: "exited",
-    ExitCode: 0,
+describe("publishedBaseUrl", () => {
+  it("reaches a loopback port where compose published it", () => {
+    assert.equal(publishedBaseUrl("127.0.0.1:8000\n"), "http://127.0.0.1:8000");
   });
 
-  it("names the one-shot jobs that have not exited yet", () => {
-    const containers = [exited("migrate"), running("seed", ""), running("api")];
-    assert.deepEqual(runningJobs(containers, expected), ["livecart-seed-1"]);
+  it("reaches a port published on every interface on the loopback address", () => {
+    assert.equal(publishedBaseUrl("0.0.0.0:18080\r\n"), "http://127.0.0.1:18080");
+    assert.equal(publishedBaseUrl("[::]:8080"), "http://127.0.0.1:8080");
   });
 
-  it("is empty once every job has exited, whatever its code", () => {
-    const failed = { ...exited("seed"), ExitCode: 1 };
-    assert.deepEqual(runningJobs([exited("migrate"), failed, running("api")], expected), []);
+  it("takes the first line when a port is published on several addresses", () => {
+    assert.equal(publishedBaseUrl("0.0.0.0:8080\n[::]:8080\n"), "http://127.0.0.1:8080");
+  });
+
+  it("is null when nothing is published", () => {
+    assert.equal(publishedBaseUrl(""), null);
+    assert.equal(publishedBaseUrl(":0"), null);
+  });
+});
+
+describe("HTTP_CHECKS", () => {
+  it("reach only services whose port the smoke test looks up, and that it expects healthy", () => {
+    for (const check of HTTP_CHECKS) {
+      assert.ok(check.service in PUBLISHED_PORTS, check.name);
+      assert.equal(EXPECTED_SERVICES[check.service], "healthy", check.name);
+      assert.ok(check.path.startsWith("/"), check.name);
+    }
   });
 });

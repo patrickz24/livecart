@@ -150,6 +150,10 @@ services:
   # Loads the demo data as livecart_migrator (the reset of the load test session
   # deletes rows), creating only what is missing, then exits. `make seed` runs it
   # again; `docker compose run --rm seed --reset-loadtest` empties the load test.
+  # The worker waits for it (service_completed_successfully), which also tells
+  # `up --wait` that seed is a job expected to exit: without a dependant, --wait
+  # takes its exit for a failure. The API does not wait for it, so a seed that
+  # cannot finish never keeps the API down.
   seed:
     <<: *python-service
     # An entrypoint rather than a command, so that the arguments of
@@ -216,6 +220,9 @@ services:
       start_interval: 1s
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      # The worker consumes the comments of the seeded demo sessions; see seed.
+      seed:
         condition: service_completed_successfully
       postgres:
         condition: service_healthy
