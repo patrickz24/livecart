@@ -43,7 +43,9 @@ class Handler:
         self.gate.set()
         self.counts: list[int] = []
 
-    async def __call__(self, delivery: QueueDelivery, *, consumer: str) -> HandledComment:
+    async def __call__(
+        self, delivery: QueueDelivery, *, consumer: str, deadline: float
+    ) -> HandledComment:
         self.counts.append(delivery.delivery_count)
         await self.gate.wait()
         claim = await self._database.comments.claim(

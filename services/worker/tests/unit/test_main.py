@@ -5,9 +5,11 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from livecart_core.settings import AppEnv, Settings
+from livecart_core.application.ports import NullIntentFallback
+from livecart_core.settings import LLM_MAX_RETRIES, AppEnv, Settings
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
-from livecart_worker.main import install_stop_handlers, serve
+from livecart_worker.llm.claude import AnthropicIntentFallback
+from livecart_worker.main import install_stop_handlers, llm_fallback, serve
 
 
 @pytest.mark.parametrize("signum", [signal.SIGTERM, signal.SIGINT])
@@ -55,3 +57,35 @@ async def test_a_production_worker_refuses_the_simulated_notifier(tmp_path: Path
 
     with pytest.raises(ValueError, match="refused when APP_ENV=production"):
         await serve(settings, asyncio.Event())
+
+
+def _settings(*, key: str | None, enabled: bool = True) -> Settings:
+    return Settings(
+        database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
+        redis_url=SecretStr("redis://127.0.0.1:1/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
+        anthropic_api_key=None if key is None else SecretStr(key),
+        llm_enabled=enabled,
+        _env_file=None,
+    )
+
+
+@pytest.mark.parametrize(("key", "enabled"), [(None, True), ("sk-ant-test", False)])
+def test_without_a_key_or_once_disabled_the_worker_runs_the_parser_alone(
+    key: str | None, enabled: bool
+) -> None:
+    fallback, client = llm_fallback(_settings(key=key, enabled=enabled))
+
+    assert isinstance(fallback, NullIntentFallback)
+    assert client is None
+
+
+async def test_with_a_key_the_worker_asks_claude_through_one_client() -> None:
+    fallback, client = llm_fallback(_settings(key="sk-ant-test"))
+
+    assert isinstance(fallback, AnthropicIntentFallback)
+    assert fallback.model == "claude-opus-5"
+    assert client is not None
+    assert client.max_retries == LLM_MAX_RETRIES
+    await client.close()

@@ -239,6 +239,15 @@ services:
       QUEUE_RECLAIM_MIN_IDLE_MS: ${QUEUE_RECLAIM_MIN_IDLE_MS:-}
       # The scheme of the links the buyers receive on the development stream.
       BUYER_LINK_SCHEME: ${BUYER_LINK_SCHEME:-livecart}
+      # The optional LLM fallback (.env.example): without a key, the parser alone.
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_ENABLED: ${LLM_ENABLED:-true}
+      LLM_MODEL: ${LLM_MODEL:-claude-opus-5}
+      # Without a colon: an empty LLM_EFFORT stays empty, and sends no effort.
+      LLM_EFFORT: ${LLM_EFFORT-low}
+      LLM_REFUSAL_FALLBACK: ${LLM_REFUSAL_FALLBACK:-true}
+      LLM_CALL_TIMEOUT_S: ${LLM_CALL_TIMEOUT_S:-8}
+      DB_BUDGET_S: ${DB_BUDGET_S:-5}
     # The Prometheus endpoint (METRICS_PORT, 9100): the compose network only.
     expose:
       - "9100"

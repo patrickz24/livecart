@@ -12,6 +12,11 @@ then runs the worker's loops in one TaskGroup:
   time expired, and their stock released;
 - the heartbeat, which also checks that the consumer keeps going round.
 
+``ProcessComment`` asks Claude (``livecart_worker.llm.claude``) about the
+comments the parser leaves ambiguous when ``ANTHROPIC_API_KEY`` is set and
+``LLM_ENABLED`` is not false; otherwise ``NullIntentFallback`` leaves them
+unresolved, and the worker runs on the parser alone.
+
 The consumer and the sweep publish the session events of what they commit
 to each session's Redis stream (``RedisSessionEvents``), after the commit
 and best effort: a failure is logged, counted in the metrics, and never
@@ -33,9 +38,10 @@ from functools import partial
 from typing import Final
 
 import structlog
+from anthropic import AsyncAnthropic
 
 from livecart_core.application.expire_reservations import ExpireReservations
-from livecart_core.application.ports import Clock, NullIntentFallback
+from livecart_core.application.ports import Clock, IntentFallback, NullIntentFallback
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
 from livecart_core.infrastructure.clock import SystemClock
@@ -50,13 +56,14 @@ from livecart_core.infrastructure.redis_client import create_redis_client, ping_
 from livecart_core.logging import configure_logging
 from livecart_core.metrics import MetricsServer
 from livecart_core.order_tokens import OrderTokens
-from livecart_core.settings import Settings
+from livecart_core.settings import LLM_MAX_RETRIES, Settings
 from livecart_worker.consumer import (
     RECLAIM_INTERVAL_S,
     CommentConsumer,
     default_consumer_name,
 )
 from livecart_worker.heartbeat import HEARTBEAT_INTERVAL_S, run_heartbeat
+from livecart_worker.llm.claude import AnthropicIntentFallback
 from livecart_worker.metrics import WorkerMetrics
 from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
@@ -96,6 +103,26 @@ def install_stop_handlers(
     return remove_signal_handlers
 
 
+def llm_fallback(settings: Settings) -> tuple[IntentFallback, AsyncAnthropic | None]:
+    """Claude, with the client to close, when the fallback is on; the parser alone otherwise."""
+    if not settings.llm_active or settings.anthropic_api_key is None:
+        return NullIntentFallback(), None
+    client = AsyncAnthropic(
+        api_key=settings.anthropic_api_key.get_secret_value(),
+        max_retries=LLM_MAX_RETRIES,
+        timeout=settings.llm_call_timeout_s,
+    )
+    fallback = AnthropicIntentFallback(
+        client,
+        model=settings.llm_model,
+        effort=settings.llm_effort,
+        refusal_fallback=settings.llm_refusal_fallback,
+        call_timeout_s=settings.llm_call_timeout_s,
+        max_quantity=settings.max_quantity_per_comment,
+    )
+    return fallback, client
+
+
 async def serve(
     settings: Settings,
     stop: asyncio.Event,
@@ -117,6 +144,7 @@ async def serve(
     clock = clock if clock is not None else SystemClock()
     metrics = metrics if metrics is not None else WorkerMetrics()
     redis = create_redis_client(settings.redis_url)
+    fallback, llm_client = llm_fallback(settings)
     engine = create_db_engine(
         settings.database_url,
         application_name=APPLICATION_NAME,
@@ -146,7 +174,7 @@ async def serve(
                 production=settings.is_production,
             ),
             access_token=tokens.token_for,
-            fallback=NullIntentFallback(),
+            fallback=fallback,
             clock=clock,
             lease=settings.message_process_timeout,
             db_budget=settings.db_budget,
@@ -188,6 +216,8 @@ async def serve(
     finally:
         await engine.dispose()
         await redis.aclose()
+        if llm_client is not None:
+            await llm_client.close()
 
 
 async def run(settings: Settings) -> None:
@@ -197,7 +227,11 @@ async def run(settings: Settings) -> None:
     server = None
     if settings.metrics_port is not None:
         server = MetricsServer.start(metrics.registry, port=settings.metrics_port)
-    logger.info("worker_started", metrics_port=settings.metrics_port)
+    logger.info(
+        "worker_started",
+        metrics_port=settings.metrics_port,
+        llm_model=settings.llm_model if settings.llm_active else None,
+    )
     try:
         await serve(settings, stop, metrics=metrics)
     finally:

@@ -10,6 +10,7 @@ from livecart_core.settings import (
     COMMENT_WEBHOOK_SECRETS,
     RATE_LIMITS,
     AppEnv,
+    LlmEffort,
     LogLevel,
     MigrationSettings,
     SeedSettings,
@@ -27,6 +28,14 @@ WORKER_SETTINGS = (
     "QUEUE_MAX_DELIVERIES",
     "QUEUE_RECLAIM_MIN_IDLE_MS",
     "BUYER_LINK_SCHEME",
+)
+LLM_SETTINGS = (
+    "ANTHROPIC_API_KEY",
+    "LLM_ENABLED",
+    "LLM_MODEL",
+    "LLM_EFFORT",
+    "LLM_REFUSAL_FALLBACK",
+    "LLM_CALL_TIMEOUT_S",
 )
 # Signing keys that pass every check, in production too.
 KEYS = {
@@ -61,6 +70,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
         *http,
         *webhooks,
         *worker,
+        *LLM_SETTINGS,
         "DEFAULT_CURRENCY",
         "REDIS_KEY_PREFIX",
         "METRICS_PORT",
@@ -627,6 +637,65 @@ def test_the_reclaim_settings_are_refused_outside_their_bounds(
 ) -> None:
     with pytest.raises(ValidationError, match=message):
         load(**env, **dev_env())
+
+
+def test_without_a_key_the_worker_runs_the_parser_alone() -> None:
+    settings = load(**dev_env())
+
+    assert settings.anthropic_api_key is None
+    assert not settings.llm_active
+    assert (settings.llm_model, settings.llm_effort) == ("claude-opus-5", LlmEffort.LOW)
+    assert settings.llm_refusal_fallback
+    assert settings.llm_call_timeout_s == 8
+
+
+@pytest.mark.parametrize(
+    ("env", "active"),
+    [
+        ({"ANTHROPIC_API_KEY": "sk-ant-test"}, True),
+        ({"ANTHROPIC_API_KEY": "sk-ant-test", "LLM_ENABLED": "false"}, False),
+        ({"ANTHROPIC_API_KEY": ""}, False),
+        ({"ANTHROPIC_API_KEY": "  "}, False),
+    ],
+)
+def test_the_fallback_needs_a_key_and_is_not_turned_off(env: dict[str, str], active: bool) -> None:
+    assert load(**env, **dev_env()).llm_active is active
+
+
+def test_the_anthropic_key_is_a_secret_refused_as_a_placeholder_in_production() -> None:
+    settings = load(ANTHROPIC_API_KEY="sk-ant-not-for-logs", **dev_env())
+
+    assert "sk-ant-not-for-logs" not in repr(settings)
+    with pytest.raises(ValidationError, match="ANTHROPIC_API_KEY"):
+        load(APP_ENV="production", ANTHROPIC_API_KEY="change-me-anthropic", **dev_env("real-pw"))
+
+
+@pytest.mark.parametrize(("value", "effort"), [("HIGH", LlmEffort.HIGH), (" max ", LlmEffort.MAX)])
+def test_the_llm_effort_is_read_whatever_its_case(value: str, effort: LlmEffort) -> None:
+    assert load(LLM_EFFORT=value, **dev_env()).llm_effort is effort
+
+
+def test_an_empty_llm_effort_sends_none() -> None:
+    assert load(LLM_EFFORT="", **dev_env()).llm_effort is None
+
+
+def test_the_model_is_configurable() -> None:
+    assert load(LLM_MODEL="claude-haiku-4-5", **dev_env()).llm_model == "claude-haiku-4-5"
+
+
+@pytest.mark.parametrize(
+    ("name", "refused", "message"),
+    [
+        ("LLM_MODEL", "Claude Opus", "must be a model id"),
+        ("LLM_MODEL", "", "must be a model id"),
+        ("LLM_EFFORT", "extreme", "Input should be"),
+        ("LLM_CALL_TIMEOUT_S", "0.5", "from 1 to 8 seconds"),
+        ("LLM_CALL_TIMEOUT_S", "9", "from 1 to 8 seconds"),
+    ],
+)
+def test_the_llm_settings_stay_within_their_bounds(name: str, refused: str, message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        load(**{name: refused}, **dev_env())
 
 
 def test_the_buyer_links_open_the_demo_app_by_default() -> None:

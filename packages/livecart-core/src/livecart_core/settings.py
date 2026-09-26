@@ -105,6 +105,17 @@ RECLAIM_IDLE_MARGIN: Final = 2
 MAX_PORT: Final = 65_535
 # Redis's default maxclients is 10000: the streams of an instance stay far below.
 MAX_SSE_STREAMS: Final = 5_000
+# The LLM fallback (livecart_worker.llm). A model id as the API names it, such
+# as claude-opus-5, which comments.llm_model holds in 128 characters.
+LLM_MODEL_PATTERN: Final = re.compile(r"[a-z0-9][a-z0-9.-]{0,127}")
+# One more attempt after a 429, a 5xx or a lost connection (the SDK's max_retries).
+LLM_MAX_RETRIES: Final = 1
+# The time kept for the SDK's backoff before its retry: 0.5 s at most, unless
+# the server asks for longer (retry-after), which the cut of the whole call at
+# the request's timeout then bounds.
+LLM_BACKOFF_MARGIN_S: Final = 2.0
+# The longest an attempt may take: past it, a live buyer waits for nothing.
+MAX_LLM_CALL_TIMEOUT_S: Final = 8
 
 
 class AppEnv(StrEnum):
@@ -117,6 +128,16 @@ class LogLevel(StrEnum):
     INFO = "INFO"
     WARNING = "WARNING"
     ERROR = "ERROR"
+
+
+class LlmEffort(StrEnum):
+    """``output_config.effort`` of the LLM's requests: how much it may think before it answers."""
+
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+    XHIGH = "xhigh"
+    MAX = "max"
 
 
 def require_currency(value: str) -> str:
@@ -302,6 +323,25 @@ class Settings(BaseAppSettings):
     # GET /api/v1/live-sessions/{id}/events): each holds a Redis connection
     # blocked in XREAD, so the next one answers 503 with Retry-After.
     sse_max_streams: int = 200
+    # The optional LLM fallback of the worker, for the comments the parser
+    # leaves ambiguous (livecart_worker.llm). Without a key, or with
+    # LLM_ENABLED=false, the worker runs the parser alone: every ambiguity is
+    # then rejected as ambiguous_unresolved. Only the worker needs the key.
+    anthropic_api_key: SecretStr | None = None
+    llm_enabled: bool = True
+    # The model, by the API's id without a date suffix; any change of model
+    # goes through scripts/llm_eval.py first (ADR 0006).
+    llm_model: str = "claude-opus-5"
+    # How much the model may think; None, from an empty LLM_EFFORT, sends no
+    # effort, for a model that does not take one.
+    llm_effort: LlmEffort | None = LlmEffort.LOW
+    # The server-side refusal fallback ("fallbacks": "default"): a request the
+    # model's safety classifiers decline runs again on the model Anthropic
+    # recommends for it, in the same call. Off for a model that does not take it.
+    llm_refusal_fallback: bool = True
+    # The longest one attempt of a call may take; the SDK makes one more
+    # after a transient failure, within what the message deadline has left.
+    llm_call_timeout_s: float = 8.0
 
     @property
     def reservation_ttl(self) -> timedelta:
@@ -314,6 +354,11 @@ class Settings(BaseAppSettings):
     @property
     def db_budget(self) -> timedelta:
         return timedelta(seconds=self.db_budget_s)
+
+    @property
+    def llm_active(self) -> bool:
+        """Whether the worker asks the LLM: a key is set and LLM_ENABLED is not false."""
+        return self.llm_enabled and self.anthropic_api_key is not None
 
     @property
     def worker_pool(self) -> PoolSize:
@@ -447,6 +492,37 @@ class Settings(BaseAppSettings):
                 f"must be from {MIN_MESSAGE_PROCESS_TIMEOUT_S} to "
                 f"{MAX_MESSAGE_PROCESS_TIMEOUT_S} seconds"
             )
+        return value
+
+    @field_validator("anthropic_api_key", mode="before")
+    @classmethod
+    def _an_empty_key_is_no_key(cls, value: object) -> object:
+        """``ANTHROPIC_API_KEY=``, as .env.example ships it: the parser alone."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("llm_effort", mode="before")
+    @classmethod
+    def _read_llm_effort(cls, value: object) -> object:
+        """``LLM_EFFORT=Low`` is ``low``; an empty ``LLM_EFFORT=`` sends no effort."""
+        if isinstance(value, str):
+            return value.strip().lower() or None
+        return value
+
+    @field_validator("llm_model")
+    @classmethod
+    def _check_llm_model(cls, value: str) -> str:
+        if not LLM_MODEL_PATTERN.fullmatch(value):
+            raise ValueError(
+                "must be a model id of lower-case letters, digits, '.' and '-', such as "
+                "claude-opus-5, 128 characters at most"
+            )
+        return value
+
+    @field_validator("llm_call_timeout_s")
+    @classmethod
+    def _check_llm_call_timeout_s(cls, value: float) -> float:
+        if not 1 <= value <= MAX_LLM_CALL_TIMEOUT_S:
+            raise ValueError(f"must be from 1 to {MAX_LLM_CALL_TIMEOUT_S} seconds")
         return value
 
     @field_validator("db_budget_s")

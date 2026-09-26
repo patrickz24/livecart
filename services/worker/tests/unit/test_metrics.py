@@ -152,7 +152,9 @@ class Failing:
         self._failure = failure
         self._hang = hang
 
-    async def __call__(self, delivery: QueueDelivery, *, consumer: str) -> HandledComment:
+    async def __call__(
+        self, delivery: QueueDelivery, *, consumer: str, deadline: float
+    ) -> HandledComment:
         if self._hang:
             await asyncio.sleep(10)
         assert self._failure is not None

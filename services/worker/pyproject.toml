@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "LiveCart asyncio worker: comment queue consumer and background loops."
 license = "MIT"
 requires-python = ">=3.12,<3.13"
-dependencies = ["livecart-core"]
+dependencies = ["anthropic==1.8.0", "livecart-core"]
 
 [project.scripts]
 livecart-worker = "livecart_worker.main:main"

@@ -11,10 +11,11 @@
 - **A semaphore**: at most ``WORKER_CONCURRENCY`` (16) handlers run at once,
   each on a pooled connection of its own, so the handlers never wait for the
   pool (``WORKER_CONCURRENCY + 4`` connections, see the engine).
-- **A deadline**: ``asyncio.timeout(MESSAGE_PROCESS_TIMEOUT_S)`` (30 s) per
-  delivery, from when its handler starts, retries included. The comment's
-  lease is as long and is taken once the handler runs, so no other delivery
-  works on the comment while this one may.
+- **A deadline**: ``asyncio.timeout_at`` the handler's start plus
+  ``MESSAGE_PROCESS_TIMEOUT_S`` (30 s), retries included. The comment's lease
+  is as long and is taken once the handler runs, so no other delivery works
+  on the comment while this one may. The handler is told the deadline, so
+  that the LLM fallback gets what is left of it, never more.
 - **Retries**: ``ServiceUnavailable``, a transient failure of the database
   (a lock or statement timeout, a lost connection) or of Redis, is retried
   twice in the process after a jittered delay: another attempt of the same
@@ -87,7 +88,10 @@ def full_jitter(cap_s: float) -> float:
 class CommentHandler(Protocol):
     """What the consumer hands each delivery to: ``ProcessComment`` in the worker."""
 
-    async def __call__(self, delivery: QueueDelivery, *, consumer: str) -> HandledComment: ...
+    async def __call__(
+        self, delivery: QueueDelivery, *, consumer: str, deadline: float
+    ) -> HandledComment:
+        """Handle one delivery by ``deadline``, a time of the event loop's clock."""
 
 
 class Reclaimer(Protocol):
@@ -281,9 +285,10 @@ class CommentConsumer:
                 # A worker's clock behind the API's would make it negative.
                 self.metrics.queue_wait.observe(max(waited_s, 0.0))
                 started = self._monotonic()
+                deadline = asyncio.get_running_loop().time() + self._deadline_s
                 try:
-                    async with asyncio.timeout(self._deadline_s):
-                        handled = await self._attempts(delivery)
+                    async with asyncio.timeout_at(deadline):
+                        handled = await self._attempts(delivery, deadline)
                 except TimeoutError:
                     self.metrics.record_failure(FailureCause.DEADLINE)
                     logger.warning(
@@ -301,12 +306,12 @@ class CommentConsumer:
                 finally:
                     self.metrics.processing.observe(self._monotonic() - started)
 
-    async def _attempts(self, delivery: QueueDelivery) -> HandledComment:
+    async def _attempts(self, delivery: QueueDelivery, deadline: float) -> HandledComment:
         """The handler, and up to ``retries`` more attempts after a transient failure."""
         retry = 0
         while True:
             try:
-                return await self._handler(delivery, consumer=self.name)
+                return await self._handler(delivery, consumer=self.name, deadline=deadline)
             except ServiceUnavailable as error:
                 retry += 1
                 if retry > self._retries:
@@ -332,6 +337,7 @@ def _summary(handled: HandledComment) -> dict[str, object]:
         "intent_outcome": None if reservation is None else reservation.intent.outcome.value,
         "order_id": None if order is None else str(order.id),
         "rejection_reason": None if handled.rejection is None else handled.rejection.value,
+        "llm_outcome": None if handled.llm_outcome is None else handled.llm_outcome.value,
         "unpublished_events": handled.unpublished_events,
         "notified": handled.notified,
     }

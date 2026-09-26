@@ -78,12 +78,16 @@ class Handler:
         self._queue = queue
         self._behave = behave
         self.calls: list[tuple[str, str]] = []
+        self.deadlines: list[float] = []
         self.correlation_ids: list[object] = []
         self.running = 0
         self.most_running = 0
 
-    async def __call__(self, delivery: QueueDelivery, *, consumer: str) -> HandledComment:
+    async def __call__(
+        self, delivery: QueueDelivery, *, consumer: str, deadline: float
+    ) -> HandledComment:
         self.calls.append((delivery.delivery_id, consumer))
+        self.deadlines.append(deadline)
         self.correlation_ids.append(structlog.contextvars.get_contextvars().get("correlation_id"))
         self.running += 1
         self.most_running = max(self.most_running, self.running)
@@ -144,6 +148,27 @@ async def test_every_delivery_is_handled_in_order_by_this_consumer() -> None:
 
     assert handler.calls == [(f"{n}-0", "worker-1") for n in range(1, 6)]
     assert queue.pending == []
+
+
+async def test_each_attempt_is_told_the_one_deadline_of_its_delivery() -> None:
+    queue = BlockingQueue()
+
+    async def fail_once(delivery: QueueDelivery, attempt: int) -> None:
+        if attempt == 1:
+            raise ServiceUnavailable("scripted")
+
+    handler = Handler(queue, fail_once)
+    await queue.enqueue([queued_comment()])
+    started = asyncio.get_running_loop().time()
+    stop, task = await _running(_consumer(queue, handler))
+
+    await until(lambda: len(queue.acknowledged) == 1)
+    await _stop(stop, task)
+
+    first, retry = handler.deadlines
+    # The retry has what is left of the first attempt's deadline, not a new one.
+    assert first == retry
+    assert started + DEADLINE_S <= first <= asyncio.get_running_loop().time() + DEADLINE_S
 
 
 async def test_no_more_handlers_run_at_once_than_the_concurrency() -> None:
