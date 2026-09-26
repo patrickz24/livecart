@@ -1,4 +1,7 @@
-"""``PaymentProvider`` on every backend: the in-memory fake, then the mock provider on Redis.
+"""``PaymentProvider`` on every backend: the in-memory fake, the mock on Redis, then Stripe.
+
+Stripe's run is its real adapter and SDK over ``FakeStripeApi``, an
+in-memory stand-in of its API behind an httpx2 transport.
 
 A hosted session per payment attempt, the same one for every call with the
 attempt's idempotency key; a session that leaves ``open`` once, paid by the
@@ -18,7 +21,12 @@ from livecart_core.application.dto import (
     PaymentEvent,
     PaymentProviderName,
 )
-from livecart_core.application.ports import InvalidSignature, RecordNotFound, ServiceUnavailable
+from livecart_core.application.ports import (
+    InvalidSignature,
+    PaymentProvider,
+    RecordNotFound,
+    ServiceUnavailable,
+)
 from livecart_core.domain.money import Money
 from livecart_core.domain.reference import OrderReference
 from livecart_core.testing.backends import PaymentProviderBackend
@@ -51,7 +59,6 @@ async def test_a_checkout_opens_a_session_for_the_amount(
 
     session = await provider.create_checkout(CHECKOUT)
 
-    assert provider.name is PaymentProviderName.MOCK
     assert session.status is CheckoutStatus.OPEN
     assert session.amount == Money(2_500, "EUR")
     assert session.payment_ref is None
@@ -136,20 +143,26 @@ async def test_an_unknown_session_is_not_found(payment_provider: PaymentProvider
         await provider.expire_checkout("cs_404")
 
 
+def _event_of(provider: PaymentProvider) -> PaymentEvent:
+    """EVENT, as the provider under test sends it."""
+    return EVENT.model_copy(update={"provider": provider.name})
+
+
 async def test_a_signed_webhook_verifies_into_its_event(
     payment_provider: PaymentProviderBackend,
 ) -> None:
-    headers, body = payment_provider.signed(EVENT)
+    event = _event_of(payment_provider.provider)
+    headers, body = payment_provider.signed(event)
 
-    assert await payment_provider.provider.verify_webhook(headers, body) == EVENT
+    assert await payment_provider.provider.verify_webhook(headers, body) == event
 
 
 async def test_a_forged_webhook_is_refused_before_its_body_is_read(
     payment_provider: PaymentProviderBackend,
 ) -> None:
     provider = payment_provider.provider
-    headers, body = payment_provider.signed(EVENT)
-    forged_headers, forged_body = payment_provider.forged(EVENT)
+    headers, body = payment_provider.signed(_event_of(provider))
+    forged_headers, forged_body = payment_provider.forged(_event_of(provider))
 
     with pytest.raises(InvalidSignature):
         await provider.verify_webhook(headers, body.replace(b"2500", b"1"))
@@ -159,13 +172,12 @@ async def test_a_forged_webhook_is_refused_before_its_body_is_read(
         await provider.verify_webhook({}, b"not even json")
 
 
-async def test_a_verified_body_of_another_provider_is_no_event_of_its_own(
+async def test_a_verified_body_that_is_no_event_of_its_own_is_refused(
     payment_provider: PaymentProviderBackend,
 ) -> None:
-    stripe = EVENT.model_copy(update={"provider": PaymentProviderName.STRIPE})
-    headers, body = payment_provider.signed(stripe)
+    headers, body = payment_provider.foreign()
 
-    with pytest.raises(ValueError, match="another provider"):
+    with pytest.raises(ValueError):  # noqa: PT011 - each provider words its refusal
         await payment_provider.provider.verify_webhook(headers, body)
 
 

@@ -49,6 +49,9 @@ x-runtime-environment: &runtime-environment
   # provider, and the mock's sessions live in the shared Redis.
   PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-mock}
   MOCK_PAYMENT_WEBHOOK_SECRET: ${MOCK_PAYMENT_WEBHOOK_SECRET:?set it in .env (cp .env.example .env)}
+  # Stripe's test key and webhook signing secret: empty unless PAYMENT_PROVIDER=stripe.
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
   PUBLIC_API_BASE_URL: ${PUBLIC_API_BASE_URL:-http://localhost:8080}
   PAYMENT_GRACE_SECONDS: ${PAYMENT_GRACE_SECONDS:-600}
   PAYMENT_MAX_ATTEMPTS: ${PAYMENT_MAX_ATTEMPTS:-3}

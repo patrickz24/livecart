@@ -47,6 +47,8 @@ LLM_SETTINGS = (
 PAYMENT_SETTINGS = (
     "PAYMENT_PROVIDER",
     "MOCK_PAYMENT_WEBHOOK_SECRET",
+    "STRIPE_SECRET_KEY",
+    "STRIPE_WEBHOOK_SECRET",
     "PUBLIC_API_BASE_URL",
     "MOCK_PAYMENT_WEBHOOK_URL",
     "PAYMENT_GRACE_SECONDS",
@@ -957,6 +959,45 @@ def test_the_mock_payment_key_needs_32_bytes_and_no_placeholder_in_production() 
         load(
             APP_ENV="production", MOCK_PAYMENT_WEBHOOK_SECRET=placeholder, **dev_env("real", "real")
         )
+
+
+# Of Stripe's shapes, split so that no secret scanner reads them as keys.
+STRIPE_TEST_KEY = "sk_" + "test_" + "unit" * 6
+STRIPE_RESTRICTED_TEST_KEY = "rk_" + "test_" + "unit" * 6
+STRIPE_SIGNING_SECRET = "whsec_" + "unit" * 8
+
+
+def test_stripe_takes_its_test_key_and_its_signing_secret() -> None:
+    settings = load(
+        STRIPE_SECRET_KEY=STRIPE_TEST_KEY, STRIPE_WEBHOOK_SECRET=STRIPE_SIGNING_SECRET, **dev_env()
+    )
+    restricted = load(STRIPE_SECRET_KEY=STRIPE_RESTRICTED_TEST_KEY, **dev_env())
+
+    assert settings.stripe_secret_key is not None
+    assert settings.stripe_secret_key.get_secret_value() == STRIPE_TEST_KEY
+    assert settings.stripe_webhook_secret is not None
+    assert settings.stripe_webhook_secret.get_secret_value() == STRIPE_SIGNING_SECRET
+    assert restricted.stripe_secret_key is not None
+    # Empty, as .env.example ships them and compose passes them: no Stripe.
+    empty = load(STRIPE_SECRET_KEY="", STRIPE_WEBHOOK_SECRET=" ", **dev_env())
+    assert (empty.stripe_secret_key, empty.stripe_webhook_secret) == (None, None)
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["sk_" + "live_" + "unit" * 6, "rk_" + "live_" + "unit" * 6, "pk_" + "test_" + "unit" * 6, "x"],
+    ids=["live", "restricted-live", "publishable", "none"],
+)
+def test_stripe_refuses_a_live_or_publishable_key_without_repeating_it(key: str) -> None:
+    with pytest.raises(ValidationError, match="test mode key") as excinfo:
+        load(STRIPE_SECRET_KEY=key, **dev_env())
+    assert key not in str(excinfo.value)
+
+
+def test_the_stripe_webhook_secret_is_a_signing_secret() -> None:
+    with pytest.raises(ValidationError, match="whsec_") as excinfo:
+        load(STRIPE_WEBHOOK_SECRET="a-signing-secret", **dev_env())
+    assert "a-signing-secret" not in str(excinfo.value)
 
 
 @pytest.mark.parametrize(

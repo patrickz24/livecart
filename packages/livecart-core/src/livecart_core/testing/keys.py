@@ -15,3 +15,8 @@ TEST_ORDER_TOKEN_KEY: Final = SecretStr("order-token-" * 3)
 TEST_COMMENT_WEBHOOK_SECRET: Final = SecretStr("comment-webhook-" * 2)
 # Signs the mock payment provider's webhooks and names its sessions in the tests.
 TEST_MOCK_PAYMENT_WEBHOOK_SECRET: Final = SecretStr("mock-payment-" * 3)
+# The key and the webhook signing secret of the Stripe adapter in the tests,
+# of Stripe's test mode shapes, built from their prefix and a repeated word.
+# They sign nothing Stripe would take: no test ever reaches api.stripe.com.
+TEST_STRIPE_SECRET_KEY: Final = SecretStr("sk_test_" + "unit" * 6)
+TEST_STRIPE_WEBHOOK_SECRET: Final = SecretStr("whsec_" + "unit" * 8)

@@ -11,18 +11,26 @@ revision.
 
 import asyncio
 import contextlib
+import json
 import secrets
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
 
+import httpx2
 import pytest
 from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from livecart_core.application.dto import BuyerNotification, CheckoutSession, Platform
+from livecart_core.application.dto import (
+    BuyerNotification,
+    CheckoutSession,
+    PaymentEvent,
+    PaymentProviderName,
+    Platform,
+)
 from livecart_core.application.ports import (
     BuyerNotifier,
     CommentQueue,
@@ -39,6 +47,7 @@ from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.llm_budget import RedisLlmBudget
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
 from livecart_core.infrastructure.payments.mock import MockPaymentProvider
+from livecart_core.infrastructure.payments.stripe import Httpx2Client, StripePaymentProvider
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.testing.backends import (
@@ -60,6 +69,7 @@ from livecart_core.testing.database import (
     unreachable_servers,
 )
 from livecart_core.testing.fakes import (
+    FAKE_CLOCK_START,
     FakeBuyerNotifier,
     FakeClock,
     FakeCommentQueue,
@@ -69,9 +79,14 @@ from livecart_core.testing.fakes import (
     InMemoryRateLimiter,
     InMemorySessionEvents,
 )
-from livecart_core.testing.keys import TEST_MOCK_PAYMENT_WEBHOOK_SECRET
+from livecart_core.testing.keys import (
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+    TEST_STRIPE_SECRET_KEY,
+    TEST_STRIPE_WEBHOOK_SECRET,
+)
 from livecart_core.testing.postgres import migrate_to_head, truncate_all
 from livecart_core.testing.redis_keys import delete_keys_with_prefix, new_test_key_prefix
+from livecart_core.testing.stripe_api import FakeStripeApi
 
 
 @pytest.fixture(scope="session")
@@ -331,20 +346,75 @@ def _fake_payments() -> PaymentProviderBackend:
         fake.fail_next(10)
         return fake
 
+    def foreign() -> tuple[dict[str, str], bytes]:
+        return fake.signed_webhook(_OTHER_PROVIDER)
+
     return PaymentProviderBackend(
-        fake, pay, fake.signed_webhook, forger.signed_webhook, unreachable
+        fake, pay, fake.signed_webhook, forger.signed_webhook, foreign, unreachable
     )
 
 
-@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration)])
-def payment_provider(request: pytest.FixtureRequest) -> PaymentProviderBackend:
-    """The payment provider of this run of a contract scenario: the fake, then the mock on Redis.
+# A verified body of another provider: no event of the provider under test.
+_OTHER_PROVIDER = PaymentEvent(
+    provider=PaymentProviderName.STRIPE,
+    event_id="evt_other",
+    event_type="checkout.session.completed",
+    occurred_at=FAKE_CLOCK_START,
+)
 
-    Both run on a clock that stands still, as the mock's signatures are dated
-    by it; the unreachable mock is built over a closed port, under the same prefix.
+
+async def _no_backoff(_seconds: float) -> None:
+    return None
+
+
+def _stripe_payments() -> PaymentProviderBackend:
+    api = FakeStripeApi()
+
+    def stripe_over(transport: httpx2.AsyncBaseTransport) -> StripePaymentProvider:
+        return StripePaymentProvider(
+            secret_key=TEST_STRIPE_SECRET_KEY,
+            webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+            http_client=Httpx2Client(transport=transport, sleep=_no_backoff),
+        )
+
+    provider = stripe_over(api.transport)
+
+    async def pay(provider_ref: str) -> CheckoutSession:
+        api.pay(provider_ref)
+        return await provider.get_checkout(provider_ref)
+
+    def signed(event: PaymentEvent) -> tuple[dict[str, str], bytes]:
+        return api.signed(event, TEST_STRIPE_WEBHOOK_SECRET)
+
+    def forged(event: PaymentEvent) -> tuple[dict[str, str], bytes]:
+        return api.signed(event, SecretStr("whsec_a-secret-the-forger-guessed"))
+
+    def foreign() -> tuple[dict[str, str], bytes]:
+        # A thin event notification of the v2 API: no snapshot event of a session.
+        body = json.dumps({"id": "evt_thin", "object": "v2.core.event"}).encode()
+        return api.sign(body, TEST_STRIPE_WEBHOOK_SECRET), body
+
+    def unreachable() -> PaymentProvider:
+        down = FakeStripeApi()
+        down.down = True
+        return stripe_over(down.transport)
+
+    return PaymentProviderBackend(provider, pay, signed, forged, foreign, unreachable)
+
+
+@pytest.fixture(params=["memory", pytest.param("redis", marks=pytest.mark.integration), "stripe"])
+def payment_provider(request: pytest.FixtureRequest) -> PaymentProviderBackend:
+    """The payment provider of this run of a contract scenario: the fake, the mock, then Stripe.
+
+    The fake and the mock on Redis run on a clock that stands still, as the
+    mock's signatures are dated by it; the unreachable mock is built over a
+    closed port, under the same prefix. Stripe runs its real adapter, and the
+    SDK, over ``FakeStripeApi``: no network, so no Docker either.
     """
     if request.param == "memory":
         return _fake_payments()
+    if request.param == "stripe":
+        return _stripe_payments()
     client: Redis = request.getfixturevalue("redis_client")
     unreachable_client: Redis = request.getfixturevalue("unreachable_redis_client")
     prefix: str = request.getfixturevalue("redis_key_prefix")
@@ -372,6 +442,7 @@ def payment_provider(request: pytest.FixtureRequest) -> PaymentProviderBackend:
         pay,
         provider.signed_webhook,
         forger.signed_webhook,
+        lambda: provider.signed_webhook(_OTHER_PROVIDER),
         lambda: mock(unreachable_client),
     )
 

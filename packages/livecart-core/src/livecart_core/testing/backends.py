@@ -662,7 +662,8 @@ class PaymentProviderBackend:
     ``pay`` is the buyer paying on the hosted page, and answers the session
     as it stands after the attempt: complete, or still expired when LiveCart
     expired it first. ``signed`` signs an event as the provider does,
-    ``forged`` as someone without its key would, and ``unreachable`` gives a
+    ``forged`` as someone without its key would, ``foreign`` signs as the
+    provider a body that is no event of its own, and ``unreachable`` gives a
     provider whose own service cannot be reached.
     """
 
@@ -670,6 +671,7 @@ class PaymentProviderBackend:
     pay: Callable[[str], Awaitable[CheckoutSession]]
     signed: SignWebhook
     forged: SignWebhook
+    foreign: Callable[[], tuple[dict[str, str], bytes]]
     unreachable: Callable[[], PaymentProvider]
 
 

@@ -1,4 +1,4 @@
-"""The payment providers ``PAYMENT_PROVIDER`` selects: the mock, the stubs, and their startup."""
+"""The payment providers ``PAYMENT_PROVIDER`` selects: the mock, Stripe, the stubs, at startup."""
 
 import importlib
 from collections.abc import AsyncIterator
@@ -16,6 +16,7 @@ from livecart_core.infrastructure.payments import (
 )
 from livecart_core.infrastructure.payments.mock import MockPaymentProvider
 from livecart_core.infrastructure.payments.paypal import PayPalPaymentProvider
+from livecart_core.infrastructure.payments.stripe import StripePaymentProvider
 from livecart_core.infrastructure.payments.stub import PaymentProviderStub
 from livecart_core.infrastructure.payments.viva import VivaPaymentProvider
 from livecart_core.infrastructure.redis_client import create_redis_client
@@ -25,6 +26,8 @@ from livecart_core.testing.keys import (
     TEST_JWT_SECRET,
     TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
+    TEST_STRIPE_SECRET_KEY,
+    TEST_STRIPE_WEBHOOK_SECRET,
 )
 
 
@@ -79,11 +82,40 @@ def test_a_stub_stops_the_process_at_startup(provider: PaymentProviderName, redi
         build_payment_provider(_settings(payment_provider=provider), redis, FakeClock())
 
 
-def test_stripe_is_refused_until_its_adapter_exists(redis: Redis) -> None:
-    settings = _settings(payment_provider=PaymentProviderName.STRIPE)
+@pytest.mark.parametrize(
+    "missing",
+    [
+        {"stripe_secret_key": None},
+        {"stripe_webhook_secret": None},
+    ],
+    ids=["key", "webhook-secret"],
+)
+def test_stripe_needs_its_key_and_its_webhook_secret(
+    redis: Redis, missing: dict[str, object]
+) -> None:
+    settings = _settings(
+        payment_provider=PaymentProviderName.STRIPE,
+        stripe_secret_key=TEST_STRIPE_SECRET_KEY,
+        stripe_webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+    ).model_copy(update=missing)
 
-    with pytest.raises(NotImplementedError, match="PAYMENT_PROVIDER=stripe"):
+    with pytest.raises(ValueError, match="STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET"):
         build_payment_provider(settings, redis, FakeClock())
+
+
+async def test_stripe_is_built_from_its_key_and_its_webhook_secret(redis: Redis) -> None:
+    settings = _settings(
+        payment_provider=PaymentProviderName.STRIPE,
+        stripe_secret_key=TEST_STRIPE_SECRET_KEY,
+        stripe_webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+    )
+
+    provider = build_payment_provider(settings, redis, FakeClock())
+
+    assert isinstance(provider, StripePaymentProvider)
+    assert provider.name is PaymentProviderName.STRIPE
+    assert TEST_STRIPE_SECRET_KEY.get_secret_value() not in repr(provider)
+    await provider.aclose()
 
 
 def test_every_stub_names_its_provider_and_documents_its_flow() -> None:

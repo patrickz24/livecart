@@ -84,6 +84,10 @@ QUEUE_ENTRY_MEMORY_FACTOR: Final = Fraction(5, 4)
 QUEUE_MEMORY_SHARE: Final = Fraction(1, 2)
 # The bounds of PAYMENT_MAX_ATTEMPTS: one attempt at least, five at most.
 MAX_PAYMENT_ATTEMPTS: Final = 5
+# Stripe's test mode keys: a secret key or a restricted one. A live key
+# (sk_live_, rk_live_) is refused: LiveCart takes no real payment.
+STRIPE_TEST_KEY_PREFIXES: Final = ("sk_test_", "rk_test_")
+STRIPE_SIGNING_KEY_PREFIX: Final = "whsec_"
 # Schemes a return URL never takes, whatever ALLOWED_APP_SCHEMES says: the
 # web's, which would make the bridge page an open redirect, those a browser
 # runs or reads (javascript, data, file...), and Expo Go's, which only
@@ -501,6 +505,12 @@ class Settings(LlmSettings):
     # hosted page sends when the buyer pays, and names its sessions, in the API
     # and the worker alike. Required while PAYMENT_PROVIDER=mock.
     mock_payment_webhook_secret: SecretStr | None = None
+    # Stripe Checkout in test mode, both required while PAYMENT_PROVIDER=stripe:
+    # the secret key of a test account (sk_test_..., or a restricted rk_test_...),
+    # and the signing secret (whsec_...) of the webhook endpoint that posts to
+    # /api/v1/webhooks/payments/stripe, which construct_event checks.
+    stripe_secret_key: SecretStr | None = None
+    stripe_webhook_secret: SecretStr | None = None
     # The origin the buyer's browser reaches the API on, through nginx: the
     # provider sends the buyer back to its bridge page there, and the mock's
     # hosted page is served there. In development, the app's EXPO_PUBLIC_API_URL.
@@ -927,6 +937,30 @@ class Settings(LlmSettings):
     @classmethod
     def _lowercase_payment_provider(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("stripe_secret_key", "stripe_webhook_secret", mode="before")
+    @classmethod
+    def _an_empty_stripe_value_is_none(cls, value: object) -> object:
+        """``STRIPE_SECRET_KEY=``, as .env.example ships it and compose passes it: no Stripe."""
+        return None if isinstance(value, str) and not value.strip() else value
+
+    @field_validator("stripe_secret_key")
+    @classmethod
+    def _check_stripe_secret_key(cls, value: SecretStr | None) -> SecretStr | None:
+        """A test mode key only; the message never repeats the key."""
+        if value is not None and not value.get_secret_value().startswith(STRIPE_TEST_KEY_PREFIXES):
+            raise ValueError(
+                "must be a Stripe test mode key (sk_test_... or rk_test_...): "
+                "LiveCart takes no live payment"
+            )
+        return value
+
+    @field_validator("stripe_webhook_secret")
+    @classmethod
+    def _check_stripe_webhook_secret(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None and not value.get_secret_value().startswith(STRIPE_SIGNING_KEY_PREFIX):
+            raise ValueError("must be the signing secret of a Stripe webhook endpoint (whsec_...)")
+        return value
 
     @field_validator("public_api_base_url")
     @classmethod

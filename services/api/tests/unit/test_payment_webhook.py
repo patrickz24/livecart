@@ -2,13 +2,15 @@
 
 The provider is the mock, whose signature is the HMAC of ``livecart_core.signing``
 under ``MOCK_PAYMENT_WEBHOOK_SECRET``: it checks signatures without its Redis.
+The last tests run Stripe's adapter, whose SDK checks ``Stripe-Signature``
+(``construct_event``), over a fake Stripe.
 """
 
 import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import httpx2
 import pytest
@@ -29,6 +31,7 @@ from livecart_core.application.dto import (
 )
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.infrastructure.payments.mock import MockPaymentProvider
+from livecart_core.infrastructure.payments.stripe import Httpx2Client, StripePaymentProvider
 from livecart_core.infrastructure.redis_client import create_redis_client
 from livecart_core.signing import SIGNATURE_HEADER, WebhookSigner
 from livecart_core.testing.fakes import (
@@ -37,7 +40,12 @@ from livecart_core.testing.fakes import (
     InMemoryDatabase,
     InMemoryRateLimiter,
 )
-from livecart_core.testing.keys import TEST_MOCK_PAYMENT_WEBHOOK_SECRET
+from livecart_core.testing.keys import (
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+    TEST_STRIPE_SECRET_KEY,
+    TEST_STRIPE_WEBHOOK_SECRET,
+)
+from livecart_core.testing.stripe_api import FakeStripeApi
 
 MOCK_WEBHOOK = "/api/v1/webhooks/payments/mock"
 REFUSED = {"detail": INVALID_SIGNATURE}
@@ -327,3 +335,85 @@ async def test_the_webhook_is_documented_with_its_signed_body() -> None:
     operation = schema["paths"]["/api/v1/webhooks/payments/{provider}"]["post"]
     assert "Stripe-Signature" in operation["requestBody"]["description"]
     assert set(operation["responses"]) == {"200", "401", "404", "422", "429", "503"}
+
+
+# --- Stripe ------------------------------------------------------------------------------
+
+STRIPE_WEBHOOK = "/api/v1/webhooks/payments/stripe"
+
+
+async def _no_backoff(_seconds: float) -> None:
+    return None
+
+
+@asynccontextmanager
+async def _open_stripe_api() -> AsyncIterator[tuple[httpx2.AsyncClient, InMemoryDatabase]]:
+    """The app with PAYMENT_PROVIDER=stripe: the adapter and its SDK over a fake Stripe."""
+    clock = current_time_clock()
+    database = InMemoryDatabase()
+    stripe = StripePaymentProvider(
+        secret_key=TEST_STRIPE_SECRET_KEY,
+        webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+        http_client=Httpx2Client(transport=FakeStripeApi().transport, sleep=_no_backoff),
+    )
+    resources = memory_resources(database, clock=clock, payment_provider=stripe)
+    settings = make_settings(payment_provider=PaymentProviderName.STRIPE)
+    try:
+        async with open_client(create_app(settings, resources)) as client:
+            yield client, database
+    finally:
+        await stripe.aclose()
+
+
+def _stripe_event(**fields: object) -> PaymentEvent:
+    values: dict[str, object] = {
+        "provider": PaymentProviderName.STRIPE,
+        "event_id": "evt_test_1",
+        "event_type": CheckoutEventType.COMPLETED.value,
+        "checkout_ref": "cs_test_1",
+        "payment_ref": "pi_test_1",
+        "payment_status": CheckoutPaymentStatus.PAID,
+        "amount_minor": 2_500,
+        "currency": "EUR",
+        "occurred_at": datetime.now(UTC).replace(microsecond=0),
+    }
+    values.update(fields)
+    return PaymentEvent.model_validate(values)
+
+
+async def test_a_stripe_event_is_verified_by_construct_event_then_recorded() -> None:
+    event = _stripe_event()
+    headers, body = FakeStripeApi().signed(event, TEST_STRIPE_WEBHOOK_SECRET)
+
+    async with _open_stripe_api() as (client, database):
+        first = await client.post(STRIPE_WEBHOOK, content=body, headers=headers)
+        again = await client.post(STRIPE_WEBHOOK, content=body, headers=headers)
+        mock = await client.post(MOCK_WEBHOOK, content=body, headers=headers)
+
+    assert (first.status_code, first.json()) == (200, {"redelivery": False})
+    assert (again.status_code, again.json()) == (200, {"redelivery": True})
+    assert mock.status_code == 404
+    registered = database.tables.webhook_events[(PaymentProviderName.STRIPE, "evt_test_1")]
+    assert (registered.event, registered.delivery_count) == (event, 2)
+    # Stripe's body carries the customer's details; the registry never does.
+    assert b"buyer@example.invalid" in body
+    assert "buyer@example.invalid" not in registered.event.model_dump_json()
+
+
+async def test_a_stripe_event_unsigned_forged_or_stale_gets_401() -> None:
+    api = FakeStripeApi()
+    event = _stripe_event()
+    _, body = api.signed(event, TEST_STRIPE_WEBHOOK_SECRET)
+    forged, _ = api.signed(event, SecretStr("whsec_a-secret-the-forger-guessed"))
+    stale = api.sign(
+        body, TEST_STRIPE_WEBHOOK_SECRET, at=datetime.now(UTC) - timedelta(seconds=301)
+    )
+
+    async with _open_stripe_api() as (client, database):
+        answers = [
+            await client.post(STRIPE_WEBHOOK, content=body, headers=headers)
+            for headers in ({}, forged, stale)
+        ]
+
+    assert [(answer.status_code, answer.json()) for answer in answers] == [(401, REFUSED)] * 3
+    assert database.tables.webhook_events == {}
