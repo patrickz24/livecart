@@ -31,10 +31,12 @@ from livecart_core.application.dto import (
     Platform,
     ProductRecord,
     RegisteredEvent,
+    ShipmentRef,
     StockLevel,
 )
 from livecart_core.application.ports import (
     BuyerNotifier,
+    CarrierProvider,
     CommentInbox,
     LiveSessionActivity,
     LiveSessionRepository,
@@ -76,6 +78,7 @@ from livecart_core.testing.fakes import (
     FAKE_CLOCK_START,
     LOCKED_ACCOUNT,
     TEST_ORDER_TOKENS,
+    FakeClock,
     InMemoryDatabase,
 )
 
@@ -667,6 +670,24 @@ class PaymentProviderBackend:
     forged: SignWebhook
     foreign: Callable[[], tuple[dict[str, str], bytes]]
     unreachable: Callable[[], PaymentProvider]
+
+
+@dataclass(frozen=True, slots=True)
+class CarrierBackend:
+    """The carrier under test, the clock it reads, how its parcels move, and a ref it never issued.
+
+    ``carry`` lets one step of the route's time (``step``) pass on ``clock``,
+    and the carrier move the shipment one step on along its route, as the
+    carrier's own day would; a delivered shipment stays where it is.
+    ``foreign`` gives the ref of a shipment another account of the carrier
+    created.
+    """
+
+    carrier: CarrierProvider
+    clock: FakeClock
+    step: timedelta
+    carry: Callable[[ShipmentRef], Awaitable[None]]
+    foreign: Callable[[], Awaitable[ShipmentRef]]
 
 
 class BackendFactory(Protocol):

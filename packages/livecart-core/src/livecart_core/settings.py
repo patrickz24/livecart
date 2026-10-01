@@ -20,7 +20,7 @@ from urllib.parse import SplitResult, urlsplit
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from livecart_core.application.dto import LlmPrice, PaymentProviderName, Platform
+from livecart_core.application.dto import CarrierName, LlmPrice, PaymentProviderName, Platform
 from livecart_core.domain.quantity import QUANTITY_CEILING
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.infrastructure.db.engine import (
@@ -84,6 +84,10 @@ QUEUE_ENTRY_MEMORY_FACTOR: Final = Fraction(5, 4)
 QUEUE_MEMORY_SHARE: Final = Fraction(1, 2)
 # The bounds of PAYMENT_MAX_ATTEMPTS: one attempt at least, five at most.
 MAX_PAYMENT_ATTEMPTS: Final = 5
+# The bounds of MOCK_CARRIER_STEP_SECONDS: from a second, to watch a parcel
+# delivered within a minute, to a day.
+MIN_MOCK_CARRIER_STEP_SECONDS: Final = 1
+MAX_MOCK_CARRIER_STEP_SECONDS: Final = 86_400
 # Stripe's test mode keys: a secret key or a restricted one. A live key
 # (sk_live_, rk_live_) is refused: LiveCart takes no real payment.
 STRIPE_TEST_KEY_PREFIXES: Final = ("sk_test_", "rk_test_")
@@ -531,6 +535,18 @@ class Settings(LlmSettings):
     # schemes, comma-separated in the environment. Expo Go's exp:// is taken
     # too in development, on a private address only.
     allowed_app_schemes: Annotated[tuple[str, ...], NoDecode] = ("livecart", "samplelive")
+    # The carrier of the paid orders' shipments (livecart_core.infrastructure
+    # .carriers): the mock by default, which needs no account and keeps no
+    # state; DPD, Chronopost and DHL are documented stubs that stop the worker,
+    # the one process that calls the carrier, at startup.
+    carrier_provider: CarrierName = CarrierName.MOCK
+    # The mock carrier's HMAC key, 32 bytes at least: it derives the carrier
+    # ref and the tracking number of each order's shipment. Required by the
+    # worker while CARRIER_PROVIDER=mock.
+    mock_carrier_secret: SecretStr | None = None
+    # How long a parcel of the mock carrier stays at each step of its route
+    # (created, in transit, out for delivery, then delivered for good).
+    mock_carrier_step_seconds: int = 120
     # Backpressure of the comment webhook: once the queue's backlog (comments
     # not acknowledged yet, delivered or not) reaches this depth, the webhook
     # answers 503 until the workers catch up.
@@ -593,6 +609,10 @@ class Settings(LlmSettings):
     @property
     def payment_grace(self) -> timedelta:
         return timedelta(seconds=self.payment_grace_seconds)
+
+    @property
+    def mock_carrier_step(self) -> timedelta:
+        return timedelta(seconds=self.mock_carrier_step_seconds)
 
     @property
     def message_process_timeout(self) -> timedelta:
@@ -662,6 +682,7 @@ class Settings(LlmSettings):
         "jwt_secret",
         "order_token_key",
         "mock_payment_webhook_secret",
+        "mock_carrier_secret",
         *COMMENT_WEBHOOK_SECRETS.values(),
     )
     @classmethod
@@ -933,9 +954,9 @@ class Settings(LlmSettings):
             raise ValueError("must name at least one platform, such as simulator")
         return value
 
-    @field_validator("payment_provider", mode="before")
+    @field_validator("payment_provider", "carrier_provider", mode="before")
     @classmethod
-    def _lowercase_payment_provider(cls, value: object) -> object:
+    def _lowercase_provider(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
 
     @field_validator("stripe_secret_key", "stripe_webhook_secret", mode="before")
@@ -984,6 +1005,16 @@ class Settings(LlmSettings):
     def _check_payment_max_attempts(cls, value: int) -> int:
         if not 1 <= value <= MAX_PAYMENT_ATTEMPTS:
             raise ValueError(f"must be from 1 to {MAX_PAYMENT_ATTEMPTS} attempts")
+        return value
+
+    @field_validator("mock_carrier_step_seconds")
+    @classmethod
+    def _check_mock_carrier_step_seconds(cls, value: int) -> int:
+        if not MIN_MOCK_CARRIER_STEP_SECONDS <= value <= MAX_MOCK_CARRIER_STEP_SECONDS:
+            raise ValueError(
+                f"must be from {MIN_MOCK_CARRIER_STEP_SECONDS} to "
+                f"{MAX_MOCK_CARRIER_STEP_SECONDS} seconds"
+            )
         return value
 
     @field_validator("allowed_app_schemes", mode="before")

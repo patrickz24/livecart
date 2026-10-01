@@ -1,7 +1,8 @@
 """What only the provider fakes promise: the requests they record and the failures they script.
 
 What every payment provider does, the fake and the mock alike, is in
-``tests/contract/test_payment_provider.py``.
+``tests/contract/test_payment_provider.py``, and what every carrier does in
+``tests/contract/test_carrier_provider.py``.
 """
 
 from dataclasses import replace
@@ -23,7 +24,6 @@ from livecart_core.domain.money import Money
 from livecart_core.domain.reference import OrderReference
 from livecart_core.domain.state_machines import ShipmentStatus
 from livecart_core.testing.fakes import (
-    FAKE_CLOCK_START,
     FakeCarrierProvider,
     FakeClock,
     FakePaymentProvider,
@@ -94,32 +94,6 @@ def _shipment(order: int = 10) -> ShipmentRequest:
     return ShipmentRequest(UUID(int=order), OrderReference("LC-7K3F9Q"), ADDRESS)
 
 
-async def test_a_shipment_starts_created_at_the_clock_time() -> None:
-    clock = FakeClock()
-    carrier = FakeCarrierProvider(clock)
-
-    ref = await carrier.create_shipment(_shipment())
-
-    assert carrier.name is CarrierName.MOCK
-    assert ref.carrier is CarrierName.MOCK
-    assert ref.created_at == FAKE_CLOCK_START
-    assert await carrier.get_tracking(ref) == TrackingUpdate(
-        ShipmentStatus.CREATED, FAKE_CLOCK_START
-    )
-
-
-async def test_one_order_has_one_shipment() -> None:
-    carrier = FakeCarrierProvider(FakeClock())
-
-    first = await carrier.create_shipment(_shipment(10))
-    again = await carrier.create_shipment(_shipment(10))
-    other = await carrier.create_shipment(_shipment(11))
-
-    assert again == first
-    assert other.tracking_number != first.tracking_number
-    assert other.carrier_ref != first.carrier_ref
-
-
 async def test_a_shipment_moves_one_step_at_a_time() -> None:
     clock = FakeClock()
     carrier = FakeCarrierProvider(clock)
@@ -135,7 +109,7 @@ async def test_a_shipment_moves_one_step_at_a_time() -> None:
         carrier.advance(ref, ShipmentStatus.DELIVERED)
 
 
-async def test_only_a_shipment_not_yet_in_transit_can_be_cancelled() -> None:
+async def test_the_fake_reports_the_cancellation_it_accepted() -> None:
     carrier = FakeCarrierProvider(FakeClock(), CarrierName.DPD)
     waiting = await carrier.create_shipment(_shipment(10))
     moving = await carrier.create_shipment(_shipment(11))
@@ -147,14 +121,6 @@ async def test_only_a_shipment_not_yet_in_transit_can_be_cancelled() -> None:
     assert (await carrier.get_tracking(waiting)).status is ShipmentStatus.CANCELLED
     with pytest.raises(InvalidTransition):
         await carrier.cancel_shipment(moving)
-
-
-async def test_an_unknown_shipment_is_not_found() -> None:
-    carrier = FakeCarrierProvider(FakeClock())
-    known = await FakeCarrierProvider(FakeClock()).create_shipment(_shipment())
-
-    with pytest.raises(RecordNotFound):
-        await carrier.get_tracking(known)
 
 
 async def test_carrier_calls_fail_on_demand() -> None:

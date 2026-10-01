@@ -461,13 +461,25 @@ class PaymentProvider(Protocol):
 
 
 class CarrierProvider(Protocol):
-    """A carrier for paid orders: a stateless mock (milestone 6); DPD, Chronopost and DHL are stubs.
+    """The carrier of paid orders: a stateless mock by default; DPD, Chronopost and DHL are stubs.
 
-    ``create_shipment`` is idempotent per order: creating again for the same
-    order returns the same shipment, so a crash between creating a shipment
-    and recording it is harmless. A shipment's status only moves along
-    ``SHIPMENT_TRANSITIONS``. Transport failures raise ``ServiceUnavailable``,
-    and an unknown shipment ``RecordNotFound``.
+    Three calls, whatever the carrier, over provider-neutral records
+    (``ShipmentRequest``, ``ShipmentRef``, ``TrackingUpdate``): create the
+    shipment of an order, read where it is, cancel it.
+
+    - ``create_shipment`` is idempotent per order: a later call for the same
+      order names the same shipment, by the same carrier ref and tracking
+      number, so a crash between creating a shipment and recording it is
+      harmless. LiveCart records the first answer, at most one shipment per
+      order, and tracks it from there;
+    - a shipment only moves forward, along ``SHIPMENT_ROUTE``: a carrier
+      reports where it is, not every step it took, so two reads may find it
+      more than one step apart;
+    - transport failures raise ``ServiceUnavailable``, and a ref the carrier
+      never issued ``RecordNotFound``.
+
+    The worker builds the carrier of ``CARRIER_PROVIDER`` at startup; a stub
+    stops it there (``livecart_core.infrastructure.carriers``).
     """
 
     @property
@@ -475,13 +487,18 @@ class CarrierProvider(Protocol):
         """The carrier, as recorded on each shipment."""
 
     async def create_shipment(self, request: ShipmentRequest) -> ShipmentRef:
-        """The shipment of this order, created on the first call."""
+        """The shipment of this order: created on the first call, the same one on the next."""
 
     async def get_tracking(self, ref: ShipmentRef) -> TrackingUpdate:
-        """The shipment's current status at the carrier."""
+        """The shipment's status at the carrier now, and the time of its latest event."""
 
     async def cancel_shipment(self, ref: ShipmentRef) -> None:
-        """Cancel a shipment not yet in transit; ``InvalidTransition`` once it is."""
+        """Cancel a shipment the carrier has not picked up yet; ``InvalidTransition`` once it has.
+
+        Cancelling again is harmless. The cancellation is LiveCart's to
+        record on its own row, and a cancelled shipment is never tracked
+        again: a carrier without state, such as the mock, forgets it.
+        """
 
 
 # --- Repositories ----------------------------------------------------------------------

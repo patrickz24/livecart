@@ -21,6 +21,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from livecart_core.application.dto import (
+    MAX_TRACKING_NUMBER_LENGTH,
     CarrierName,
     IntentSource,
     LiveSessionRecord,
@@ -146,7 +147,7 @@ class ShipmentPayload(BaseModel):
     order_id: UUID
     status: ShipmentStatus
     carrier: CarrierName
-    tracking_number: str = Field(min_length=1, max_length=64)
+    tracking_number: str = Field(min_length=1, max_length=MAX_TRACKING_NUMBER_LENGTH)
     last_event_at: AwareDatetime | None = None
 
     @classmethod

@@ -1201,9 +1201,18 @@ class PaymentSettlement:
 
 # --- Shipments -------------------------------------------------------------------------
 
+# The widths of shipments.carrier_ref and shipments.tracking_number.
+MAX_CARRIER_REF_LENGTH: Final = 128
+MAX_TRACKING_NUMBER_LENGTH: Final = 64
+
 
 @dataclass(frozen=True, slots=True)
 class ShipmentRequest:
+    """The parcel of a paid order, for its carrier: where it goes, under the order's reference.
+
+    The order's id is the carrier's idempotency key: one order, one shipment.
+    """
+
     order_id: UUID
     reference: OrderReference
     address: ShippingAddress
@@ -1211,16 +1220,31 @@ class ShipmentRequest:
 
 @dataclass(frozen=True, slots=True)
 class ShipmentRef:
-    """How a carrier knows a shipment."""
+    """How a carrier knows a shipment, whatever the carrier.
+
+    ``carrier_ref`` is the carrier's own id of the shipment, ``tracking_number``
+    the number the buyer follows it by, and ``created_at`` when the carrier
+    created it. LiveCart records all four (``shipments.carrier``,
+    ``carrier_ref``, ``tracking_number``, ``carrier_created_at``) and hands the
+    ref back to the carrier to track the shipment.
+    """
 
     carrier: CarrierName
     carrier_ref: str
     tracking_number: str
     created_at: datetime
 
+    def __post_init__(self) -> None:
+        if not 1 <= len(self.carrier_ref) <= MAX_CARRIER_REF_LENGTH:
+            raise ValueError(f"a carrier ref has 1 to {MAX_CARRIER_REF_LENGTH} characters")
+        if not 1 <= len(self.tracking_number) <= MAX_TRACKING_NUMBER_LENGTH:
+            raise ValueError(f"a tracking number has 1 to {MAX_TRACKING_NUMBER_LENGTH} characters")
+
 
 @dataclass(frozen=True, slots=True)
 class TrackingUpdate:
+    """A shipment as its carrier reports it now: its status, and the time of its latest event."""
+
     status: ShipmentStatus
     last_event_at: datetime
 

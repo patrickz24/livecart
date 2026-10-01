@@ -30,6 +30,9 @@ from livecart_core.application.dto import (
     PaymentEvent,
     PaymentProviderName,
     Platform,
+    ShipmentRef,
+    ShipmentRequest,
+    ShippingAddress,
 )
 from livecart_core.application.ports import (
     BuyerNotifier,
@@ -40,6 +43,8 @@ from livecart_core.application.ports import (
     RateLimiter,
 )
 from livecart_core.domain.reference import OrderReference, RandomSource
+from livecart_core.domain.shipments import SHIPMENT_ROUTE
+from livecart_core.infrastructure.carriers.mock import MockCarrier
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.engine import WORKER_POOL, create_db_engine
 from livecart_core.infrastructure.events import EVENT_RETENTION, RedisSessionEvents
@@ -54,6 +59,7 @@ from livecart_core.testing.backends import (
     AuthBackend,
     Backend,
     BackendFactory,
+    CarrierBackend,
     EventsBackend,
     InMemoryBackend,
     NotifierBackend,
@@ -71,6 +77,7 @@ from livecart_core.testing.database import (
 from livecart_core.testing.fakes import (
     FAKE_CLOCK_START,
     FakeBuyerNotifier,
+    FakeCarrierProvider,
     FakeClock,
     FakeCommentQueue,
     FakePaymentProvider,
@@ -80,6 +87,7 @@ from livecart_core.testing.fakes import (
     InMemorySessionEvents,
 )
 from livecart_core.testing.keys import (
+    TEST_MOCK_CARRIER_SECRET,
     TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_STRIPE_SECRET_KEY,
     TEST_STRIPE_WEBHOOK_SECRET,
@@ -495,3 +503,66 @@ def buyer_notifier(request: pytest.FixtureRequest) -> NotifierBackend:
         )
 
     return NotifierBackend(notifier, streamed, failing_redis)
+
+
+# One step of a carrier's route in the scenarios: the mock's default.
+TEST_CARRIER_STEP = timedelta(seconds=120)
+# The parcel of an order of another account, which the carrier under test never created.
+_FOREIGN_SHIPMENT = ShipmentRequest(
+    UUID(int=99),
+    OrderReference("LC-7K3F9Q"),
+    ShippingAddress(
+        full_name="Camille Martin",
+        line1="12 rue des Lilas",
+        postal_code="69003",
+        city="Lyon",
+        country="FR",
+    ),
+)
+
+
+def _fake_carrier() -> CarrierBackend:
+    clock = FakeClock()
+    fake = FakeCarrierProvider(clock)
+
+    async def carry(ref: ShipmentRef) -> None:
+        clock.advance(TEST_CARRIER_STEP)
+        status = (await fake.get_tracking(ref)).status
+        if status in SHIPMENT_ROUTE[:-1]:
+            fake.advance(ref, SHIPMENT_ROUTE[SHIPMENT_ROUTE.index(status) + 1])
+
+    async def foreign() -> ShipmentRef:
+        # Of the fake's shape, under a number it never gave.
+        return ShipmentRef(fake.name, "fake-shipment-404", "FAKE00000404", clock.now())
+
+    return CarrierBackend(fake, clock, TEST_CARRIER_STEP, carry, foreign)
+
+
+def _mock_carrier() -> CarrierBackend:
+    clock = FakeClock()
+    mock = MockCarrier(TEST_MOCK_CARRIER_SECRET, clock, step=TEST_CARRIER_STEP)
+    other_account = MockCarrier(
+        SecretStr("another-mock-carrier-account-" * 2), clock, step=TEST_CARRIER_STEP
+    )
+
+    async def carry(ref: ShipmentRef) -> None:
+        # The mock computes the route from the time alone.
+        clock.advance(TEST_CARRIER_STEP)
+
+    async def foreign() -> ShipmentRef:
+        return await other_account.create_shipment(_FOREIGN_SHIPMENT)
+
+    return CarrierBackend(mock, clock, TEST_CARRIER_STEP, carry, foreign)
+
+
+@pytest.fixture(params=["memory", "mock"])
+def carrier_provider(request: pytest.FixtureRequest) -> CarrierBackend:
+    """The carrier of this run of a contract scenario: the fake, then the stateless mock.
+
+    Neither needs a server: the mock keeps no state, so no run is marked
+    ``integration``. Both read a fake clock that stands still until a
+    scenario carries a parcel one step on.
+    """
+    if request.param == "memory":
+        return _fake_carrier()
+    return _mock_carrier()

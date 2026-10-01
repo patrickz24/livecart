@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from livecart_core.application.dto import LlmPrice, PaymentProviderName, Platform
+from livecart_core.application.dto import CarrierName, LlmPrice, PaymentProviderName, Platform
 from livecart_core.healthcheck import DEFAULT_HEARTBEAT_FILE
 from livecart_core.settings import (
     COMMENT_WEBHOOK_SECRETS,
@@ -55,6 +55,7 @@ PAYMENT_SETTINGS = (
     "PAYMENT_MAX_ATTEMPTS",
     "ALLOWED_APP_SCHEMES",
 )
+CARRIER_SETTINGS = ("CARRIER_PROVIDER", "MOCK_CARRIER_SECRET", "MOCK_CARRIER_STEP_SECONDS")
 # Signing keys that pass every check, in production too.
 KEYS = {
     "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
@@ -89,6 +90,7 @@ def isolated_env(monkeypatch: pytest.MonkeyPatch) -> None:
         *webhooks,
         *worker,
         *PAYMENT_SETTINGS,
+        *CARRIER_SETTINGS,
         *LLM_SETTINGS,
         "DEFAULT_CURRENCY",
         "REDIS_KEY_PREFIX",
@@ -1098,3 +1100,44 @@ def test_the_app_schemes_are_listed_between_commas() -> None:
 def test_the_app_schemes_refuse_the_web_and_expo_go(value: str, message: str) -> None:
     with pytest.raises(ValidationError, match=message):
         load(ALLOWED_APP_SCHEMES=value, **dev_env())
+
+
+# --- Carrier ---------------------------------------------------------------------------
+
+
+def test_the_carrier_defaults_to_the_mock_stepping_every_two_minutes() -> None:
+    settings = load(**dev_env())
+
+    assert settings.carrier_provider is CarrierName.MOCK
+    assert settings.mock_carrier_secret is None
+    assert settings.mock_carrier_step == timedelta(seconds=120)
+
+
+def test_the_carrier_is_read_whatever_its_case() -> None:
+    assert load(CARRIER_PROVIDER=" Chronopost ", **dev_env()).carrier_provider is (
+        CarrierName.CHRONOPOST
+    )
+    with pytest.raises(ValidationError, match="carrier_provider"):
+        load(CARRIER_PROVIDER="pigeon", **dev_env())
+
+
+def test_the_mock_carrier_key_needs_32_bytes_and_no_placeholder_in_production() -> None:
+    short = "mock-carrier-" * 2  # 26 bytes
+    placeholder = "change-me-mock-carrier-change-me-mock-carrier"
+
+    with pytest.raises(ValidationError, match="at least 32 bytes long") as excinfo:
+        load(MOCK_CARRIER_SECRET=short, **dev_env())
+    assert short not in str(excinfo.value)
+    assert load(MOCK_CARRIER_SECRET=placeholder, **dev_env()).mock_carrier_secret
+    with pytest.raises(ValidationError, match="MOCK_CARRIER_SECRET"):
+        load(APP_ENV="production", MOCK_CARRIER_SECRET=placeholder, **dev_env("real", "real"))
+
+
+def test_a_step_of_the_mock_carrier_takes_a_second_to_a_day() -> None:
+    assert load(MOCK_CARRIER_STEP_SECONDS="1", **dev_env()).mock_carrier_step == timedelta(
+        seconds=1
+    )
+    assert load(MOCK_CARRIER_STEP_SECONDS="86400", **dev_env()).mock_carrier_step_seconds == 86_400
+    for value in ("0", "86401"):
+        with pytest.raises(ValidationError, match="from 1 to 86400 seconds"):
+            load(MOCK_CARRIER_STEP_SECONDS=value, **dev_env())

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from livecart_core.application.dto import (
     MAX_BATCH_SIZE,
+    MAX_CARRIER_REF_LENGTH,
     MAX_COMMENT_LENGTH,
     MAX_IDENTIFIER_LENGTH,
     MAX_PAGE_SIZE,
@@ -15,6 +16,7 @@ from livecart_core.application.dto import (
     MAX_PRODUCT_NAME_LENGTH,
     MAX_STOCK_TOTAL,
     MAX_TITLE_LENGTH,
+    MAX_TRACKING_NUMBER_LENGTH,
     AttemptOpening,
     AttemptOpeningKind,
     BuyerNotification,
@@ -58,6 +60,7 @@ from livecart_core.application.dto import (
     SellerRecord,
     SessionEvent,
     SessionEventType,
+    ShipmentRef,
     ShippingAddress,
     StockLevel,
     WebhookOutcome,
@@ -684,6 +687,25 @@ def test_only_a_processed_webhook_event_has_an_outcome() -> None:
         RegisteredEvent(event, NOW, processed_at=NOW)
     with pytest.raises(ValueError, match="processed event"):
         RegisteredEvent(event, NOW, outcome=WebhookOutcome.IGNORED)
+
+
+# --- Shipments -------------------------------------------------------------------------
+
+
+def test_a_shipment_ref_fits_its_columns() -> None:
+    ref = ShipmentRef(
+        CarrierName.MOCK, "r" * MAX_CARRIER_REF_LENGTH, "N" * MAX_TRACKING_NUMBER_LENGTH, NOW
+    )
+
+    assert len(ref.carrier_ref) == MAX_CARRIER_REF_LENGTH
+    with pytest.raises(ValueError, match="carrier ref"):
+        replace(ref, carrier_ref="r" * (MAX_CARRIER_REF_LENGTH + 1))
+    with pytest.raises(ValueError, match="carrier ref"):
+        replace(ref, carrier_ref="")
+    with pytest.raises(ValueError, match="tracking number"):
+        replace(ref, tracking_number="N" * (MAX_TRACKING_NUMBER_LENGTH + 1))
+    with pytest.raises(ValueError, match="tracking number"):
+        replace(ref, tracking_number="")
 
 
 # --- Buyer notification ----------------------------------------------------------------

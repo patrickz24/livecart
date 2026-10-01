@@ -36,12 +36,14 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 from livecart_core.application.dto import (
+    MAX_CARRIER_REF_LENGTH,
     MAX_COMMENT_LENGTH,
     MAX_IDENTIFIER_LENGTH,
     MAX_LLM_CODE_LENGTH,
     MAX_LLM_VARIANT_LENGTH,
     MAX_PRODUCT_NAME_LENGTH,
     MAX_TITLE_LENGTH,
+    MAX_TRACKING_NUMBER_LENGTH,
     CarrierName,
     IntentSource,
     ParseKind,
@@ -526,8 +528,8 @@ shipments: Final = sa.Table(
     _id(),
     sa.Column("order_id", sa.Uuid, sa.ForeignKey("orders.id"), nullable=False),
     sa.Column("carrier", sa.String(16), nullable=False),
-    sa.Column("carrier_ref", sa.String(128), nullable=False),
-    sa.Column("tracking_number", sa.String(64), nullable=False),
+    sa.Column("carrier_ref", sa.String(MAX_CARRIER_REF_LENGTH), nullable=False),
+    sa.Column("tracking_number", sa.String(MAX_TRACKING_NUMBER_LENGTH), nullable=False),
     sa.Column("status", sa.String(20), nullable=False, server_default=ShipmentStatus.CREATED.value),
     _timestamp("carrier_created_at", nullable=False),
     _timestamp("last_event_at"),
