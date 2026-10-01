@@ -1,4 +1,4 @@
-"""The shipments of the paid orders: created after each payment, and every minute by the fallback.
+"""The shipments of the paid orders: created after each payment, then tracked every minute.
 
 Two paths create a paid order's shipment (``CreateShipment``), each once its
 own units have committed, out of any transaction:
@@ -7,16 +7,25 @@ own units have committed, out of any transaction:
   the reconciliation of the expiry sweep (``sweeps``) hand ``ship_paid`` the
   orders their tick paid, once it has ended, and their shipments are
   created one order after the other;
-- the shipments loop, every 60 s: the fallback (``ShipUnshippedOrders``)
-  ships the paid orders still without a shipment, those a worker stopped,
-  or a carrier or PostgreSQL down, left behind after their payment.
+- the shipments loop, every ``SHIPMENT_SYNC_INTERVAL_S`` (60 s): the
+  fallback (``ShipUnshippedOrders``) ships the paid orders still without a
+  shipment, those a worker stopped, or a carrier or PostgreSQL down, left
+  behind after their payment.
+
+The same loop then tracks the shipments in flight (``SyncShipmentTracking``):
+each one leased to this worker for an interval, asked about at the carrier,
+and each of its moves persisted by compare-and-set and published once as a
+``shipment.updated``.
 
 Each creation is logged and counted by outcome and by path
-(``livecart_shipment_creations_total{outcome,via}``). What needs a person is
-logged at ERROR: a paid order without an address, a creation that failed
-for another reason than an outage. The logs carry the order's id and
-reference and the shipment's id, never the tracking number, which follows
-a parcel to its buyer's door.
+(``livecart_shipment_creations_total{outcome,via}``); each shipment the
+tracking asked about is counted by outcome
+(``livecart_shipment_tracking_total{outcome}``) and each transition it
+applied by status (``livecart_shipment_transitions_total{status}``), and
+logged. What needs a person is logged at ERROR: a paid order without an
+address, a creation or a tracking that failed for another reason than an
+outage. The logs carry the order's id and reference and the shipment's id,
+never the tracking number, which follows a parcel to its buyer's door.
 """
 
 import asyncio
@@ -34,6 +43,11 @@ from livecart_core.application.create_shipment import (
 )
 from livecart_core.application.dto import OrderRecord
 from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.application.sync_shipment_tracking import (
+    SyncShipmentTracking,
+    TrackedShipment,
+    TrackingOutcome,
+)
 from livecart_worker.metrics import ShipmentPath, WorkerMetrics
 
 logger = structlog.get_logger(__name__)
@@ -99,17 +113,60 @@ async def ship_unshipped_once(
         _record(created, ShipmentPath.FALLBACK, metrics)
 
 
+def _log_tracked(tracked: TrackedShipment) -> None:
+    leased = tracked.leased
+    fields: dict[str, object] = {
+        "shipment_id": str(leased.shipment.id),
+        "order_id": str(leased.shipment.order_id),
+        "reference": leased.reference.value,
+        "carrier": leased.shipment.ref.carrier.value,
+        "outcome": tracked.outcome.value,
+        "from_status": leased.shipment.status.value,
+    }
+    if tracked.moves:
+        fields["status"] = tracked.moves[-1].status.value
+        fields["transitions"] = len(tracked.moves)
+    if tracked.error is not None:
+        fields["error"] = type(tracked.error).__name__
+    outcome = tracked.outcome
+    if outcome is TrackingOutcome.FAILED:
+        logger.error("shipment_tracking_failed", exc_info=tracked.error, **fields)
+    elif outcome is TrackingOutcome.RETRY:
+        logger.warning("shipment_tracking_deferred", **fields)
+    elif tracked.moves:
+        logger.info("shipment_moved", **fields)
+    # A shipment where it was, or moved by another worker: counted, not logged.
+
+
+async def track_once(sync: SyncShipmentTracking, metrics: WorkerMetrics | None = None) -> None:
+    """One tick of the tracking; a lease that fails is logged, and the next tick tries again."""
+    try:
+        tick = await sync()
+    except ServiceUnavailable as error:
+        logger.warning("shipment_tracking_unavailable", error=str(error))
+    except Exception:
+        logger.exception("shipment_tracking_tick_failed")
+    else:
+        for tracked in tick.tracked:
+            _log_tracked(tracked)
+        if metrics is not None:
+            metrics.record_tracking(tick)
+
+
 async def run_shipments(
     fallback: ShipUnshippedOrders,
     stop: asyncio.Event,
     *,
+    sync: SyncShipmentTracking | None = None,
     interval_s: float = SHIPMENTS_INTERVAL_S,
     metrics: WorkerMetrics | None = None,
 ) -> None:
-    """Tick at startup, then every ``interval_s``, until ``stop`` is set."""
+    """The fallback then the tracking, at startup and every ``interval_s``, until ``stop``."""
     logger.info("shipments_started", interval_s=interval_s)
     while not stop.is_set():
         await ship_unshipped_once(fallback, metrics)
+        if sync is not None:
+            await track_once(sync, metrics)
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(interval_s):
                 await stop.wait()

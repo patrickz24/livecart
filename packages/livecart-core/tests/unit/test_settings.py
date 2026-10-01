@@ -55,7 +55,12 @@ PAYMENT_SETTINGS = (
     "PAYMENT_MAX_ATTEMPTS",
     "ALLOWED_APP_SCHEMES",
 )
-CARRIER_SETTINGS = ("CARRIER_PROVIDER", "MOCK_CARRIER_SECRET", "MOCK_CARRIER_STEP_SECONDS")
+CARRIER_SETTINGS = (
+    "CARRIER_PROVIDER",
+    "MOCK_CARRIER_SECRET",
+    "MOCK_CARRIER_STEP_SECONDS",
+    "SHIPMENT_SYNC_INTERVAL_S",
+)
 # Signing keys that pass every check, in production too.
 KEYS = {
     "JWT_SECRET": TEST_JWT_SECRET.get_secret_value(),
@@ -1141,3 +1146,15 @@ def test_a_step_of_the_mock_carrier_takes_a_second_to_a_day() -> None:
     for value in ("0", "86401"):
         with pytest.raises(ValidationError, match="from 1 to 86400 seconds"):
             load(MOCK_CARRIER_STEP_SECONDS=value, **dev_env())
+
+
+def test_the_shipments_are_tracked_every_minute_by_default() -> None:
+    assert load(**dev_env()).shipment_sync_interval == timedelta(seconds=60)
+
+
+def test_the_shipments_are_tracked_every_10_s_to_every_hour() -> None:
+    assert load(SHIPMENT_SYNC_INTERVAL_S="10", **dev_env()).shipment_sync_interval_s == 10
+    assert load(SHIPMENT_SYNC_INTERVAL_S="3600", **dev_env()).shipment_sync_interval_s == 3_600
+    for value in ("9", "3601"):
+        with pytest.raises(ValidationError, match="from 10 to 3600 seconds"):
+            load(SHIPMENT_SYNC_INTERVAL_S=value, **dev_env())

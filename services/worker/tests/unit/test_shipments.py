@@ -11,8 +11,15 @@ from livecart_core.application.create_shipment import (
     CreateShipment,
     ShipUnshippedOrders,
 )
-from livecart_core.application.dto import OrderRecord, SessionEventType
+from livecart_core.application.dto import (
+    LeasedShipment,
+    OrderRecord,
+    SessionEventType,
+    ShipmentRecord,
+)
 from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.application.sync_shipment_tracking import SyncShipmentTracking
+from livecart_core.domain.state_machines import ShipmentStatus
 from livecart_core.testing.builders import paid_order
 from livecart_core.testing.fakes import (
     FakeCarrierProvider,
@@ -23,7 +30,12 @@ from livecart_core.testing.fakes import (
 )
 from livecart_core.testing.polling import until
 from livecart_worker.metrics import WorkerMetrics
-from livecart_worker.shipments import run_shipments, ship_paid, ship_unshipped_once
+from livecart_worker.shipments import (
+    run_shipments,
+    ship_paid,
+    ship_unshipped_once,
+    track_once,
+)
 
 
 class World:
@@ -179,3 +191,128 @@ async def test_the_loop_ships_at_startup_then_every_interval_until_stopped() -> 
     await asyncio.wait_for(task, timeout=2)
 
     assert world.creations("created", "fallback") == 1
+
+
+# --- The tracking ----------------------------------------------------------------------
+
+
+def _tracking(world: World, carrier: FakeCarrierProvider | None = None) -> SyncShipmentTracking:
+    return SyncShipmentTracking(
+        world.shipments,
+        carrier if carrier is not None else world.carrier,
+        world.events,
+        world.clock,
+        lease=timedelta(seconds=60),
+        budget=timedelta(seconds=60),
+    )
+
+
+async def _shipped(world: World, comment: str = "comment-1") -> ShipmentRecord:
+    created = await world.ship(await paid_order(world.database, comment=comment))
+    assert created.shipment is not None
+    return created.shipment
+
+
+async def test_a_tracking_tick_logs_each_move_and_counts_every_shipment() -> None:
+    world = World()
+    moving = await _shipped(world, "comment-1")
+    await _shipped(world, "comment-2")
+    world.carrier.advance(moving.ref, ShipmentStatus.IN_TRANSIT)
+    world.carrier.advance(moving.ref, ShipmentStatus.OUT_FOR_DELIVERY)
+
+    with structlog.testing.capture_logs() as logs:
+        await track_once(_tracking(world), world.metrics)
+
+    [log] = logs
+    order = world.database.tables.orders[moving.order_id]
+    assert log == {
+        "event": "shipment_moved",
+        "log_level": "info",
+        "shipment_id": str(moving.id),
+        "order_id": str(order.id),
+        "reference": order.reference.value,
+        "carrier": "mock",
+        "outcome": "moved",
+        "from_status": "created",
+        "status": "out_for_delivery",
+        "transitions": 2,
+    }
+    assert moving.ref.tracking_number not in str(logs)
+    assert world.sample("livecart_shipment_tracking_total", outcome="moved") == 1
+    assert world.sample("livecart_shipment_tracking_total", outcome="unchanged") == 1
+    assert world.sample("livecart_shipment_transitions_total", status="in_transit") == 1
+    assert world.sample("livecart_shipment_transitions_total", status="out_for_delivery") == 1
+    assert world.sample("livecart_shipment_transitions_total", status="delivered") == 0
+
+
+async def test_a_tracking_failure_is_an_error_and_an_outage_a_warning() -> None:
+    unknown, down = World(), World()
+    await _shipped(unknown)
+    await _shipped(down)
+    down.carrier.fail_next()
+
+    with structlog.testing.capture_logs() as logs:
+        await track_once(_tracking(unknown, FakeCarrierProvider(unknown.clock)), unknown.metrics)
+        await track_once(_tracking(down), down.metrics)
+
+    assert [(log["event"], log["log_level"], log["error"]) for log in logs] == [
+        ("shipment_tracking_failed", "error", "RecordNotFound"),
+        ("shipment_tracking_deferred", "warning", "ServiceUnavailable"),
+    ]
+    assert unknown.sample("livecart_shipment_tracking_total", outcome="failed") == 1
+    assert down.sample("livecart_shipment_tracking_total", outcome="retry") == 1
+
+
+class DownLeases(InMemoryShipmentRepository):
+    error: Exception = ServiceUnavailable("database unavailable: scripted")
+
+    async def lease_for_tracking(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[LeasedShipment, ...]:
+        raise self.error
+
+
+class BrokenLeases(DownLeases):
+    error = RuntimeError("a bug")
+
+
+@pytest.mark.parametrize(
+    ("shipments", "event"),
+    [
+        (DownLeases, "shipment_tracking_unavailable"),
+        (BrokenLeases, "shipment_tracking_tick_failed"),
+    ],
+)
+async def test_a_failed_lease_is_logged_and_never_raised(
+    shipments: type[DownLeases], event: str
+) -> None:
+    world = World(shipments)
+
+    with structlog.testing.capture_logs() as logs:
+        await track_once(_tracking(world), world.metrics)
+
+    assert [log["event"] for log in logs] == [event]
+
+
+async def test_the_loop_ships_then_tracks_at_every_tick() -> None:
+    world = World()
+    await paid_order(world.database)
+    world.clock.advance(SHIPMENT_FALLBACK_GRACE + timedelta(seconds=1))
+    stop = asyncio.Event()
+
+    task = asyncio.create_task(
+        run_shipments(
+            world.fallback, stop, sync=_tracking(world), interval_s=0.01, metrics=world.metrics
+        )
+    )
+    await until(lambda: len(world.database.tables.shipments) == 1)
+    [shipment] = world.database.tables.shipments.values()
+    world.clock.advance(timedelta(seconds=61))
+    world.carrier.advance(shipment.ref, ShipmentStatus.IN_TRANSIT)
+    await until(
+        lambda: world.database.tables.shipments[shipment.id].status is ShipmentStatus.IN_TRANSIT
+    )
+    stop.set()
+    await asyncio.wait_for(task, timeout=2)
+
+    assert world.sample("livecart_shipment_transitions_total", status="in_transit") == 1

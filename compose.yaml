@@ -263,6 +263,8 @@ services:
       CARRIER_PROVIDER: ${CARRIER_PROVIDER:-mock}
       MOCK_CARRIER_SECRET: ${MOCK_CARRIER_SECRET:?set it in .env (cp .env.example .env)}
       MOCK_CARRIER_STEP_SECONDS: ${MOCK_CARRIER_STEP_SECONDS:-120}
+      # The shipments loop: the fallback, then the tracking of the shipments in flight.
+      SHIPMENT_SYNC_INTERVAL_S: ${SHIPMENT_SYNC_INTERVAL_S:-60}
       # The optional LLM fallback (.env.example): without a key, the parser alone.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LLM_ENABLED: ${LLM_ENABLED:-true}

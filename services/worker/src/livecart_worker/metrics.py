@@ -38,6 +38,11 @@ loops record what they do:
   ``ShipmentCreationOutcome``: ``no_address`` and ``failed`` need a person)
   and by path, ``payment`` (the tick that paid it) or ``fallback`` (a crash
   or an outage recovered);
+- each shipment in flight the tracking asked the carrier about, by outcome
+  (``livecart_shipment_tracking_total{outcome}``, the closed list of
+  ``TrackingOutcome``: ``failed`` is the one to alert on), and each
+  transition it applied, by the status reached
+  (``livecart_shipment_transitions_total{status}``);
 - with the LLM fallback on (``watch_llm``), the plain counters of its
   ``LlmGuard``, read at scrape time: the receipts by outcome
   (``livecart_llm_outcomes_total{outcome}``, the closed list of
@@ -67,7 +72,9 @@ from livecart_core.application.expire_reservations import SweepResult
 from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.process_comment import HandledComment, Handling
 from livecart_core.application.reclaim_comments import Reclaimed
+from livecart_core.application.sync_shipment_tracking import TrackingOutcome, TrackingTick
 from livecart_core.domain.outcomes import RejectionReason
+from livecart_core.domain.state_machines import ShipmentStatus
 
 # From 5 ms to 2 min: the queue is drained in milliseconds when the workers
 # keep up, and a comment reclaimed after a crash waits about two minutes.
@@ -234,6 +241,18 @@ class WorkerMetrics:
             ["outcome", "via"],
             registry=registry,
         )
+        self.shipment_tracking = Counter(
+            "livecart_shipment_tracking_total",
+            "Shipments in flight the tracking asked the carrier about, by outcome.",
+            ["outcome"],
+            registry=registry,
+        )
+        self.shipment_transitions = Counter(
+            "livecart_shipment_transitions_total",
+            "Shipment transitions the tracking applied and published, by the status reached.",
+            ["status"],
+            registry=registry,
+        )
         # Every label of a closed list exists from the start, at zero.
         for source in IntentSource:
             self.intents_detected.labels(source=source.value)
@@ -245,6 +264,10 @@ class WorkerMetrics:
             self.payment_events.labels(result=result.value)
         for outcome in CheckoutExpiryOutcome:
             self.checkout_expiries.labels(outcome=outcome.value)
+        for tracking in TrackingOutcome:
+            self.shipment_tracking.labels(outcome=tracking.value)
+        for status in ShipmentStatus:
+            self.shipment_transitions.labels(status=status.value)
         for creation in ShipmentCreationOutcome:
             for via in ShipmentPath:
                 self.shipment_creations.labels(outcome=creation.value, via=via.value)
@@ -289,6 +312,14 @@ class WorkerMetrics:
         """One paid order's shipment, by the path that asked for it."""
         self.shipment_creations.labels(outcome=created.outcome.value, via=via.value).inc()
         self.session_events_unpublished.inc(created.unpublished_events)
+
+    def record_tracking(self, tick: TrackingTick) -> None:
+        """Each shipment one tick of the tracking asked about, and each transition it applied."""
+        for tracked in tick.tracked:
+            self.shipment_tracking.labels(outcome=tracked.outcome.value).inc()
+            self.session_events_unpublished.inc(tracked.unpublished_events)
+            for move in tracked.moves:
+                self.shipment_transitions.labels(status=move.status.value).inc()
 
     def record_payment_events(self, tick: PaymentEventsTick) -> None:
         for handled in tick.handled:

@@ -18,7 +18,9 @@ from livecart_core.application.expire_reservations import ExpireReservations, Sw
 from livecart_core.application.ports import NullIntentFallback, ServiceUnavailable
 from livecart_core.application.process_comment import HandledComment, ProcessComment
 from livecart_core.application.reclaim_comments import DeadLetter, Reclaimed
+from livecart_core.application.sync_shipment_tracking import TrackingOutcome
 from livecart_core.domain.outcomes import RejectionReason
+from livecart_core.domain.state_machines import ShipmentStatus
 from livecart_core.settings import Settings
 from livecart_core.testing.builders import (
     DEMO_MAX_QUANTITY,
@@ -336,3 +338,12 @@ async def test_a_shipment_creation_counts_its_outcome_path_and_unpublished_event
     labels = {"outcome": "created", "via": "fallback"}
     assert sample("livecart_shipment_creations_total", labels) == 1
     assert sample("livecart_session_events_unpublished_total") == 1
+
+
+def test_every_tracking_outcome_and_shipment_status_is_a_series_from_the_start() -> None:
+    sample = WorkerMetrics().registry.get_sample_value
+
+    for outcome in TrackingOutcome:
+        assert sample("livecart_shipment_tracking_total", {"outcome": outcome.value}) == 0
+    for status in ShipmentStatus:
+        assert sample("livecart_shipment_transitions_total", {"status": status.value}) == 0

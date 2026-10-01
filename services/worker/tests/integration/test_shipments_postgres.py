@@ -3,7 +3,9 @@
 A crash between a payment and its shipment leaves the order to the
 fallback, which ships it once, with one ``shipment.updated``; creations of
 one order's shipment at once, the payment's path and the fallback on
-several workers, record one shipment and publish it once.
+several workers, record one shipment and publish it once. The tracking then
+walks the mock's route, computed from a frozen clock, one transition and
+one ``shipment.updated`` at a time, whatever the workers racing on it.
 """
 
 import asyncio
@@ -27,6 +29,7 @@ from livecart_core.application.dto import (
     CheckoutEventType,
     CheckoutPaymentStatus,
     IntentSource,
+    LeasedShipment,
     OrderRecord,
     PaymentEvent,
     PaymentProviderName,
@@ -34,6 +37,7 @@ from livecart_core.application.dto import (
     SessionEventType,
 )
 from livecart_core.application.ports import START_CURSOR
+from livecart_core.application.sync_shipment_tracking import SyncShipmentTracking, TrackingOutcome
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.quantity import Quantity
@@ -208,3 +212,154 @@ async def test_creations_at_once_record_one_shipment_and_publish_it_once(
     )
     shipped = [item for item in streamed if item.event.type is SessionEventType.SHIPMENT_UPDATED]
     assert len(shipped) == 1
+
+
+# --- The tracking ----------------------------------------------------------------------
+
+STEP = timedelta(seconds=120)
+INTERVAL = timedelta(seconds=60)
+
+
+async def _shipped(
+    backend: PostgresBackend,
+    engine: AsyncEngine,
+    clock: FakeClock,
+    events: RedisSessionEvents,
+) -> tuple[OrderRecord, UUID]:
+    """A paid order and its shipment, created by the mock carrier at the clock's time."""
+    order_id = await _paid(backend, engine, clock)
+    registry = SqlWebhookEventRegistry(engine)
+    await process_once(
+        ProcessPaymentEvents(
+            registry,
+            ApplyPaymentEvent(registry, events, clock),
+            clock,
+            budget=PAYMENT_EVENTS_BUDGET,
+        )
+    )
+    order = await _order(backend, order_id)
+    carrier = MockCarrier(TEST_MOCK_CARRIER_SECRET, clock, step=STEP)
+    created = await CreateShipment(SqlShipmentRepository(engine), carrier, events, clock)(order)
+    assert created.shipment is not None
+    return order, created.shipment.id
+
+
+def _tracking(
+    shipments: SqlShipmentRepository, clock: FakeClock, events: RedisSessionEvents
+) -> SyncShipmentTracking:
+    return SyncShipmentTracking(
+        shipments,
+        MockCarrier(TEST_MOCK_CARRIER_SECRET, clock, step=STEP),
+        events,
+        clock,
+        lease=INTERVAL,
+        budget=INTERVAL,
+    )
+
+
+async def _shipment_events(
+    events: RedisSessionEvents, order: OrderRecord
+) -> list[tuple[str, object]]:
+    streamed = await events.read(
+        order.session_id, after=START_CURSOR, max_events=50, block_seconds=0
+    )
+    return [
+        (str(item.event.data["status"]), item.event.data["last_event_at"])
+        for item in streamed
+        if item.event.type is SessionEventType.SHIPMENT_UPDATED
+    ]
+
+
+def _iso(moment: datetime) -> str:
+    return moment.isoformat().replace("+00:00", "Z")
+
+
+async def test_the_mock_carriers_route_reaches_the_stream_one_transition_at_a_time(
+    postgres_backend: PostgresBackend,
+    app_engine: AsyncEngine,
+    redis_client: Redis,
+    redis_key_prefix: str,
+) -> None:
+    clock = FakeClock(datetime.now(UTC))
+    events = RedisSessionEvents(redis_client, prefix=redis_key_prefix)
+    order, shipment_id = await _shipped(postgres_backend, app_engine, clock, events)
+    shipments = SqlShipmentRepository(app_engine)
+    tracking = _tracking(shipments, clock, events)
+    created_at = clock.now()
+
+    outcomes = [(await tracking()).count(TrackingOutcome.UNCHANGED)]
+    # The clock stands still between the ticks: each tick finds one step more.
+    for _ in range(3):
+        clock.advance(STEP)
+        outcomes.append((await tracking()).count(TrackingOutcome.MOVED))
+    clock.advance(STEP)
+    after = await tracking()
+
+    assert outcomes == [1, 1, 1, 1]
+    assert after.tracked == ()
+    assert await _shipment_events(events, order) == [
+        ("created", _iso(created_at)),
+        ("in_transit", _iso(created_at + STEP)),
+        ("out_for_delivery", _iso(created_at + 2 * STEP)),
+        ("delivered", _iso(created_at + 3 * STEP)),
+    ]
+    stored = await shipments.get_by_order(order.id)
+    assert stored is not None
+    assert (stored.id, stored.status) == (shipment_id, ShipmentStatus.DELIVERED)
+    assert stored.last_event_at == created_at + 3 * STEP
+
+
+class RacingLeases(SqlShipmentRepository):
+    """Leases taken one after the other, then held until every worker has its own.
+
+    Each worker's clock is an interval past the one before, as workers whose
+    leases all ended would be: every one of them follows the same shipment,
+    and only the compare-and-set keeps their moves apart.
+    """
+
+    def __init__(self, engine: AsyncEngine, barrier: asyncio.Barrier, lock: asyncio.Lock) -> None:
+        super().__init__(engine)
+        self._barrier = barrier
+        self._lock = lock
+
+    async def lease_for_tracking(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[LeasedShipment, ...]:
+        async with self._lock:
+            leased = await super().lease_for_tracking(now=now, limit=limit, lease=lease)
+        await self._barrier.wait()
+        return leased
+
+
+async def test_workers_racing_on_one_shipment_publish_one_update_per_transition(
+    postgres_backend: PostgresBackend,
+    worker_engine: AsyncEngine,
+    redis_client: Redis,
+    redis_key_prefix: str,
+) -> None:
+    workers = 4
+    clock = FakeClock(datetime.now(UTC))
+    events = RedisSessionEvents(redis_client, prefix=redis_key_prefix)
+    order, shipment_id = await _shipped(postgres_backend, worker_engine, clock, events)
+    barrier, lock = asyncio.Barrier(workers), asyncio.Lock()
+    # Delivered by every worker's clock: each one walks the whole route.
+    delivered = clock.now() + 3 * STEP
+    clocks = [FakeClock(delivered + n * (INTERVAL + timedelta(seconds=1))) for n in range(workers)]
+    trackings = [
+        _tracking(RacingLeases(worker_engine, barrier, lock), worker_clock, events)
+        for worker_clock in clocks
+    ]
+
+    ticks = await asyncio.gather(*(tracking() for tracking in trackings))
+
+    followed = [tracked for tick in ticks for tracked in tick.tracked]
+    assert len(followed) == workers
+    moved = sorted(move.status for tracked in followed for move in tracked.moves)
+    assert moved == sorted(
+        [ShipmentStatus.IN_TRANSIT, ShipmentStatus.OUT_FOR_DELIVERY, ShipmentStatus.DELIVERED]
+    )
+    published = sorted(status for status, _ in await _shipment_events(events, order))
+    assert published == ["created", "delivered", "in_transit", "out_for_delivery"]
+    stored = await SqlShipmentRepository(worker_engine).get_by_order(order.id)
+    assert stored is not None
+    assert (stored.id, stored.status) == (shipment_id, ShipmentStatus.DELIVERED)

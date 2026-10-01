@@ -15,8 +15,10 @@ then runs the worker's loops in one TaskGroup:
 - the payment events loop, every 2 s (``payments``): the events the payment
   webhook recorded in ``processed_webhook_events``, applied to their
   attempts and orders;
-- the shipments loop, every 60 s (``shipments``): the paid orders a crash
-  or an outage left without a shipment, shipped by the fallback;
+- the shipments loop, every ``SHIPMENT_SYNC_INTERVAL_S`` (60 s,
+  ``shipments``): the paid orders a crash or an outage left without a
+  shipment, shipped by the fallback, then the shipments in flight, tracked
+  at the carrier, each move persisted and published once;
 - the heartbeat, which also checks that the consumer keeps going round.
 
 ``ProcessComment`` asks Claude (``livecart_worker.llm.claude``) about the
@@ -77,6 +79,7 @@ from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.ports import Clock, IntentFallback, LlmBudget, NullIntentFallback
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
+from livecart_core.application.sync_shipment_tracking import SyncShipmentTracking
 from livecart_core.infrastructure.carriers import build_carrier
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
@@ -113,7 +116,7 @@ from livecart_worker.payments import (
     PAYMENT_EVENTS_INTERVAL_S,
     run_payment_events,
 )
-from livecart_worker.shipments import SHIPMENTS_INTERVAL_S, run_shipments
+from livecart_worker.shipments import run_shipments
 from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
 logger = structlog.get_logger(__name__)
@@ -199,13 +202,14 @@ async def serve(
     reclaim_interval_s: float = RECLAIM_INTERVAL_S,
     expiry_interval_s: float = EXPIRY_INTERVAL_S,
     payment_events_interval_s: float = PAYMENT_EVENTS_INTERVAL_S,
-    shipments_interval_s: float = SHIPMENTS_INTERVAL_S,
+    shipments_interval_s: float | None = None,
     metrics: WorkerMetrics | None = None,
 ) -> None:
     """Run every worker loop until ``stop`` is set.
 
     ``clock`` and ``consumer_name`` default to the system clock and to
-    ``<host>-<pid>``; the tests fix them, and the intervals of the loops.
+    ``<host>-<pid>``; the tests fix them, and the intervals of the loops,
+    the shipments loop's ``SHIPMENT_SYNC_INTERVAL_S`` unless one is given.
     The loops record their metrics in ``metrics``, a registry of their own
     by default.
     """
@@ -298,6 +302,11 @@ async def serve(
         shipments = SqlShipmentRepository(engine)
         ship = CreateShipment(shipments, carrier, events, clock)
         unshipped = ShipUnshippedOrders(shipments, ship, clock)
+        # Each shipment in flight leased to one worker an interval, as long as its loop waits.
+        interval = settings.shipment_sync_interval
+        sync = SyncShipmentTracking(
+            shipments, carrier, events, clock, lease=interval, budget=interval
+        )
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
             loops.create_task(
@@ -320,7 +329,17 @@ async def serve(
                 )
             )
             loops.create_task(
-                run_shipments(unshipped, stop, interval_s=shipments_interval_s, metrics=metrics)
+                run_shipments(
+                    unshipped,
+                    stop,
+                    sync=sync,
+                    interval_s=(
+                        interval.total_seconds()
+                        if shipments_interval_s is None
+                        else shipments_interval_s
+                    ),
+                    metrics=metrics,
+                )
             )
             loops.create_task(
                 run_heartbeat(

@@ -88,6 +88,10 @@ MAX_PAYMENT_ATTEMPTS: Final = 5
 # delivered within a minute, to a day.
 MIN_MOCK_CARRIER_STEP_SECONDS: Final = 1
 MAX_MOCK_CARRIER_STEP_SECONDS: Final = 86_400
+# The bounds of SHIPMENT_SYNC_INTERVAL_S: past the 5 s a claim of the tracking
+# keeps of its lease, which lasts an interval, and an hour at most.
+MIN_SHIPMENT_SYNC_INTERVAL_S: Final = 10
+MAX_SHIPMENT_SYNC_INTERVAL_S: Final = 3_600
 # Stripe's test mode keys: a secret key or a restricted one. A live key
 # (sk_live_, rk_live_) is refused: LiveCart takes no real payment.
 STRIPE_TEST_KEY_PREFIXES: Final = ("sk_test_", "rk_test_")
@@ -547,6 +551,11 @@ class Settings(LlmSettings):
     # How long a parcel of the mock carrier stays at each step of its route
     # (created, in transit, out for delivery, then delivered for good).
     mock_carrier_step_seconds: int = 120
+    # How often each worker's shipments loop runs: the fallback that ships the
+    # paid orders left without a shipment, then the tracking, which asks the
+    # carrier about the shipments in flight, each leased to one worker for
+    # this long.
+    shipment_sync_interval_s: int = 60
     # Backpressure of the comment webhook: once the queue's backlog (comments
     # not acknowledged yet, delivered or not) reaches this depth, the webhook
     # answers 503 until the workers catch up.
@@ -613,6 +622,10 @@ class Settings(LlmSettings):
     @property
     def mock_carrier_step(self) -> timedelta:
         return timedelta(seconds=self.mock_carrier_step_seconds)
+
+    @property
+    def shipment_sync_interval(self) -> timedelta:
+        return timedelta(seconds=self.shipment_sync_interval_s)
 
     @property
     def message_process_timeout(self) -> timedelta:
@@ -1005,6 +1018,16 @@ class Settings(LlmSettings):
     def _check_payment_max_attempts(cls, value: int) -> int:
         if not 1 <= value <= MAX_PAYMENT_ATTEMPTS:
             raise ValueError(f"must be from 1 to {MAX_PAYMENT_ATTEMPTS} attempts")
+        return value
+
+    @field_validator("shipment_sync_interval_s")
+    @classmethod
+    def _check_shipment_sync_interval_s(cls, value: int) -> int:
+        if not MIN_SHIPMENT_SYNC_INTERVAL_S <= value <= MAX_SHIPMENT_SYNC_INTERVAL_S:
+            raise ValueError(
+                f"must be from {MIN_SHIPMENT_SYNC_INTERVAL_S} to "
+                f"{MAX_SHIPMENT_SYNC_INTERVAL_S} seconds"
+            )
         return value
 
     @field_validator("mock_carrier_step_seconds")
