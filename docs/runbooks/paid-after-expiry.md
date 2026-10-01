@@ -11,12 +11,12 @@ With a hosted checkout, the sweep expires the provider's session before it relea
 - The worker logs `payment_after_expiry` at ERROR, with the provider, the event id and type, the order's id and reference, and `order_status=paid_after_expiry`.
 - `livecart_orders_paid_after_expiry_total` on the worker's metrics port counts it.
 - The dashboard receives the order's `order.updated` event with the status `paid_after_expiry`, and shows its badge.
-- In PostgreSQL, the order has `status = 'paid_after_expiry'` and a `paid_at`; the event is in `processed_webhook_events` with `outcome = 'applied'`.
+- In PostgreSQL, the order has `status = 'paid_after_expiry'` and a `paid_at`; its attempt keeps the status the sweep left it in, `expired`, and records the provider's payment in `provider_payment_ref`; the event is in `processed_webhook_events` with `outcome = 'applied'`.
 
 ## What to do
 
 1. Find the order by its reference, and its payment attempts (`payments.order_id`): the attempt whose `provider_ref` is the event's checkout session is the one the provider charged.
-2. Check at the provider that the session was paid and for how much: the Stripe dashboard (test mode) shows the Checkout Session and its PaymentIntent (`payments.provider_payment_ref` once recorded). The mock provider charges nothing: there is nothing to refund.
+2. Check at the provider that the session was paid and for how much: the Stripe dashboard (test mode) shows the Checkout Session and its PaymentIntent, whose id is that attempt's `payments.provider_payment_ref`, recorded from the provider's event although the attempt stays `expired`. The mock provider charges nothing: there is nothing to refund.
 3. If the product is still in stock and the seller agrees, the seller may sell it to the buyer again outside LiveCart; otherwise refund the payment in full at the provider (for Stripe: refund the PaymentIntent from the dashboard).
 4. Tell the buyer, through the platform, that the order was refunded, with its reference.
 

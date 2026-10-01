@@ -43,7 +43,10 @@ the next claims once the transaction has released it.
    WHERE id = :id AND status = :current``, then, for a payment, ``UPDATE
    products SET reserved = reserved - :q, sold = sold + :q``, and last
    ``UPDATE orders SET status = ..., paid_at = :now WHERE id = :id AND status
-   = :current``;
+   = :current``. Each move of an attempt records the provider's payment,
+   ``provider_payment_ref = COALESCE(:payment_ref, provider_payment_ref)``;
+   so does a payment after expiry, whose attempt expired already and keeps
+   its status, since its refund is made on that payment;
 4. the event's row, processed with the settlement's outcome.
 
 The order is locked before anything is written, as ``open_attempt`` locks it
@@ -320,17 +323,22 @@ class SqlWebhookEventRegistry:
         decision: PaymentDecision,
         event: PaymentEvent,
     ) -> None:
+        # The provider's payment, or the one recorded already when the event names none.
+        payment_ref = func.coalesce(event.payment_ref, payments.c.provider_payment_ref)
         if decision.payment is None:
+            if decision.order is OrderStatus.PAID_AFTER_EXPIRY:
+                # The attempt expired before the provider took the money: it
+                # keeps its status, and records the payment the refund is made on.
+                await connection.execute(
+                    update(payments)
+                    .where(payments.c.id == payment_id)
+                    .values(provider_payment_ref=payment_ref)
+                )
             return
         moved = await connection.execute(
             update(payments)
             .where(payments.c.id == payment_id, payments.c.status == current.value)
-            .values(
-                status=decision.payment.value,
-                provider_payment_ref=func.coalesce(
-                    event.payment_ref, payments.c.provider_payment_ref
-                ),
-            )
+            .values(status=decision.payment.value, provider_payment_ref=payment_ref)
         )
         if moved.rowcount != 1:
             # Impossible while this transaction holds the attempt's row.

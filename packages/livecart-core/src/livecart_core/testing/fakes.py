@@ -1943,10 +1943,12 @@ class InMemoryWebhookEventRegistry(_Repository):
         kind = SettlementKind.of(decision.verdict)
         if kind is not SettlementKind.APPLIED:
             return PaymentSettlement(kind, order)
-        if decision.payment is not None:
+        # A payment after expiry records the provider's payment on its attempt,
+        # which expired already and keeps its status: the refund is made on it.
+        if decision.payment is not None or decision.order is OrderStatus.PAID_AFTER_EXPIRY:
             self._tables.payments[payment.id] = replace(
                 payment,
-                status=decision.payment,
+                status=decision.payment if decision.payment is not None else payment.status,
                 provider_payment_ref=event.payment_ref or payment.provider_payment_ref,
             )
         stock = None

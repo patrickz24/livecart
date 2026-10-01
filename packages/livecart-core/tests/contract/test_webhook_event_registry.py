@@ -445,8 +445,35 @@ async def test_a_payment_after_the_release_moves_no_stock(backend: ReservationBa
     assert settlement.order.status is OrderStatus.PAID_AFTER_EXPIRY
     assert settlement.order.paid_at == NOW + TTL
     assert await _stock(backend, checkout) == StockLevel(10)
-    assert (await _attempt(backend, checkout)).status is PaymentStatus.EXPIRED
+    # The attempt keeps its status, and records what the refund is made on.
+    attempt = await _attempt(backend, checkout)
+    assert (attempt.status, attempt.provider_payment_ref) == (PaymentStatus.EXPIRED, "mock_pi_1")
     assert await _outcome(backend, event) == WebhookOutcome.APPLIED
+
+
+async def test_a_payment_after_the_release_keeps_a_payment_recorded_already(
+    backend: ReservationBackend,
+) -> None:
+    checkout = await _checkout(backend)
+    await backend.payments.set_status(
+        checkout.payment_id, PaymentStatus.EXPIRED, provider_payment_ref="mock_pi_known"
+    )
+    await backend.expire_order(checkout.order.id)
+    event = _paid(checkout, payment_ref=None)
+
+    settlement = await _settle(backend, event, at=TTL)
+
+    assert settlement is not None
+    assert settlement.order is not None
+    assert (settlement.kind, settlement.order.status) == (
+        SettlementKind.APPLIED,
+        OrderStatus.PAID_AFTER_EXPIRY,
+    )
+    attempt = await _attempt(backend, checkout)
+    assert (attempt.status, attempt.provider_payment_ref) == (
+        PaymentStatus.EXPIRED,
+        "mock_pi_known",
+    )
 
 
 async def test_an_event_of_no_attempt_of_livecart_is_ignored(backend: ReservationBackend) -> None:
