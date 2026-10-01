@@ -276,6 +276,19 @@ async def test_a_missing_repeated_or_foreign_signature_is_refused() -> None:
     assert (await stripe.verify_webhook({"stripe-signature": signature}, body)).event_id == "evt_1"
 
 
+async def test_a_body_that_is_no_utf_8_is_a_signature_that_does_not_hold() -> None:
+    api = FakeStripeApi()
+    stripe = _stripe(api.transport)
+    headers, body = api.signed(_event(), TEST_STRIPE_WEBHOOK_SECRET)
+    binary = b"\xff\xfe" + body
+
+    # The SDK decodes the body before it reads the header: unsigned or signed,
+    # the refusal is the signature's, never the decoder's ValueError.
+    for refused in ({}, headers, {"Stripe-Signature": "t=1,v1=00"}):
+        with pytest.raises(InvalidSignature):
+            await stripe.verify_webhook(refused, binary)
+
+
 async def test_a_verified_body_that_is_no_json_event_is_a_value_error() -> None:
     api = FakeStripeApi()
     stripe = _stripe(api.transport)

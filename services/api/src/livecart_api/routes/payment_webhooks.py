@@ -16,7 +16,8 @@ reads anything more:
    Stripe's default tolerance of 300 s, or the HMAC of
    ``livecart_core.signing`` under ``MOCK_PAYMENT_WEBHOOK_SECRET``. A missing
    or wrong signature is a 401 whose body never says which check failed,
-   counted against the address; a verified body that is no event of the
+   counted against the address, and so is a Stripe body that is no UTF-8,
+   which Stripe never signs; a verified body that is no event of the
    provider is a 422;
 4. the event, reduced by the adapter to its allow-list (``PaymentEvent``,
    without the customer's details), goes into ``processed_webhook_events``:

@@ -417,3 +417,21 @@ async def test_a_stripe_event_unsigned_forged_or_stale_gets_401() -> None:
 
     assert [(answer.status_code, answer.json()) for answer in answers] == [(401, REFUSED)] * 3
     assert database.tables.webhook_events == {}
+
+
+async def test_a_stripe_body_that_is_no_utf_8_is_a_refusal_counted_against_the_address() -> None:
+    # Stripe's SDK decodes the body before it checks the header: its decoding
+    # error must not pass for an unreadable event (422), which counts nothing.
+    headers, body = FakeStripeApi().signed(_stripe_event(), TEST_STRIPE_WEBHOOK_SECRET)
+    binary = b"\xff\xfe" + body
+
+    async with _open_stripe_api() as (client, database):
+        refused = [
+            await client.post(STRIPE_WEBHOOK, content=binary, headers=headers) for _ in range(60)
+        ]
+        limited = await client.post(STRIPE_WEBHOOK, content=binary, headers=headers)
+
+    assert [(answer.status_code, answer.json()) for answer in refused] == [(401, REFUSED)] * 60
+    # The default limit, 60 refusals a minute per address: the 61st call is refused unread.
+    assert (limited.status_code, limited.json()) == (429, {"detail": TOO_MANY_REQUESTS})
+    assert database.tables.webhook_events == {}

@@ -26,7 +26,9 @@ A hosted Checkout Session per payment attempt, by stripe-python's
   Stripe's default tolerance of 300 s, before it parses the body, then
   reduces the event to ``PaymentEvent``: its id, type and time, and of a
   checkout session only its id, payment intent, payment status, amount and
-  currency. The customer's details, and everything else, stop here.
+  currency. The customer's details, and everything else, stop here. A body
+  that is no UTF-8, which Stripe never signs, is a signature that does not
+  hold, as a forged one is, never an unreadable event.
 
 The HTTP calls go through ``Httpx2Client``, stripe-python's ``HTTPClient``
 over httpx2, the HTTP client of the rest of the repository, whose transport
@@ -283,8 +285,16 @@ class StripePaymentProvider:
     async def verify_webhook(self, headers: Mapping[str, str], raw_body: bytes) -> PaymentEvent:
         signature = header_value(headers, SIGNATURE_HEADER)
         try:
+            # Stripe signs text: the SDK decodes the body before it reads the
+            # header, and a body that is no UTF-8 would escape as its
+            # UnicodeDecodeError, a ValueError, which the webhook answers 422
+            # without counting a refusal. No signature of Stripe's holds for it.
+            payload = raw_body.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise InvalidSignature("the Stripe signature does not hold") from error
+        try:
             event = self._client.construct_event(
-                raw_body, signature, self._webhook_secret.get_secret_value()
+                payload, signature, self._webhook_secret.get_secret_value()
             )
         except stripe.SignatureVerificationError as error:
             raise InvalidSignature("the Stripe signature does not hold") from error
