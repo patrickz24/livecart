@@ -23,6 +23,7 @@ from livecart_core.application.dto import (
     CheckoutRequest,
     CheckoutStatus,
     CommentBatch,
+    DueCheckout,
     FallbackReceipt,
     FallbackRequest,
     InboxComment,
@@ -50,6 +51,7 @@ from livecart_core.application.dto import (
     RateLimitRule,
     RefreshTokenRecord,
     RegisteredEvent,
+    ReleasedCheckout,
     ReservationRequest,
     ReservationResult,
     ResolvedIntent,
@@ -568,6 +570,27 @@ def test_a_refused_attempt_carries_no_payment(kind: AttemptOpeningKind) -> None:
     assert AttemptOpening(kind).payment is None
     with pytest.raises(ValueError, match="carries its payment"):
         AttemptOpening(kind, PAYMENT)
+
+
+def test_a_due_checkout_holds_its_orders_attempt() -> None:
+    due = DueCheckout(ORDER, PAYMENT, NOW)
+
+    assert (due.order, due.payment) == (ORDER, PAYMENT)
+    with pytest.raises(ValueError, match="its order's"):
+        DueCheckout(ORDER, replace(PAYMENT, order_id=UUID(int=2)), NOW)
+
+
+def test_a_released_checkout_carries_the_stock_it_released_and_only_that() -> None:
+    expired = replace(ORDER, status=OrderStatus.EXPIRED)
+
+    assert ReleasedCheckout(expired, order_changed=True, stock=StockLevel(10)).stock == (
+        StockLevel(10)
+    )
+    assert ReleasedCheckout(ORDER, payment_changed=True).stock is None
+    with pytest.raises(ValueError, match="product's counters"):
+        ReleasedCheckout(expired, order_changed=True)
+    with pytest.raises(ValueError, match="product's counters"):
+        ReleasedCheckout(ORDER, stock=StockLevel(10))
 
 
 def _checkout(attempt_no: int) -> CheckoutRequest:

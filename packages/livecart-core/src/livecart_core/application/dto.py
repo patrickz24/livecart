@@ -923,6 +923,43 @@ class AttemptOpening:
             raise ValueError("an opened or pending attempt carries its payment, and only those do")
 
 
+@dataclass(frozen=True, slots=True)
+class DueCheckout:
+    """An order past its reservation whose payment attempt is still pending, leased to one sweep.
+
+    Until ``lease_until`` (``orders.expiry_lease_until``), no other sweep
+    takes the order: this one alone asks the provider to expire the
+    attempt's session.
+    """
+
+    order: OrderRecord
+    payment: PaymentRecord
+    lease_until: datetime
+
+    def __post_init__(self) -> None:
+        if self.payment.order_id != self.order.id:
+            raise ValueError("a due checkout's attempt is its order's")
+
+
+@dataclass(frozen=True, slots=True)
+class ReleasedCheckout:
+    """An order whose checkout session expired, as releasing it left it.
+
+    ``payment_changed`` says whether this unit expired the attempt, and
+    ``order_changed`` whether it expired the order and released its reserved
+    units, whose product's counters ``stock`` then holds.
+    """
+
+    order: OrderRecord
+    payment_changed: bool = False
+    order_changed: bool = False
+    stock: StockLevel | None = None
+
+    def __post_init__(self) -> None:
+        if self.order_changed != (self.stock is not None):
+            raise ValueError("a released order carries its product's counters, and only that one")
+
+
 class CheckoutStatus(StrEnum):
     """The status of a provider's hosted checkout session.
 

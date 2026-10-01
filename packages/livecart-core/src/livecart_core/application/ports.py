@@ -43,6 +43,7 @@ from livecart_core.application.dto import (
     CheckoutRequest,
     CheckoutSession,
     CommentClaim,
+    DueCheckout,
     EventClaim,
     ExpiredReservations,
     FallbackReceipt,
@@ -71,6 +72,7 @@ from livecart_core.application.dto import (
     QueueDelivery,
     RateLimitKey,
     RefreshTokenRecord,
+    ReleasedCheckout,
     ReservationRequest,
     ReservationResult,
     SellerRecord,
@@ -861,13 +863,54 @@ class ReservationExpiry(Protocol):
     """
 
     async def expire_due(self, *, now: datetime, limit: int) -> ExpiredReservations:
-        """First step of the expiry sweep, and the whole of it until milestone 5.
+        """First step of the expiry sweep: the due orders without a payment in flight.
 
         One unit: expires at most ``limit`` pending orders whose reservation
         ended before ``now`` and that have no pending payment, lowest id
         first, skipping those another sweep holds, and releases their
         reserved stock, product by product. Returns the expired orders and
         the counters of each product after the release.
+        """
+
+
+# The most due orders with a payment in flight one claim of the sweep leases,
+# and how long: the provider is asked to expire their sessions meanwhile.
+CHECKOUT_EXPIRY_BATCH: Final = 20
+CHECKOUT_EXPIRY_LEASE: Final = timedelta(seconds=30)
+
+
+class CheckoutExpiry(Protocol):
+    """The due orders whose payment is still in flight: the later steps of the expiry sweep.
+
+    Their stock is released only once the provider has expired the attempt's
+    session (expire-first), and the order's expiry lease gives one sweep at a
+    time the right to ask it, so that several workers make one call per order.
+    """
+
+    async def lease_due_checkouts(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[DueCheckout, ...]:
+        """Second step, one unit: lease at most ``limit`` due orders with a pending attempt.
+
+        Due: the order waits for its payment, its reservation ended before
+        ``now``, an attempt of it is pending, and no lease of it runs at
+        ``now``. Lowest id first, skipping the orders another unit holds
+        (``FOR UPDATE SKIP LOCKED``), so that sweeps running at once lease
+        disjoint orders; each is leased until ``now + lease``, with its
+        pending attempt.
+        """
+
+    async def release_checkout(
+        self, order_id: UUID, payment_id: UUID, *, now: datetime
+    ) -> ReleasedCheckout:
+        """Third step, one unit, once the provider expired the attempt's session.
+
+        The attempt ``pending -> expired`` by compare-and-set: one the
+        provider's own event expired first stays as it is. Then, if the
+        order still waits for its payment, its reservation ended before
+        ``now`` and none of its attempts is pending any more, the order
+        expires and its reserved units are released, as the first step
+        releases them. Raises ``RecordNotFound`` when no order has ``order_id``.
         """
 
 
@@ -883,7 +926,7 @@ class BuyerOrders(OrderLookup, Protocol):
         """
 
 
-class OrderRepository(OrderReservations, BuyerOrders, ReservationExpiry, Protocol):
+class OrderRepository(OrderReservations, BuyerOrders, ReservationExpiry, CheckoutExpiry, Protocol):
     """Purchase intents and orders, with the stock effects of their transitions.
 
     A payment reaches an order through the registry of payment webhooks

@@ -35,16 +35,14 @@ from livecart_core.application.dto import (
 )
 from livecart_core.application.ports import (
     BuyerNotifier,
-    BuyerOrders,
     CommentInbox,
     LiveSessionActivity,
     LiveSessionRepository,
-    OrderReservations,
+    OrderRepository,
     PaymentProvider,
     PaymentRepository,
     ProductStockRepository,
     RefreshTokenRepository,
-    ReservationExpiry,
     SellerRepository,
     SessionEventLog,
     WebhookEventRegistry,
@@ -90,10 +88,6 @@ ORDER_TOKENS = TEST_ORDER_TOKENS
 type CountedTable = Literal["purchase_intents", "orders"]
 
 
-class BackendOrders(OrderReservations, BuyerOrders, ReservationExpiry, Protocol):
-    """The order ports both backends implement so far: unit 3, its reads, the buyer's, the sweep."""
-
-
 class ReservationBackend(Protocol):
     """The repositories under test, and the seeding and reading helpers of the scenarios."""
 
@@ -107,7 +101,7 @@ class ReservationBackend(Protocol):
     def products(self) -> ProductStockRepository: ...
 
     @property
-    def orders(self) -> BackendOrders: ...
+    def orders(self) -> OrderRepository: ...
 
     @property
     def activity(self) -> LiveSessionActivity: ...
@@ -219,7 +213,7 @@ class InMemoryBackend:
         return self.database.products
 
     @property
-    def orders(self) -> BackendOrders:
+    def orders(self) -> OrderRepository:
         return self.database.orders
 
     @property
@@ -383,7 +377,7 @@ class PostgresBackend:
         return self._products
 
     @property
-    def orders(self) -> BackendOrders:
+    def orders(self) -> OrderRepository:
         return self._orders
 
     @property

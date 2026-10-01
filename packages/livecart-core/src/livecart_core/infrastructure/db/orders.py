@@ -48,6 +48,32 @@ cannot deadlock. Every deadline comes from the request's ``now`` (the
 3. ``UPDATE orders SET status = 'expired', expired_at = :now`` with the
    guard ``status = 'pending_payment' AND reserved_until < :now``.
 
+``lease_due_checkouts``, the second step, leases the due orders whose
+attempt is still pending, for one sweep to ask the provider to expire their
+sessions, in one statement and a read::
+
+    UPDATE orders SET expiry_lease_until = :now + :lease
+    WHERE id IN (SELECT candidate.id FROM orders AS candidate
+                 WHERE candidate.status = 'pending_payment'
+                   AND candidate.reserved_until < :now
+                   AND EXISTS (SELECT 1 FROM payments WHERE order_id = candidate.id
+                               AND status = 'pending')
+                   AND (candidate.expiry_lease_until IS NULL
+                        OR candidate.expiry_lease_until < :now)
+                 ORDER BY candidate.id LIMIT :limit FOR UPDATE SKIP LOCKED)
+    RETURNING ...
+
+then the pending attempt of each, read under the rows' locks, which every
+change of an attempt takes first (``open_attempt``, the registry's
+``settle``). The subquery names ``orders`` by an alias, so that it is not
+correlated with the table the statement updates.
+
+``release_checkout``, the third step, once the provider expired the
+session, locks the order's row (``FOR UPDATE``), expires the attempt by
+compare-and-set, then, if the order still waits for its payment, is due and
+has no pending attempt left, releases its units and expires it last, as
+``expire_due`` does.
+
 ``set_shipping_address`` is a compare-and-set on ``status =
 'pending_payment'``: a paid or expired order keeps the address it had.
 
@@ -63,7 +89,7 @@ import secrets
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -73,10 +99,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from livecart_core.application.dto import (
     BuyerOrderRecord,
+    DueCheckout,
     ExpiredReservations,
     IntentSource,
     OrderRecord,
     PurchaseIntentRecord,
+    ReleasedCheckout,
     ReservationRequest,
     ReservationResult,
     ShippingAddress,
@@ -105,6 +133,7 @@ from livecart_core.domain.state_machines import (
 )
 from livecart_core.infrastructure.db.comments import parse_values
 from livecart_core.infrastructure.db.ids import new_id
+from livecart_core.infrastructure.db.payments import payment_record
 from livecart_core.infrastructure.db.products import stock_level
 from livecart_core.infrastructure.db.tables import (
     comments,
@@ -347,6 +376,123 @@ class SqlOrderRepository:
         return ExpiredReservations(
             tuple(sorted((order_record(row) for row in expired), key=lambda order: order.id)),
             stock,
+        )
+
+    async def lease_due_checkouts(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[DueCheckout, ...]:
+        if limit < 1:
+            raise ValueError(f"limit must be positive, not {limit}")
+        if lease <= timedelta(0):
+            raise ValueError(f"lease must be positive, not {lease}")
+        candidate = orders.alias("candidate")
+        paying = (
+            select(payments.c.id)
+            .where(
+                payments.c.order_id == candidate.c.id,
+                payments.c.status == PaymentStatus.PENDING.value,
+            )
+            .exists()
+        )
+        leasable = (
+            select(candidate.c.id)
+            .where(
+                candidate.c.status == OrderStatus.PENDING_PAYMENT.value,
+                candidate.c.reserved_until < now,
+                paying,
+                candidate.c.expiry_lease_until.is_(None) | (candidate.c.expiry_lease_until < now),
+            )
+            .order_by(candidate.c.id)
+            .limit(limit)
+            .with_for_update(skip_locked=True)
+        )
+        until = now + lease
+        async with transaction(self._engine) as connection:
+            leased = (
+                await connection.execute(
+                    update(orders)
+                    .where(orders.c.id.in_(leasable))
+                    .values(expiry_lease_until=until)
+                    .returning(*orders.c)
+                )
+            ).all()
+            if not leased:
+                return ()
+            attempts = (
+                await connection.execute(
+                    select(payments).where(
+                        payments.c.order_id.in_([row.id for row in leased]),
+                        payments.c.status == PaymentStatus.PENDING.value,
+                    )
+                )
+            ).all()
+        pending = {row.order_id: payment_record(row) for row in attempts}
+        return tuple(
+            DueCheckout(order_record(row), pending[row.id], until)
+            for row in sorted(leased, key=lambda row: row.id)
+        )
+
+    async def release_checkout(
+        self, order_id: UUID, payment_id: UUID, *, now: datetime
+    ) -> ReleasedCheckout:
+        async with transaction(self._engine) as connection:
+            order = (
+                await connection.execute(
+                    select(orders).where(orders.c.id == order_id).with_for_update()
+                )
+            ).one_or_none()
+            if order is None:
+                raise RecordNotFound(f"no order {order_id}")
+            expired_attempt = (
+                await connection.execute(
+                    update(payments)
+                    .where(
+                        payments.c.id == payment_id,
+                        payments.c.order_id == order_id,
+                        payments.c.status == PaymentStatus.PENDING.value,
+                    )
+                    .values(status=PaymentStatus.EXPIRED.value)
+                    .returning(payments.c.id)
+                )
+            ).one_or_none()
+            payment_changed = expired_attempt is not None
+            still_paying = await connection.scalar(
+                select(payments.c.id).where(
+                    payments.c.order_id == order_id,
+                    payments.c.status == PaymentStatus.PENDING.value,
+                )
+            )
+            due = order.status == OrderStatus.PENDING_PAYMENT.value and order.reserved_until < now
+            if not due or still_paying is not None:
+                return ReleasedCheckout(order_record(order), payment_changed=payment_changed)
+            counters = (
+                await connection.execute(
+                    update(products)
+                    .where(products.c.id == order.product_id)
+                    .values(reserved=products.c.reserved - order.quantity)
+                    .returning(products.c.stock_total, products.c.reserved, products.c.sold)
+                )
+            ).one()
+            expired = (
+                await connection.execute(
+                    update(orders)
+                    .where(
+                        orders.c.id == order_id,
+                        orders.c.status == OrderStatus.PENDING_PAYMENT.value,
+                    )
+                    .values(status=OrderStatus.EXPIRED.value, expired_at=now)
+                    .returning(*orders.c)
+                )
+            ).one_or_none()
+            if expired is None:
+                # Impossible while this transaction holds the order's row: roll
+                # the release back rather than free stock the order still holds.
+                raise RuntimeError(f"order {order_id} changed under its lock")
+        return ReleasedCheckout(
+            order_record(expired),
+            payment_changed=payment_changed,
+            order_changed=True,
+            stock=stock_level(counters),
         )
 
     # --- The steps of unit 3 -----------------------------------------------------------

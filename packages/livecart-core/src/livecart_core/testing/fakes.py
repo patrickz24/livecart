@@ -41,6 +41,7 @@ from livecart_core.application.dto import (
     CheckoutStatus,
     CommentBatch,
     CommentClaim,
+    DueCheckout,
     EventClaim,
     ExpiredReservations,
     FallbackReceipt,
@@ -73,6 +74,7 @@ from livecart_core.application.dto import (
     RefreshTokenRecord,
     RegisteredEvent,
     RejectedComment,
+    ReleasedCheckout,
     ReservationRequest,
     ReservationResult,
     SellerRecord,
@@ -829,6 +831,8 @@ class InMemoryTables:
     orders: dict[UUID, OrderRecord] = field(default_factory=dict)
     # orders.access_token_hash, beside the records, which never carry it.
     order_token_hashes: dict[UUID, bytes] = field(default_factory=dict)
+    # orders.expiry_lease_until, the sweep's lease, beside the records too.
+    order_expiry_leases: dict[UUID, datetime] = field(default_factory=dict)
     payments: dict[UUID, PaymentRecord] = field(default_factory=dict)
     shipments: dict[UUID, ShipmentRecord] = field(default_factory=dict)
     webhook_events: dict[tuple[PaymentProviderName, str], RegisteredEvent] = field(
@@ -1600,6 +1604,65 @@ class InMemoryOrderRepository(_Repository):
         return ExpiredReservations(
             tuple(expired),
             {product_id: self._tables.products[product_id].stock for product_id in released},
+        )
+
+    async def lease_due_checkouts(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[DueCheckout, ...]:
+        _require_aware(now)
+        _require_positive("limit", limit)
+        _require_positive("lease", lease.total_seconds())
+        pending = {
+            payment.order_id: payment
+            for payment in self._tables.payments.values()
+            if payment.status is PaymentStatus.PENDING
+        }
+        leases = self._tables.order_expiry_leases
+        due = sorted(
+            (
+                order
+                for order in self._tables.orders.values()
+                if order.status is OrderStatus.PENDING_PAYMENT
+                and order.reserved_until < now
+                and order.id in pending
+                and leases.get(order.id, _EARLIEST) < now
+            ),
+            key=lambda order: order.id,
+        )[:limit]
+        until = now + lease
+        for order in due:
+            leases[order.id] = until
+        return tuple(DueCheckout(order, pending[order.id], until) for order in due)
+
+    async def release_checkout(
+        self, order_id: UUID, payment_id: UUID, *, now: datetime
+    ) -> ReleasedCheckout:
+        _require_aware(now)
+        order = _row(self._tables.orders, order_id, "order")
+        payment = self._tables.payments.get(payment_id)
+        payment_changed = (
+            payment is not None
+            and payment.order_id == order_id
+            and payment.status is PaymentStatus.PENDING
+        )
+        if payment is not None and payment_changed:
+            self._tables.payments[payment_id] = replace(payment, status=PaymentStatus.EXPIRED)
+        still_paying = any(
+            row.order_id == order_id and row.status is PaymentStatus.PENDING
+            for row in self._tables.payments.values()
+        )
+        due = order.status is OrderStatus.PENDING_PAYMENT and order.reserved_until < now
+        if not due or still_paying:
+            return ReleasedCheckout(order, payment_changed=payment_changed)
+        transition(ORDER_TRANSITIONS, order.status, OrderStatus.EXPIRED)
+        self._move_stock(order, reserved=-order.quantity.value)
+        order = replace(order, status=OrderStatus.EXPIRED, expired_at=now)
+        self._tables.orders[order_id] = order
+        return ReleasedCheckout(
+            order,
+            payment_changed=payment_changed,
+            order_changed=True,
+            stock=self._tables.products[order.product_id].stock,
         )
 
     def _pending_order(self, session_id: UUID, product_id: UUID, buyer: str) -> OrderRecord | None:
