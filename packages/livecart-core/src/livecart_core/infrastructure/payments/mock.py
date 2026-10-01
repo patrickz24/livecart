@@ -292,6 +292,8 @@ class MockPaymentProvider:
             status=status,
             amount=Money(stored.amount_minor, stored.currency),
             payment_ref=self.payment_ref(ref) if complete else None,
+            # The mock completes a session only once the buyer paid it.
+            payment_status=CheckoutPaymentStatus.PAID if complete else None,
         )
         return MockHostedSession(
             session=session,

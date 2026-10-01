@@ -16,10 +16,11 @@ A hosted Checkout Session per payment attempt, by stripe-python's
   session that is no longer open (paid, or expired already), which the
   adapter reads back to answer ``False``. That refusal is what settles the
   race between a late payment and the release of the stock (expire-first);
-- ``get_checkout`` reads a session back. A session that left ``open`` has no
-  hosted page any more (Stripe answers its ``url`` as null): its redirect
-  URL is then where Stripe would have sent the buyer back, the bridge page's
-  success or cancel URL;
+- ``get_checkout`` reads a session back, with its ``payment_status``, which
+  the sweep checks before it settles a session it found complete. A session
+  that left ``open`` has no hosted page any more (Stripe answers its ``url``
+  as null): its redirect URL is then where Stripe would have sent the buyer
+  back, the bridge page's success or cancel URL;
 - ``verify_webhook`` checks the ``Stripe-Signature`` header with
   ``StripeClient.construct_event``, under ``STRIPE_WEBHOOK_SECRET`` and
   Stripe's default tolerance of 300 s, before it parses the body, then
@@ -152,6 +153,8 @@ def _checkout_session(session: stripe.checkout.Session) -> CheckoutSession:
         status=status,
         amount=Money(amount, currency.upper()),
         payment_ref=_id_of(session.payment_intent),
+        # A session answered without one has no known payment status.
+        payment_status=_payment_status(getattr(session, "payment_status", None)),
     )
 
 

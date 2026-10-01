@@ -16,6 +16,7 @@ import pytest
 
 from livecart_core.application.dto import (
     CheckoutEventType,
+    CheckoutPaymentStatus,
     CheckoutRequest,
     CheckoutStatus,
     PaymentEvent,
@@ -117,6 +118,7 @@ async def test_a_paid_session_refuses_to_expire_and_reads_back_complete(
 
     assert paid.status is CheckoutStatus.COMPLETE
     assert paid.payment_ref is not None
+    assert paid.payment_status is CheckoutPaymentStatus.PAID
     assert await provider.expire_checkout(session.provider_ref) is False
     assert await provider.get_checkout(session.provider_ref) == paid
 
@@ -132,6 +134,7 @@ async def test_a_session_expired_first_can_no_longer_be_paid(
 
     assert after.status is CheckoutStatus.EXPIRED
     assert after.payment_ref is None
+    assert after.payment_status is not CheckoutPaymentStatus.PAID
 
 
 async def test_an_unknown_session_is_not_found(payment_provider: PaymentProviderBackend) -> None:

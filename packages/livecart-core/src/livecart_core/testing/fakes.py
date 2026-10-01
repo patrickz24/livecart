@@ -35,6 +35,7 @@ from livecart_core.application.dto import (
     BuyerNotification,
     BuyerOrderRecord,
     CarrierName,
+    CheckoutPaymentStatus,
     CheckoutRequest,
     CheckoutSession,
     CheckoutStatus,
@@ -666,7 +667,12 @@ class FakePaymentProvider(_ScriptedFailures):
         session = self._session(provider_ref)
         if session.status is not CheckoutStatus.OPEN:
             raise ValueError(f"session {provider_ref} is {session.status}, not open")
-        completed = replace(session, status=CheckoutStatus.COMPLETE, payment_ref=payment_ref)
+        completed = replace(
+            session,
+            status=CheckoutStatus.COMPLETE,
+            payment_ref=payment_ref,
+            payment_status=CheckoutPaymentStatus.PAID,
+        )
         self._sessions[provider_ref] = completed
         return completed
 
