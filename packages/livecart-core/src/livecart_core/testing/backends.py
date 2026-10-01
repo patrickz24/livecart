@@ -2,8 +2,8 @@
 
 ADR 0002 asks every SQL adapter to pass the scenarios of its in-memory fake.
 ``tests/contract`` writes each scenario once, against ``ReservationBackend``
-(the comment inbox, stock, reservations, payment attempts and the registry
-of payment webhooks) or
+(the comment inbox, stock, reservations, payment attempts, the registry
+of payment webhooks and the shipments) or
 ``AuthBackend`` (sellers and refresh tokens),
 and runs it on ``InMemoryBackend`` (the fakes of ``fakes.py``) and on
 ``PostgresBackend`` (the SQL adapters on livecart_test). A backend gives the
@@ -47,6 +47,7 @@ from livecart_core.application.ports import (
     RefreshTokenRepository,
     SellerRepository,
     SessionEventLog,
+    ShipmentRepository,
     WebhookEventRegistry,
 )
 from livecart_core.domain.codes import ProductCode, Variant
@@ -69,6 +70,7 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.db.shipments import SqlShipmentRepository
 from livecart_core.infrastructure.db.webhook_events import (
     SqlWebhookEventRegistry,
     registered_event,
@@ -114,6 +116,9 @@ class ReservationBackend(Protocol):
 
     @property
     def webhook_events(self) -> WebhookEventRegistry: ...
+
+    @property
+    def shipments(self) -> ShipmentRepository: ...
 
     async def add_seller(self) -> UUID:
         """A seller whose account no password opens."""
@@ -230,6 +235,10 @@ class InMemoryBackend:
     @property
     def webhook_events(self) -> WebhookEventRegistry:
         return self.database.webhook_events
+
+    @property
+    def shipments(self) -> ShipmentRepository:
+        return self.database.shipments
 
     @property
     def sellers(self) -> SellerRepository:
@@ -364,6 +373,7 @@ class PostgresBackend:
         self._activity = SqlLiveSessionActivity(app_engine, currency=CURRENCY)
         self._payments = SqlPaymentRepository(app_engine)
         self._webhook_events = SqlWebhookEventRegistry(app_engine)
+        self._shipments = SqlShipmentRepository(app_engine)
         self._sellers = SqlSellerRepository(app_engine)
         self._refresh_tokens = SqlRefreshTokenRepository(app_engine)
 
@@ -394,6 +404,10 @@ class PostgresBackend:
     @property
     def webhook_events(self) -> WebhookEventRegistry:
         return self._webhook_events
+
+    @property
+    def shipments(self) -> ShipmentRepository:
+        return self._shipments
 
     @property
     def sellers(self) -> SellerRepository:

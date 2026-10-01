@@ -16,7 +16,7 @@ from livecart_core.testing.database import IntegrationSettings
 
 pytestmark = pytest.mark.integration
 
-HEAD = "0005"
+HEAD = "0006"
 
 
 def migrate(url: SecretStr, *argv: str) -> None:
@@ -100,7 +100,13 @@ def test_each_revision_steps_up_and_down_on_its_own(
     assert (recorded_versions(url), schema_tables(url)) == (["0004"], set(metadata.tables))
 
     migrate(url, "upgrade", "+1")
+    assert (recorded_versions(url), schema_tables(url)) == (["0005"], set(metadata.tables))
+
+    migrate(url, "upgrade", "+1")
     assert (recorded_versions(url), schema_tables(url)) == ([HEAD], set(metadata.tables))
+
+    migrate(url, "downgrade", "-1")
+    assert (recorded_versions(url), schema_tables(url)) == (["0005"], set(metadata.tables))
 
     migrate(url, "downgrade", "-1")
     assert (recorded_versions(url), schema_tables(url)) == (["0004"], set(metadata.tables))

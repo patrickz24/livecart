@@ -14,7 +14,7 @@ def test_the_packaged_migrations_form_one_line_from_the_baseline() -> None:
     scripts = ScriptDirectory.from_config(build_config(MIGRATOR_URL))
 
     assert Path(scripts.dir).name == "migrations"
-    assert scripts.get_heads() == ["0005"]
+    assert scripts.get_heads() == ["0006"]
     baseline = scripts.get_revision("0001")
     assert baseline is not None
     assert baseline.down_revision is None
@@ -30,6 +30,9 @@ def test_the_packaged_migrations_form_one_line_from_the_baseline() -> None:
     webhook_lease = scripts.get_revision("0005")
     assert webhook_lease is not None
     assert webhook_lease.down_revision == "0004"
+    tracking_lease = scripts.get_revision("0006")
+    assert tracking_lease is not None
+    assert tracking_lease.down_revision == "0005"
 
 
 def test_without_arguments_the_command_upgrades_to_head() -> None:
@@ -78,14 +81,33 @@ def test_offline_upgrade_renders_the_baseline_sql(capsys: pytest.CaptureFixture[
         "UPDATE alembic_version SET version_num='0005' WHERE alembic_version.version_num = '0004'"
         in sql
     )
+    assert (
+        "UPDATE shipments SET last_event_at=shipments.carrier_created_at"
+        " WHERE shipments.last_event_at IS NULL"
+    ) in sql
+    assert "ALTER TABLE shipments ALTER COLUMN last_event_at SET NOT NULL" in sql
+    assert "ALTER TABLE shipments ADD COLUMN tracking_lease_until TIMESTAMP WITH TIME ZONE" in sql
+    assert (
+        "CREATE INDEX ix_shipments_in_flight ON shipments (id)"
+        " WHERE status IN ('created', 'in_transit', 'out_for_delivery')"
+    ) in sql
+    assert (
+        "UPDATE alembic_version SET version_num='0006' WHERE alembic_version.version_num = '0005'"
+        in sql
+    )
 
 
 def test_offline_downgrade_renders_the_reverse_sql(capsys: pytest.CaptureFixture[str]) -> None:
-    cli, options = parse_args(["downgrade", "0005:base", "--sql"])
+    cli, options = parse_args(["downgrade", "0006:base", "--sql"])
 
     execute(cli, options, MIGRATOR_URL)
 
     sql = capsys.readouterr().out
+    assert sql.index("DROP INDEX ix_shipments_in_flight;") < sql.index(
+        "DROP COLUMN tracking_lease_until;"
+    )
+    assert "ALTER TABLE shipments ALTER COLUMN last_event_at DROP NOT NULL" in sql
+    assert sql.index("DROP COLUMN tracking_lease_until;") < sql.index("DROP COLUMN claimed_until;")
     assert sql.index("DROP COLUMN claimed_until;") < sql.index("DROP COLUMN llm_reason;")
     assert sql.index("DROP COLUMN llm_reason;") < sql.index("DROP INDEX ix_comments_session_id;")
     assert sql.index("DROP INDEX ix_comments_session_id;") < sql.index("DROP TABLE comments;")

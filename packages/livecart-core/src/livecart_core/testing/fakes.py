@@ -50,6 +50,7 @@ from livecart_core.application.dto import (
     IdempotencyRecord,
     InboxComment,
     IncomingComment,
+    LeasedShipment,
     LiveSessionChanges,
     LiveSessionRecord,
     LiveSessionTransition,
@@ -85,6 +86,7 @@ from livecart_core.application.dto import (
     ShipmentRecord,
     ShipmentRef,
     ShipmentRequest,
+    ShipmentTransition,
     ShippingAddress,
     StockLevel,
     StreamedEvent,
@@ -125,6 +127,7 @@ from livecart_core.domain.reference import (
     RandomSource,
     generate_order_reference,
 )
+from livecart_core.domain.shipments import IN_FLIGHT
 from livecart_core.domain.state_machines import (
     COMMENT_TRANSITIONS,
     LIVE_SESSION_TRANSITIONS,
@@ -835,6 +838,8 @@ class InMemoryTables:
     order_expiry_leases: dict[UUID, datetime] = field(default_factory=dict)
     payments: dict[UUID, PaymentRecord] = field(default_factory=dict)
     shipments: dict[UUID, ShipmentRecord] = field(default_factory=dict)
+    # shipments.tracking_lease_until, the tracking's lease, beside the records.
+    shipment_tracking_leases: dict[UUID, datetime] = field(default_factory=dict)
     webhook_events: dict[tuple[PaymentProviderName, str], RegisteredEvent] = field(
         default_factory=dict
     )
@@ -1813,14 +1818,18 @@ class InMemoryPaymentRepository(_Repository):
 
 
 class InMemoryShipmentRepository(_Repository):
-    async def add(self, order_id: UUID, ref: ShipmentRef) -> ShipmentRecord:
+    """Shipments, one per order, with the claims and the tracking leases of their SQL adapter."""
+
+    async def add(self, order_id: UUID, ref: ShipmentRef) -> ShipmentTransition:
         _row(self._tables.orders, order_id, "order")
         known = self._find_by_order(order_id)
         if known is not None:
-            return known
-        shipment = ShipmentRecord(self._db.new_id(), order_id, ref, ShipmentStatus.CREATED)
+            return ShipmentTransition(known, TransitionOutcome.NOOP)
+        shipment = ShipmentRecord(
+            self._db.new_id(), order_id, ref, ShipmentStatus.CREATED, ref.created_at
+        )
         self._tables.shipments[shipment.id] = shipment
-        return shipment
+        return ShipmentTransition(shipment, TransitionOutcome.APPLIED)
 
     async def get_by_order(self, order_id: UUID) -> ShipmentRecord | None:
         return self._find_by_order(order_id)
@@ -1831,23 +1840,56 @@ class InMemoryShipmentRepository(_Repository):
             (row for row in self._tables.shipments.values() if row.order_id == order_id), None
         )
 
-    async def list_in_flight(self, *, limit: int) -> list[ShipmentRecord]:
+    async def unshipped_orders(
+        self, *, paid_before: datetime, limit: int
+    ) -> tuple[OrderRecord, ...]:
+        _require_aware(paid_before)
         _require_positive("limit", limit)
-        settled = (ShipmentStatus.DELIVERED, ShipmentStatus.CANCELLED)
-        in_flight = [row for row in self._tables.shipments.values() if row.status not in settled]
-        return sorted(in_flight, key=lambda row: row.id)[:limit]
+        shipped = {row.order_id for row in self._tables.shipments.values()}
+        unshipped = (
+            order
+            for order in self._tables.orders.values()
+            if order.status is OrderStatus.PAID
+            and order.shipping_address is not None
+            and order.paid_at is not None
+            and order.paid_at < paid_before
+            and order.id not in shipped
+        )
+        return tuple(sorted(unshipped, key=lambda order: order.id)[:limit])
+
+    async def lease_for_tracking(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[LeasedShipment, ...]:
+        _require_aware(now)
+        _require_positive("limit", limit)
+        _require_positive("lease", lease.total_seconds())
+        leases = self._tables.shipment_tracking_leases
+        due = sorted(
+            (
+                row
+                for row in self._tables.shipments.values()
+                if row.status in IN_FLIGHT and leases.get(row.id, _EARLIEST) < now
+            ),
+            key=lambda row: row.id,
+        )[:limit]
+        until = now + lease
+        leased = []
+        for row in due:
+            leases[row.id] = until
+            order = self._tables.orders[row.order_id]
+            leased.append(LeasedShipment(row, order.session_id, order.reference, until))
+        return tuple(leased)
 
     async def set_status(
         self, shipment_id: UUID, target: ShipmentStatus, *, event_at: datetime
-    ) -> TransitionOutcome:
+    ) -> ShipmentTransition:
         _require_aware(event_at)
         shipment = _row(self._tables.shipments, shipment_id, "shipment")
         outcome = transition(SHIPMENT_TRANSITIONS, shipment.status, target)
         if outcome is TransitionOutcome.APPLIED:
-            self._tables.shipments[shipment_id] = replace(
-                shipment, status=target, last_event_at=event_at
-            )
-        return outcome
+            shipment = replace(shipment, status=target, last_event_at=event_at)
+            self._tables.shipments[shipment_id] = shipment
+        return ShipmentTransition(shipment, outcome)
 
 
 class InMemoryWebhookEventRegistry(_Repository):

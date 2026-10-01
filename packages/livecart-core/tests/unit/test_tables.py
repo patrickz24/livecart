@@ -128,6 +128,7 @@ def test_the_partial_indexes_of_the_plan() -> None:
     assert not _partial_index(
         tables.comments, "ix_comments_rejected_session_id_rejection_reason"
     ).unique
+    assert not _partial_index(tables.shipments, "ix_shipments_in_flight").unique
     assert not _partial_index(
         tables.processed_webhook_events, "ix_processed_webhook_events_unprocessed_created_at"
     ).unique

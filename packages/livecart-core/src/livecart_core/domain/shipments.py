@@ -17,3 +17,6 @@ SHIPMENT_ROUTE: Final[tuple[ShipmentStatus, ...]] = (
     ShipmentStatus.OUT_FOR_DELIVERY,
     ShipmentStatus.DELIVERED,
 )
+# The statuses of a shipment still on its way, neither delivered nor cancelled:
+# what the tracking polls the carrier about.
+IN_FLIGHT: Final[tuple[ShipmentStatus, ...]] = SHIPMENT_ROUTE[:-1]

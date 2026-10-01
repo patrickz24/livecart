@@ -1251,13 +1251,36 @@ class TrackingUpdate:
 
 @dataclass(frozen=True, slots=True)
 class ShipmentRecord:
-    """A row of ``shipments``."""
+    """A row of ``shipments``: a paid order's parcel, as its carrier last reported it."""
 
     id: UUID
     order_id: UUID
     ref: ShipmentRef
     status: ShipmentStatus
-    last_event_at: datetime | None = None
+    # The time of the carrier's latest event: the creation, until the parcel moves.
+    last_event_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ShipmentTransition:
+    """A shipment after a write, and whether the write applied the change or found it there."""
+
+    shipment: ShipmentRecord
+    outcome: TransitionOutcome
+
+
+@dataclass(frozen=True, slots=True)
+class LeasedShipment:
+    """A shipment in flight, leased to one worker's tracking until ``lease_until``.
+
+    It comes with its order's session, whose stream its ``shipment.updated``
+    events go to, and its order's reference, for the logs.
+    """
+
+    shipment: ShipmentRecord
+    session_id: UUID
+    reference: OrderReference
+    lease_until: datetime
 
 
 # --- Storefront ------------------------------------------------------------------------

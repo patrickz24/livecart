@@ -8,11 +8,9 @@ import pytest
 from livecart_core.application.dto import (
     AttemptOpening,
     AttemptOpeningKind,
-    CarrierName,
     IntentSource,
     PaymentProviderName,
     ReservationRequest,
-    ShipmentRef,
 )
 from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.codes import ProductCode, Variant
@@ -22,7 +20,6 @@ from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import (
     OrderStatus,
     PaymentStatus,
-    ShipmentStatus,
     TransitionOutcome,
 )
 from livecart_core.testing.builders import queued_comment
@@ -127,67 +124,17 @@ async def test_a_settled_attempt_without_reference_keeps_the_one_it_had() -> Non
 
 
 # --- Shipments -------------------------------------------------------------------------
+# What every backend does is in tests/contract/test_shipment_repository.py.
 
 
-def _ref(number: int) -> ShipmentRef:
-    return ShipmentRef(CarrierName.MOCK, f"fake-shipment-{number}", f"FAKE{number:08d}", NOW)
-
-
-async def test_an_order_has_one_shipment() -> None:
+async def test_the_shipment_claims_refuse_an_empty_batch_a_naive_time_or_no_lease() -> None:
     database = InMemoryDatabase()
-    order_id = await _order(database)
 
-    first = await database.shipments.add(order_id, _ref(1))
-    again = await database.shipments.add(order_id, _ref(2))
-
-    assert again == first
-    assert (first.status, first.ref, first.last_event_at) == (ShipmentStatus.CREATED, _ref(1), None)
-    assert await database.shipments.get_by_order(order_id) == first
-    assert await database.shipments.get_by_order(UNKNOWN) is None
-    with pytest.raises(RecordNotFound):
-        await database.shipments.add(UNKNOWN, _ref(3))
-
-
-async def test_a_shipment_moves_along_its_machine() -> None:
-    database = InMemoryDatabase()
-    shipment = await database.shipments.add(await _order(database), _ref(1))
-    event_at = NOW + timedelta(minutes=2)
-
-    moved = await database.shipments.set_status(
-        shipment.id, ShipmentStatus.IN_TRANSIT, event_at=event_at
-    )
-    again = await database.shipments.set_status(
-        shipment.id, ShipmentStatus.IN_TRANSIT, event_at=event_at + timedelta(minutes=1)
-    )
-
-    stored = database.tables.shipments[shipment.id]
-    assert (moved, again) == (TransitionOutcome.APPLIED, TransitionOutcome.NOOP)
-    assert (stored.status, stored.last_event_at) == (ShipmentStatus.IN_TRANSIT, event_at)
-    with pytest.raises(InvalidTransition):
-        await database.shipments.set_status(
-            shipment.id, ShipmentStatus.CANCELLED, event_at=event_at
-        )
-    with pytest.raises(RecordNotFound):
-        await database.shipments.set_status(UNKNOWN, ShipmentStatus.IN_TRANSIT, event_at=NOW)
-
-
-async def test_tracking_polls_shipments_still_in_flight_lowest_id_first() -> None:
-    database = InMemoryDatabase()
-    orders = [await _order(database, f"comment-{n}") for n in range(4)]
-    shipments = [await database.shipments.add(order, _ref(n)) for n, order in enumerate(orders)]
-    delivered, cancelled, moving, waiting = shipments
-    for status in (
-        ShipmentStatus.IN_TRANSIT,
-        ShipmentStatus.OUT_FOR_DELIVERY,
-        ShipmentStatus.DELIVERED,
-    ):
-        await database.shipments.set_status(delivered.id, status, event_at=NOW)
-    await database.shipments.set_status(cancelled.id, ShipmentStatus.CANCELLED, event_at=NOW)
-    await database.shipments.set_status(moving.id, ShipmentStatus.IN_TRANSIT, event_at=NOW)
-
-    in_flight = await database.shipments.list_in_flight(limit=10)
-
-    assert [row.id for row in in_flight] == [moving.id, waiting.id]
-    assert [row.id for row in await database.shipments.list_in_flight(limit=1)] == [moving.id]
     with pytest.raises(ValueError, match="limit"):
-        await database.shipments.list_in_flight(limit=0)
+        await database.shipments.unshipped_orders(paid_before=NOW, limit=0)
+    with pytest.raises(ValueError, match="naive"):
+        await database.shipments.unshipped_orders(paid_before=NOW.replace(tzinfo=None), limit=1)
+    with pytest.raises(ValueError, match="limit"):
+        await database.shipments.lease_for_tracking(now=NOW, limit=0, lease=timedelta(seconds=1))
+    with pytest.raises(ValueError, match="lease"):
+        await database.shipments.lease_for_tracking(now=NOW, limit=1, lease=timedelta(0))

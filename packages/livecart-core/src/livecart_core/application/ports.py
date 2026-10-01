@@ -52,6 +52,7 @@ from livecart_core.application.dto import (
     IdempotencyRecord,
     InboxComment,
     IncomingComment,
+    LeasedShipment,
     LiveSessionChanges,
     LiveSessionRecord,
     LiveSessionTransition,
@@ -81,6 +82,7 @@ from livecart_core.application.dto import (
     ShipmentRecord,
     ShipmentRef,
     ShipmentRequest,
+    ShipmentTransition,
     ShippingAddress,
     StreamedEvent,
     TrackingUpdate,
@@ -1009,22 +1011,67 @@ class PaymentRepository(PaymentAttempts, Protocol):
         """Settle a pending attempt as succeeded, failed or expired."""
 
 
-class ShipmentRepository(Protocol):
-    """Shipments: at most one per order (``uq_shipments_order_id``)."""
-
-    async def add(self, order_id: UUID, ref: ShipmentRef) -> ShipmentRecord:
-        """Record the carrier's shipment of an order; a second call returns the first record."""
+class ShipmentLookup(Protocol):
+    """What the buyer's tracking reads of a shipment."""
 
     async def get_by_order(self, order_id: UUID) -> ShipmentRecord | None:
-        """The order's shipment, or ``None``."""
+        """The order's shipment, or ``None`` until it has one."""
 
-    async def list_in_flight(self, *, limit: int) -> list[ShipmentRecord]:
-        """Shipments neither delivered nor cancelled, lowest id first: what tracking polls."""
+
+class ShipmentRepository(ShipmentLookup, Protocol):
+    """Shipments: one per order at most (``uq_shipments_order_id``), and their tracking's leases.
+
+    A shipment is recorded once per order, from the carrier's first answer,
+    ``created``, its creation its first event. Its status then only moves by
+    compare-and-set along ``SHIPMENT_TRANSITIONS``. The worker finds the
+    paid orders left without one (``unshipped_orders``) and the shipments to
+    ask the carrier about (``lease_for_tracking``) by claims that skip the
+    rows another unit holds, so that workers running at once take disjoint
+    rows; a tracking lease then keeps the shipment from the other workers
+    until it ends, as the row lock does not outlast its unit.
+    """
+
+    async def add(self, order_id: UUID, ref: ShipmentRef) -> ShipmentTransition:
+        """Record the carrier's shipment of an order, ``created``, its latest event its creation.
+
+        ``APPLIED`` when this call recorded it; ``NOOP``, with the shipment
+        as it stands, when the order had one already: the first one recorded
+        stays, whatever ref this call brought. Raises ``RecordNotFound`` when
+        no order has ``order_id``.
+        """
+
+    async def unshipped_orders(
+        self, *, paid_before: datetime, limit: int
+    ) -> tuple[OrderRecord, ...]:
+        """One unit: at most ``limit`` paid orders without a shipment, paid before ``paid_before``.
+
+        Only the orders with an address, which every paid order has (the
+        checkout requires one). Lowest id first, skipping the orders another
+        unit holds (``FOR UPDATE SKIP LOCKED``): the fallback of a crash, or
+        of a carrier down, between a payment and its shipment.
+        """
+
+    async def lease_for_tracking(
+        self, *, now: datetime, limit: int, lease: timedelta
+    ) -> tuple[LeasedShipment, ...]:
+        """One unit: lease at most ``limit`` shipments in flight whose lease ended before ``now``.
+
+        In flight: neither delivered nor cancelled (``IN_FLIGHT``). Lowest id
+        first, skipping the shipments another unit holds (``FOR UPDATE SKIP
+        LOCKED``); each is leased until ``now + lease``, with its order's
+        session and reference.
+        """
 
     async def set_status(
         self, shipment_id: UUID, target: ShipmentStatus, *, event_at: datetime
-    ) -> TransitionOutcome:
-        """Move a shipment one step along its machine, stamping ``last_event_at``."""
+    ) -> ShipmentTransition:
+        """Move a shipment one step on by compare-and-set, stamping ``last_event_at``.
+
+        ``APPLIED`` with the shipment moved, ``NOOP`` with it as it stands
+        when it is at ``target`` already, ``InvalidTransition`` when the
+        machine does not lead there from its status (a shipment another
+        worker moved further meanwhile), ``RecordNotFound``.
+        """
 
 
 class WebhookEventRecorder(Protocol):

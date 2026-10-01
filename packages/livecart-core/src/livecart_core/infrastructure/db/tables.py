@@ -72,6 +72,7 @@ from livecart_core.domain.sellers import (
     MAX_SLUG_LENGTH,
     SLUG_PATTERN,
 )
+from livecart_core.domain.shipments import IN_FLIGHT
 from livecart_core.domain.state_machines import (
     CommentStatus,
     LiveSessionStatus,
@@ -532,12 +533,23 @@ shipments: Final = sa.Table(
     sa.Column("tracking_number", sa.String(MAX_TRACKING_NUMBER_LENGTH), nullable=False),
     sa.Column("status", sa.String(20), nullable=False, server_default=ShipmentStatus.CREATED.value),
     _timestamp("carrier_created_at", nullable=False),
-    _timestamp("last_event_at"),
+    # The time of the carrier's latest event: its creation, until the parcel
+    # moves (migration 0006).
+    _timestamp("last_event_at", nullable=False),
     _created_at(),
     _updated_at(),
+    # The lease of the last tracking poll: no other worker polls the shipment
+    # until then (migration 0006). NULL until its first poll.
+    _timestamp("tracking_lease_until"),
     # One shipment per order: creating it again after a crash finds the first.
     sa.UniqueConstraint("order_id", name="uq_shipments_order_id"),
     sa.UniqueConstraint("tracking_number", name="uq_shipments_tracking_number"),
     _one_of("carrier", CarrierName, name="ck_shipments_carrier"),
     _one_of("status", ShipmentStatus, name="ck_shipments_status"),
+    # What the tracking polls, lowest id first: the shipments still on their way.
+    sa.Index(
+        "ix_shipments_in_flight",
+        "id",
+        postgresql_where=sa.column("status", sa.String).in_([status.value for status in IN_FLIGHT]),
+    ),
 )
