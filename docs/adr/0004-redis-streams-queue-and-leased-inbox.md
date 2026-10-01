@@ -46,7 +46,7 @@ During a live, comments arrive in bursts, and a platform expects its webhook ans
 
 - `tests/contract/test_comment_queue.py` and `test_comment_inbox.py`: the queue and the inbox on their fakes and on Redis or PostgreSQL alike (ADR 0002).
 - `tests/integration/test_redis_comment_queue.py` and the worker's `test_reclaim_redis.py`: the pending entries list, a reclaim after a real idle time, the dead-letter stream and `dead_lettered`, the trim that keeps every pending and unread entry.
-- `tests/integration/test_process_comment_concurrency.py`: twenty parallel deliveries of one comment give one intent and one order, and a thousand concurrent comments reserve exactly the 200 units in stock, through the worker's pool.
+- `tests/integration/test_process_comment_concurrency.py`: twenty parallel deliveries of one comment give one intent and one order, and a thousand concurrent comments reserve exactly the 200 units in stock, through the worker's pool, each delivery retried after a transient failure as the consumer retries it.
 - The worker's `test_consumer_redis.py`: every delivery acknowledged, a real lock timeout retried in the process, and what a crashed consumer left taken back by `serve` at the shortest idle time the settings allow.
 
 ## Consequences
