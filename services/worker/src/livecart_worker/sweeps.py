@@ -12,6 +12,9 @@ One tick runs the three phases of the plan's step 14, one after the other:
    order's stock; one the buyer paid first is settled as paid, through the
    registry of payment events; anything else waits for the next lease.
 
+An order the reconciliation paid gets its shipment once the tick has
+ended (``shipments.ship_paid``), as one the payment events loop paid does.
+
 Every worker runs the loop; their sweeps skip each other's orders (``FOR
 UPDATE SKIP LOCKED``, and the lease), so a busy deployment sweeps faster
 with more workers, and never releases an order twice. The loop holds at most
@@ -28,6 +31,7 @@ from typing import Final
 
 import structlog
 
+from livecart_core.application.create_shipment import CreateShipment
 from livecart_core.application.expire_checkouts import (
     CheckoutExpiryOutcome,
     ExpireCheckouts,
@@ -36,6 +40,7 @@ from livecart_core.application.expire_checkouts import (
 from livecart_core.application.expire_reservations import ExpireReservations
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_worker.metrics import WorkerMetrics
+from livecart_worker.shipments import ship_paid
 
 logger = structlog.get_logger(__name__)
 
@@ -86,7 +91,9 @@ async def _expire_reservations(expire: ExpireReservations, metrics: WorkerMetric
             )
 
 
-async def _expire_checkouts(checkouts: ExpireCheckouts, metrics: WorkerMetrics | None) -> None:
+async def _expire_checkouts(
+    checkouts: ExpireCheckouts, metrics: WorkerMetrics | None, ship: CreateShipment | None
+) -> None:
     try:
         tick = await checkouts()
     except ServiceUnavailable as error:
@@ -98,17 +105,21 @@ async def _expire_checkouts(checkouts: ExpireCheckouts, metrics: WorkerMetrics |
             _log_checkout(handled)
         if metrics is not None:
             metrics.record_checkout_expiry(tick)
+        if ship is not None:
+            paid = [handled.order for handled in tick.handled if handled.paid and handled.order]
+            await ship_paid(ship, paid, metrics)
 
 
 async def sweep_once(
     expire: ExpireReservations,
     metrics: WorkerMetrics | None = None,
     checkouts: ExpireCheckouts | None = None,
+    ship: CreateShipment | None = None,
 ) -> None:
     """One tick: the first phase, then the later ones; see the module docstring."""
     await _expire_reservations(expire, metrics)
     if checkouts is not None:
-        await _expire_checkouts(checkouts, metrics)
+        await _expire_checkouts(checkouts, metrics, ship)
 
 
 async def run_expiry_sweep(
@@ -118,11 +129,12 @@ async def run_expiry_sweep(
     checkouts: ExpireCheckouts | None = None,
     interval_s: float = EXPIRY_INTERVAL_S,
     metrics: WorkerMetrics | None = None,
+    ship: CreateShipment | None = None,
 ) -> None:
     """Tick at startup, then every ``interval_s``, until ``stop`` is set."""
     logger.info("reservation_sweep_started", interval_s=interval_s)
     while not stop.is_set():
-        await sweep_once(expire, metrics, checkouts)
+        await sweep_once(expire, metrics, checkouts, ship)
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(interval_s):
                 await stop.wait()

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from livecart_core.application.dto import FallbackReceipt, PaymentProviderName
+from livecart_core.application.dto import CarrierName, FallbackReceipt, PaymentProviderName
 from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.ports import NullIntentFallback, PaymentProvider
 from livecart_core.domain.outcomes import LlmOutcome
@@ -14,6 +14,7 @@ from livecart_core.settings import LLM_MAX_RETRIES, AppEnv, Settings
 from livecart_core.testing.fakes import FakeClock, InMemoryLlmBudget
 from livecart_core.testing.keys import (
     TEST_JWT_SECRET,
+    TEST_MOCK_CARRIER_SECRET,
     TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
     TEST_STRIPE_SECRET_KEY,
@@ -45,6 +46,7 @@ async def test_serve_returns_once_stopped_and_releases_redis(tmp_path: Path) -> 
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=heartbeat,
         _env_file=None,
@@ -64,6 +66,7 @@ def _production(tmp_path: Path, provider: PaymentProviderName) -> Settings:
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         payment_provider=provider,
         mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         stripe_secret_key=TEST_STRIPE_SECRET_KEY,
@@ -87,6 +90,27 @@ async def test_a_production_worker_refuses_the_mock_payment_provider(tmp_path: P
         await serve(settings, asyncio.Event())
 
 
+@pytest.mark.parametrize("carrier", [CarrierName.DPD, CarrierName.CHRONOPOST, CarrierName.DHL])
+async def test_a_carriers_stub_stops_the_worker_at_startup(
+    carrier: CarrierName, tmp_path: Path
+) -> None:
+    settings = _production(tmp_path, PaymentProviderName.STRIPE).model_copy(
+        update={"app_env": AppEnv.DEVELOPMENT, "carrier_provider": carrier}
+    )
+
+    with pytest.raises(NotImplementedError, match=f"the {carrier} carrier is a documented stub"):
+        await serve(settings, asyncio.Event())
+
+
+async def test_the_mock_carrier_needs_its_key(tmp_path: Path) -> None:
+    settings = _production(tmp_path, PaymentProviderName.STRIPE).model_copy(
+        update={"app_env": AppEnv.DEVELOPMENT, "mock_carrier_secret": None}
+    )
+
+    with pytest.raises(ValueError, match="MOCK_CARRIER_SECRET must be set"):
+        await serve(settings, asyncio.Event())
+
+
 async def test_serve_builds_the_payment_provider_and_closes_it(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -101,6 +125,7 @@ async def test_serve_builds_the_payment_provider_and_closes_it(
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         payment_provider=PaymentProviderName.STRIPE,
         stripe_secret_key=TEST_STRIPE_SECRET_KEY,
         stripe_webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
@@ -122,6 +147,7 @@ def _settings(*, key: str | None, enabled: bool = True) -> Settings:
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         anthropic_api_key=None if key is None else SecretStr(key),
         llm_enabled=enabled,
@@ -159,6 +185,7 @@ async def test_serve_scrapes_the_llm_counters_once_the_fallback_is_on(tmp_path: 
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         anthropic_api_key=SecretStr("sk-ant-test"),

@@ -9,6 +9,7 @@ import structlog
 
 from livecart_core.application.apply_payment_events import ApplyPaymentEvent
 from livecart_core.application.checkout import CheckoutPages
+from livecart_core.application.create_shipment import CreateShipment
 from livecart_core.application.dto import (
     DueCheckout,
     ExpiredReservations,
@@ -22,8 +23,9 @@ from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import OrderStatus
-from livecart_core.testing.builders import queued_comment
+from livecart_core.testing.builders import TEST_ADDRESS, queued_comment
 from livecart_core.testing.fakes import (
+    FakeCarrierProvider,
     FakeClock,
     FakeEventPublisher,
     FakePaymentProvider,
@@ -202,6 +204,27 @@ async def test_a_session_the_buyer_paid_first_counts_as_an_order_paid() -> None:
     assert shop.sample("livecart_checkout_expiries_total", outcome="reconciled") == 1
     assert shop.sample("livecart_orders_paid_total") == 1
     assert shop.sample("livecart_reservations_expired_total") == 0
+
+
+async def test_an_order_the_reconciliation_paid_gets_its_shipment_after_the_tick() -> None:
+    shop = Checkouts()
+    await shop.due()
+    [order] = shop.database.tables.orders.values()
+    await shop.database.orders.set_shipping_address(order.id, TEST_ADDRESS)
+    [payment] = shop.database.tables.payments.values()
+    assert payment.provider_ref is not None
+    shop.provider.complete(payment.provider_ref)
+    ship = CreateShipment(
+        shop.database.shipments, FakeCarrierProvider(shop.clock), FakeEventPublisher(), shop.clock
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        await sweep_once(shop.expire, shop.metrics, shop.checkouts, ship)
+
+    [created] = [log for log in logs if log["event"] == "shipment_created"]
+    assert (created["order_id"], created["via"]) == (str(order.id), "payment")
+    assert await shop.database.shipments.get_by_order(order.id) is not None
+    assert shop.sample("livecart_shipment_creations_total", outcome="created", via="payment") == 1
 
 
 async def test_what_needs_a_person_is_logged_at_error_and_a_retry_as_a_warning() -> None:

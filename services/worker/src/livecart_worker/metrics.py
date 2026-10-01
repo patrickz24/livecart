@@ -32,7 +32,12 @@ loops record what they do:
   the failures to alert on), the orders paid
   (``livecart_orders_paid_total``) and those paid after the sweep released
   their stock (``livecart_orders_paid_after_expiry_total``, each a refund to
-  make by hand).
+  make by hand);
+- each shipment of a paid order created at the carrier, by outcome
+  (``livecart_shipment_creations_total{outcome,via}``, the closed list of
+  ``ShipmentCreationOutcome``: ``no_address`` and ``failed`` need a person)
+  and by path, ``payment`` (the tick that paid it) or ``fallback`` (a crash
+  or an outage recovered);
 - with the LLM fallback on (``watch_llm``), the plain counters of its
   ``LlmGuard``, read at scrape time: the receipts by outcome
   (``livecart_llm_outcomes_total{outcome}``, the closed list of
@@ -55,6 +60,7 @@ from prometheus_client.core import CounterMetricFamily, Metric
 from prometheus_client.registry import Collector
 
 from livecart_core.application.apply_payment_events import PaymentEventResult, PaymentEventsTick
+from livecart_core.application.create_shipment import CreatedShipment, ShipmentCreationOutcome
 from livecart_core.application.dto import IntentSource
 from livecart_core.application.expire_checkouts import CheckoutExpiryOutcome, CheckoutExpiryTick
 from livecart_core.application.expire_reservations import SweepResult
@@ -91,6 +97,15 @@ class FailureCause(StrEnum):
     DEADLINE = "deadline"
     TRANSIENT = "transient"
     ERROR = "error"
+
+
+class ShipmentPath(StrEnum):
+    """Which path created a shipment: the label ``via`` of ``livecart_shipment_creations_total``."""
+
+    # The tick that paid the order: the payment events loop or the expiry sweep.
+    PAYMENT = "payment"
+    # The shipments loop's fallback, after a crash or an outage.
+    FALLBACK = "fallback"
 
 
 class LlmCollector(Collector):
@@ -213,6 +228,12 @@ class WorkerMetrics:
             "Orders paid after the sweep released their stock: each one a refund to make by hand.",
             registry=registry,
         )
+        self.shipment_creations = Counter(
+            "livecart_shipment_creations_total",
+            "Shipments of paid orders created at the carrier, by outcome and by path.",
+            ["outcome", "via"],
+            registry=registry,
+        )
         # Every label of a closed list exists from the start, at zero.
         for source in IntentSource:
             self.intents_detected.labels(source=source.value)
@@ -224,6 +245,9 @@ class WorkerMetrics:
             self.payment_events.labels(result=result.value)
         for outcome in CheckoutExpiryOutcome:
             self.checkout_expiries.labels(outcome=outcome.value)
+        for creation in ShipmentCreationOutcome:
+            for via in ShipmentPath:
+                self.shipment_creations.labels(outcome=creation.value, via=via.value)
 
     def watch_llm(self, guard: LlmGuard) -> None:
         """Serve the counters of the process's LLM guard with the other metrics."""
@@ -260,6 +284,11 @@ class WorkerMetrics:
                 self.reservations_expired.inc()
             elif handled.paid:
                 self.orders_paid.inc()
+
+    def record_shipment_creation(self, created: CreatedShipment, *, via: ShipmentPath) -> None:
+        """One paid order's shipment, by the path that asked for it."""
+        self.shipment_creations.labels(outcome=created.outcome.value, via=via.value).inc()
+        self.session_events_unpublished.inc(created.unpublished_events)
 
     def record_payment_events(self, tick: PaymentEventsTick) -> None:
         for handled in tick.handled:

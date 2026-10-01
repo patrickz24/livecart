@@ -9,6 +9,10 @@ one connection at a time. A tick that fails (PostgreSQL down) is logged, and
 the next one tries again: the events wait in the registry, durable, for as
 long as it takes, a worker stopped for a while included.
 
+Once a tick has ended, the orders it paid get their shipments
+(``shipments.ship_paid``), one after the other, out of any transaction; one
+the tick could not ship is left to the shipments loop's fallback.
+
 What needs a person is logged at ERROR: an event whose amount or currency
 is not its order's, one that failed its 10 attempts, and a payment that
 reached an order after the sweep released its stock (``paid_after_expiry``,
@@ -28,8 +32,10 @@ from livecart_core.application.apply_payment_events import (
     PaymentEventResult,
     ProcessPaymentEvents,
 )
+from livecart_core.application.create_shipment import CreateShipment
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_worker.metrics import WorkerMetrics
+from livecart_worker.shipments import ship_paid
 
 logger = structlog.get_logger(__name__)
 
@@ -78,8 +84,12 @@ def _log(handled: HandledPaymentEvent) -> None:
         logger.info("payment_event_handled", result=result.value, **fields)
 
 
-async def process_once(process: ProcessPaymentEvents, metrics: WorkerMetrics | None = None) -> None:
-    """One tick; see the module docstring."""
+async def process_once(
+    process: ProcessPaymentEvents,
+    metrics: WorkerMetrics | None = None,
+    ship: CreateShipment | None = None,
+) -> None:
+    """One tick, then the shipments of the orders it paid; see the module docstring."""
     try:
         tick = await process()
     except ServiceUnavailable as error:
@@ -91,6 +101,9 @@ async def process_once(process: ProcessPaymentEvents, metrics: WorkerMetrics | N
             _log(handled)
         if metrics is not None:
             metrics.record_payment_events(tick)
+        if ship is not None:
+            paid = [handled.order for handled in tick.handled if handled.paid and handled.order]
+            await ship_paid(ship, paid, metrics)
 
 
 async def run_payment_events(
@@ -99,11 +112,12 @@ async def run_payment_events(
     *,
     interval_s: float = PAYMENT_EVENTS_INTERVAL_S,
     metrics: WorkerMetrics | None = None,
+    ship: CreateShipment | None = None,
 ) -> None:
     """Tick at startup, then every ``interval_s``, until ``stop`` is set."""
     logger.info("payment_events_started", interval_s=interval_s)
     while not stop.is_set():
-        await process_once(process, metrics)
+        await process_once(process, metrics, ship)
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(interval_s):
                 await stop.wait()

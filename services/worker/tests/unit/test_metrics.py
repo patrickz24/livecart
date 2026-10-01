@@ -12,6 +12,7 @@ import pytest
 from prometheus_client import CollectorRegistry, generate_latest
 from pydantic import SecretStr
 
+from livecart_core.application.create_shipment import CreatedShipment, ShipmentCreationOutcome
 from livecart_core.application.dto import QueueDelivery
 from livecart_core.application.expire_reservations import ExpireReservations, SweepResult
 from livecart_core.application.ports import NullIntentFallback, ServiceUnavailable
@@ -19,7 +20,12 @@ from livecart_core.application.process_comment import HandledComment, ProcessCom
 from livecart_core.application.reclaim_comments import DeadLetter, Reclaimed
 from livecart_core.domain.outcomes import RejectionReason
 from livecart_core.settings import Settings
-from livecart_core.testing.builders import DEMO_MAX_QUANTITY, demo_catalog, queued_comment
+from livecart_core.testing.builders import (
+    DEMO_MAX_QUANTITY,
+    demo_catalog,
+    paid_order,
+    queued_comment,
+)
 from livecart_core.testing.fakes import (
     FAKE_CLOCK_START,
     TEST_ORDER_TOKENS,
@@ -32,7 +38,7 @@ from livecart_core.testing.fakes import (
 from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
 from livecart_worker import main
 from livecart_worker.consumer import CommentConsumer
-from livecart_worker.metrics import FailureCause, WorkerMetrics
+from livecart_worker.metrics import FailureCause, ShipmentPath, WorkerMetrics
 from livecart_worker.sweeps import sweep_once
 
 CONSUMER = "worker-1"
@@ -308,3 +314,25 @@ def test_no_created_series_doubles_the_counters() -> None:
     assert "livecart_orders_created_total 0.0" in text
     assert "_created{" not in text
     assert "livecart_orders_created_created" not in text
+
+
+def test_every_shipment_creation_outcome_and_path_is_a_series_from_the_start() -> None:
+    sample = WorkerMetrics().registry.get_sample_value
+
+    for outcome in ShipmentCreationOutcome:
+        for via in ShipmentPath:
+            labels = {"outcome": outcome.value, "via": via.value}
+            assert sample("livecart_shipment_creations_total", labels) == 0
+
+
+async def test_a_shipment_creation_counts_its_outcome_path_and_unpublished_event() -> None:
+    database, metrics = InMemoryDatabase(), WorkerMetrics()
+    order = await paid_order(database)
+    created = CreatedShipment(order, ShipmentCreationOutcome.CREATED, unpublished_events=1)
+
+    metrics.record_shipment_creation(created, via=ShipmentPath.FALLBACK)
+
+    sample = metrics.registry.get_sample_value
+    labels = {"outcome": "created", "via": "fallback"}
+    assert sample("livecart_shipment_creations_total", labels) == 1
+    assert sample("livecart_session_events_unpublished_total") == 1

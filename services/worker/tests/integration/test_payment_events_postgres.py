@@ -3,9 +3,10 @@
 The first test runs the whole worker (``serve``, with Redis for its other
 loops and the session streams), stops it, lets the webhook record a payment
 while it is down, and starts it again: the event waited in the registry, and
-the worker applies it at once. The second drives the loop's ticks on the SQL
-registry with a settlement that always fails: the tenth attempt, counted by
-the registry, fails the event for good.
+the worker applies it at once, then creates the order's shipment. The
+second drives the loop's ticks on the SQL registry with a settlement that
+always fails: the tenth attempt, counted by the registry, fails the event
+for good.
 """
 
 import asyncio
@@ -42,16 +43,18 @@ from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.money import Money
 from livecart_core.domain.payments import PaymentEffect
 from livecart_core.domain.quantity import Quantity
-from livecart_core.domain.state_machines import OrderStatus, PaymentStatus
+from livecart_core.domain.state_machines import OrderStatus, PaymentStatus, ShipmentStatus
 from livecart_core.infrastructure.db import tables
 from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.settings import Settings
 from livecart_core.testing.backends import PostgresBackend
+from livecart_core.testing.builders import TEST_ADDRESS
 from livecart_core.testing.database import IntegrationSettings
 from livecart_core.testing.fakes import FakeClock, FakeEventPublisher
 from livecart_core.testing.keys import (
     TEST_JWT_SECRET,
+    TEST_MOCK_CARRIER_SECRET,
     TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
 )
@@ -87,6 +90,7 @@ async def _checkout(backend: PostgresBackend) -> tuple[OrderRecord, Any]:
     )
     assert result is not None
     assert result.order is not None
+    await backend.orders.set_shipping_address(result.order.id, TEST_ADDRESS)
     opening = await backend.payments.open_attempt(
         result.order.id,
         provider=PaymentProviderName.MOCK,
@@ -99,7 +103,9 @@ async def _checkout(backend: PostgresBackend) -> tuple[OrderRecord, Any]:
     await backend.payments.record_checkout(
         opening.payment.id, provider_ref=REF, redirect_url=f"http://localhost:8080/{REF}"
     )
-    return result.order, product.id
+    order = await backend.orders.get(result.order.id)
+    assert order is not None
+    return order, product.id
 
 
 def _completed(occurred_at: datetime) -> PaymentEvent:
@@ -141,6 +147,7 @@ async def test_an_event_recorded_while_the_worker_is_stopped_is_applied_at_resta
         redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         metrics_port=None,
@@ -190,8 +197,15 @@ async def test_an_event_recorded_while_the_worker_is_stopped_is_applied_at_resta
     assert [item.event.type for item in streamed] == [
         SessionEventType.ORDER_UPDATED,
         SessionEventType.STOCK_UPDATED,
+        SessionEventType.SHIPMENT_UPDATED,
     ]
     assert streamed[0].event.data["status"] == "paid"
+    # Created once the tick that paid the order had ended, before the worker stopped.
+    shipment = await postgres_backend.shipments.get_by_order(order.id)
+    assert shipment is not None
+    assert shipment.status is ShipmentStatus.CREATED
+    assert shipment.ref.tracking_number.startswith("MOCK-")
+    assert streamed[2].event.data["shipment_id"] == str(shipment.id)
 
 
 class FailingSettlements(SqlWebhookEventRegistry):

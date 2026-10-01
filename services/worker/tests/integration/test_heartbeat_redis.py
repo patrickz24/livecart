@@ -14,6 +14,7 @@ from livecart_core.settings import Settings
 from livecart_core.testing.database import IntegrationSettings
 from livecart_core.testing.keys import (
     TEST_JWT_SECRET,
+    TEST_MOCK_CARRIER_SECRET,
     TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
 )
@@ -33,6 +34,7 @@ async def test_a_real_ping_keeps_the_heartbeat_fresh(
         redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_carrier_secret=TEST_MOCK_CARRIER_SECRET,
         mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=heartbeat,
         _env_file=None,

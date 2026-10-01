@@ -12,6 +12,7 @@ from livecart_core.application.apply_payment_events import (
     ApplyPaymentEvent,
     ProcessPaymentEvents,
 )
+from livecart_core.application.create_shipment import CreateShipment
 from livecart_core.application.dto import (
     CheckoutEventType,
     EventClaim,
@@ -20,6 +21,7 @@ from livecart_core.application.dto import (
     PaymentProviderName,
     PaymentSettlement,
     ReservationRequest,
+    SessionEventType,
 )
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.domain.codes import ProductCode, Variant
@@ -27,8 +29,9 @@ from livecart_core.domain.money import Money
 from livecart_core.domain.payments import PaymentEffect
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import OrderStatus, PaymentStatus
-from livecart_core.testing.builders import queued_comment
+from livecart_core.testing.builders import TEST_ADDRESS, queued_comment
 from livecart_core.testing.fakes import (
+    FakeCarrierProvider,
     FakeClock,
     FakeEventPublisher,
     InMemoryDatabase,
@@ -279,3 +282,35 @@ async def test_the_loop_applies_at_startup_then_every_interval_until_stopped(wor
     await until(lambda: world.sample("livecart_payment_events_total", result="replayed") == 1)
     stop.set()
     await asyncio.wait_for(task, timeout=2)
+
+
+async def test_the_orders_a_tick_paid_get_their_shipments_once_it_has_ended(world: World) -> None:
+    [order] = world.database.tables.orders.values()
+    await world.database.orders.set_shipping_address(order.id, TEST_ADDRESS)
+    await world.record()
+    carrier = FakeCarrierProvider(world.clock)
+    ship = CreateShipment(world.database.shipments, carrier, world.events, world.clock)
+
+    with structlog.testing.capture_logs() as logs:
+        await process_once(world.process, world.metrics, ship)
+
+    assert [log["event"] for log in logs] == ["payment_event_handled", "shipment_created"]
+    assert (logs[1]["order_id"], logs[1]["via"]) == (str(order.id), "payment")
+    assert await world.database.shipments.get_by_order(order.id) is not None
+    assert [event.type for event in world.events.published] == [
+        SessionEventType.ORDER_UPDATED,
+        SessionEventType.STOCK_UPDATED,
+        SessionEventType.SHIPMENT_UPDATED,
+    ]
+    assert world.sample("livecart_shipment_creations_total", outcome="created", via="payment") == 1
+
+
+async def test_a_tick_that_paid_nothing_ships_nothing(world: World) -> None:
+    await world.record(amount_minor=100)
+    carrier = FakeCarrierProvider(world.clock)
+    ship = CreateShipment(world.database.shipments, carrier, world.events, world.clock)
+
+    await process_once(world.process, world.metrics, ship)
+
+    assert carrier.requests == []
+    assert world.database.tables.shipments == {}

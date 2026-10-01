@@ -258,6 +258,11 @@ services:
       QUEUE_RECLAIM_MIN_IDLE_MS: ${QUEUE_RECLAIM_MIN_IDLE_MS:-}
       # The scheme of the links the buyers receive on the development stream.
       BUYER_LINK_SCHEME: ${BUYER_LINK_SCHEME:-livecart}
+      # The carrier of the paid orders' shipments (.env.example): the stateless
+      # mock by default, whose answers derive from its key and the clock.
+      CARRIER_PROVIDER: ${CARRIER_PROVIDER:-mock}
+      MOCK_CARRIER_SECRET: ${MOCK_CARRIER_SECRET:?set it in .env (cp .env.example .env)}
+      MOCK_CARRIER_STEP_SECONDS: ${MOCK_CARRIER_STEP_SECONDS:-120}
       # The optional LLM fallback (.env.example): without a key, the parser alone.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LLM_ENABLED: ${LLM_ENABLED:-true}

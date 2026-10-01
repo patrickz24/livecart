@@ -15,6 +15,8 @@ then runs the worker's loops in one TaskGroup:
 - the payment events loop, every 2 s (``payments``): the events the payment
   webhook recorded in ``processed_webhook_events``, applied to their
   attempts and orders;
+- the shipments loop, every 60 s (``shipments``): the paid orders a crash
+  or an outage left without a shipment, shipped by the fallback;
 - the heartbeat, which also checks that the consumer keeps going round.
 
 ``ProcessComment`` asks Claude (``livecart_worker.llm.claude``) about the
@@ -35,6 +37,12 @@ or Stripe in test mode. It refuses the mock in production, and creates a
 missing session again with the bridge page of ``PUBLIC_API_BASE_URL``
 (``CheckoutPages``), so that its request is the API's, under the same
 idempotency key.
+
+It also builds the carrier of ``CARRIER_PROVIDER`` (``build_carrier``), the
+one process that calls it: the stateless mock, or a stub that stops it at
+startup. Every order a payment tick or a reconciliation of the sweep paid
+gets its shipment once that tick has ended (``CreateShipment``), out of any
+transaction; the shipments loop's fallback catches up with the rest.
 
 ``run`` serves the loops' metrics (``WorkerMetrics``) on ``METRICS_PORT``,
 the container's internal port 9100, for as long as they run.
@@ -62,12 +70,14 @@ from livecart_core.application.apply_payment_events import (
     ProcessPaymentEvents,
 )
 from livecart_core.application.checkout import CheckoutPages
+from livecart_core.application.create_shipment import CreateShipment, ShipUnshippedOrders
 from livecart_core.application.expire_checkouts import ExpireCheckouts
 from livecart_core.application.expire_reservations import ExpireReservations
 from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.ports import Clock, IntentFallback, LlmBudget, NullIntentFallback
 from livecart_core.application.process_comment import ProcessComment
 from livecart_core.application.reclaim_comments import ReclaimComments
+from livecart_core.infrastructure.carriers import build_carrier
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.comments import SqlCommentInbox
@@ -75,6 +85,7 @@ from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
 from livecart_core.infrastructure.db.payments import SqlPaymentRepository
+from livecart_core.infrastructure.db.shipments import SqlShipmentRepository
 from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.llm_budget import RedisLlmBudget
@@ -102,6 +113,7 @@ from livecart_worker.payments import (
     PAYMENT_EVENTS_INTERVAL_S,
     run_payment_events,
 )
+from livecart_worker.shipments import SHIPMENTS_INTERVAL_S, run_shipments
 from livecart_worker.sweeps import EXPIRY_BUDGET, EXPIRY_INTERVAL_S, run_expiry_sweep
 
 logger = structlog.get_logger(__name__)
@@ -187,6 +199,7 @@ async def serve(
     reclaim_interval_s: float = RECLAIM_INTERVAL_S,
     expiry_interval_s: float = EXPIRY_INTERVAL_S,
     payment_events_interval_s: float = PAYMENT_EVENTS_INTERVAL_S,
+    shipments_interval_s: float = SHIPMENTS_INTERVAL_S,
     metrics: WorkerMetrics | None = None,
 ) -> None:
     """Run every worker loop until ``stop`` is set.
@@ -201,8 +214,10 @@ async def serve(
     clock = clock if clock is not None else SystemClock()
     metrics = metrics if metrics is not None else WorkerMetrics()
     redis = create_redis_client(settings.redis_url)
-    # A stub, or a provider without its keys, stops the worker here.
+    # A stub, or a provider without its keys, stops the worker here; so does a
+    # carrier's stub, or the mock carrier without its key.
     provider = build_payment_provider(settings, redis, clock)
+    carrier = build_carrier(settings, clock)
     fallback, llm_client = llm_fallback(
         settings, budget=RedisLlmBudget(redis, prefix=settings.redis_key_prefix), clock=clock
     )
@@ -279,6 +294,10 @@ async def serve(
             pages=CheckoutPages(settings.public_api_base_url),
             budget=EXPIRY_BUDGET,
         )
+        # A paid order's shipment, after the tick that paid it, or by the fallback.
+        shipments = SqlShipmentRepository(engine)
+        ship = CreateShipment(shipments, carrier, events, clock)
+        unshipped = ShipUnshippedOrders(shipments, ship, clock)
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
             loops.create_task(
@@ -288,6 +307,7 @@ async def serve(
                     checkouts=checkouts,
                     interval_s=expiry_interval_s,
                     metrics=metrics,
+                    ship=ship,
                 )
             )
             loops.create_task(
@@ -296,7 +316,11 @@ async def serve(
                     stop,
                     interval_s=payment_events_interval_s,
                     metrics=metrics,
+                    ship=ship,
                 )
+            )
+            loops.create_task(
+                run_shipments(unshipped, stop, interval_s=shipments_interval_s, metrics=metrics)
             )
             loops.create_task(
                 run_heartbeat(
