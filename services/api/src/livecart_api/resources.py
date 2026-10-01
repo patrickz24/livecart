@@ -27,6 +27,7 @@ from livecart_core.application.ports import (
     SellerRepository,
     SessionEventLog,
     SessionEventStream,
+    ShipmentLookup,
     WebhookEventRecorder,
 )
 from livecart_core.infrastructure.clock import SystemClock
@@ -39,6 +40,7 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.db.shipments import SqlShipmentRepository
 from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
@@ -92,6 +94,9 @@ class Resources:
     # Where the payment webhook records the provider's verified events, for
     # the worker to apply: PostgreSQL alone.
     webhook_events: WebhookEventRecorder
+    # The paid orders' shipments, as the worker's tracking records them: the
+    # API reads them for the buyer and never calls the carrier.
+    shipments: ShipmentLookup
 
 
 def build_resources(settings: Settings) -> Resources:
@@ -165,4 +170,5 @@ def build_resources(settings: Settings) -> Resources:
         event_streams=RedisSessionEvents(stream_redis, prefix=settings.redis_key_prefix),
         payment_provider=payment_provider,
         webhook_events=SqlWebhookEventRegistry(engine),
+        shipments=SqlShipmentRepository(engine),
     )

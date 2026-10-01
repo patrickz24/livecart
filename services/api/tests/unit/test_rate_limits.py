@@ -505,3 +505,22 @@ def test_the_openapi_documents_the_429_of_every_limited_route() -> None:
     assert ("POST", REFRESH) not in limited
     assert {("GET", SESSIONS), ("GET", "/api/v1/auth/me")} <= limited
     assert "503" in schema["paths"][LOGIN]["post"]["responses"]
+
+
+async def test_the_tracking_shares_the_window_of_the_other_token_routes() -> None:
+    api = await _api(rate_limit_buyer_token_per_minute=2)
+    order = await _order(api)
+    token = _bearer(TEST_ORDER_TOKENS.token_for(order.id))
+    base = f"{ORDERS}/{order.reference.value}"
+
+    async with open_client(api.app) as client:
+        details = await client.get(f"{base}/details", headers=token)
+        # The token holds, and the order has no shipment yet: no failure of the address.
+        unshipped = await client.get(f"{base}/tracking", headers=token)
+        third = await client.get(f"{base}/tracking", headers=token)
+        tokenless = await client.get(f"{base}/tracking")
+
+    assert (details.status_code, unshipped.status_code) == (200, 404)
+    _assert_too_many(third, 60)
+    assert tokenless.status_code == 404
+    assert api.limits.buyer_lookup_not_found_total == 1

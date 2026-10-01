@@ -1,19 +1,25 @@
-"""The buyer's routes over the fakes: the public storefront and the two tiers of an order.
+"""The buyer's routes over the fakes: the public storefront, the two tiers of an order, tracking.
 
 ``tests/integration/test_buyer_postgres.py`` runs the same journeys on PostgreSQL.
 """
 
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, replace
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import httpx2
 import pytest
 
 from livecart_api.testing import make_app, open_client, open_order
-from livecart_core.application.dto import LiveSessionRecord, OrderRecord, ShippingAddress
+from livecart_core.application.dto import (
+    CarrierName,
+    LiveSessionRecord,
+    OrderRecord,
+    ShipmentRef,
+    ShippingAddress,
+)
 from livecart_core.domain.reference import CROCKFORD_ALPHABET
-from livecart_core.domain.state_machines import LiveSessionStatus
+from livecart_core.domain.state_machines import LiveSessionStatus, ShipmentStatus
 from livecart_core.settings import AppEnv
 from livecart_core.testing.fakes import FAKE_CLOCK_START, TEST_ORDER_TOKENS, InMemoryDatabase
 from livecart_core.testing.randomness import SequenceRandomSource
@@ -246,10 +252,13 @@ async def test_the_token_of_order_a_does_not_open_order_b(buyers: Buyers) -> Non
     assert b_with_b.json()["quantity"] == 2
 
 
-def test_only_the_detailed_view_declares_the_order_token() -> None:
+def test_the_token_routes_declare_the_order_token_and_the_public_ones_none() -> None:
     paths = make_app(app_env=AppEnv.PRODUCTION).openapi()["paths"]
 
     assert paths["/api/v1/orders/{reference}/details"]["get"]["security"] == [
+        {"OrderAccessToken": []}
+    ]
+    assert paths["/api/v1/orders/{reference}/tracking"]["get"]["security"] == [
         {"OrderAccessToken": []}
     ]
     assert "security" not in paths["/api/v1/orders/{reference}"]["get"]
@@ -265,3 +274,69 @@ async def test_an_expired_reservation_still_shows_its_status(buyers: Buyers) -> 
     response = await buyers.client.get(f"{ORDERS}/{order.reference}")
 
     assert response.json()["status"] == "expired"
+
+
+# --- Tracking --------------------------------------------------------------------------
+
+TRACKING_FIELDS = {"reference", "carrier", "tracking_number", "status", "last_event_at"}
+
+
+def _ref(created_at: datetime = FAKE_CLOCK_START) -> ShipmentRef:
+    return ShipmentRef(
+        CarrierName.MOCK, "mock_shp_" + "1" * 32, "MOCK-7K3F9Q2XABCD1234", created_at
+    )
+
+
+async def test_the_orders_token_tracks_its_parcel(buyers: Buyers) -> None:
+    path = f"{ORDERS}/{buyers.order_a.reference.value.lower()}/tracking"
+    added = await buyers.database.shipments.add(buyers.order_a.id, _ref())
+
+    created = await buyers.client.get(path, headers=buyers.bearer(buyers.order_a))
+    picked_up = FAKE_CLOCK_START + timedelta(minutes=2)
+    await buyers.database.shipments.set_status(
+        added.shipment.id, ShipmentStatus.IN_TRANSIT, event_at=picked_up
+    )
+    moving = await buyers.client.get(path, headers=buyers.bearer(buyers.order_a))
+    public = await buyers.client.get(f"{ORDERS}/{buyers.order_a.reference}")
+
+    assert created.status_code == moving.status_code == 200
+    assert created.json() == {
+        "reference": buyers.order_a.reference.value,
+        "carrier": "mock",
+        "tracking_number": "MOCK-7K3F9Q2XABCD1234",
+        "status": "created",
+        "last_event_at": "2026-09-26T12:00:00Z",
+    }
+    assert (moving.json()["status"], moving.json()["last_event_at"]) == (
+        "in_transit",
+        "2026-09-26T12:02:00Z",
+    )
+    assert set(moving.json()) == TRACKING_FIELDS
+    # The reference alone never shows the parcel.
+    assert "MOCK-" not in public.text
+
+
+async def test_tracking_without_the_orders_own_token_is_the_404_of_an_unknown_reference(
+    buyers: Buyers,
+) -> None:
+    await buyers.database.shipments.add(buyers.order_a.id, _ref())
+    path = f"{ORDERS}/{buyers.order_a.reference}/tracking"
+    token = TEST_ORDER_TOKENS.token_for(buyers.order_a.id)
+    wrong = ("B" if token[0] != "B" else "C") + token[1:]
+
+    answers = [
+        await buyers.client.get(path),
+        await buyers.client.get(path, headers={"Authorization": f"Bearer {wrong}"}),
+        await buyers.client.get(path, headers=buyers.bearer(buyers.order_b)),
+        await buyers.client.get(
+            f"{ORDERS}/LC-000000/tracking", headers=buyers.bearer(buyers.order_a)
+        ),
+        # The right token, of an order that has no shipment yet.
+        await buyers.client.get(
+            f"{ORDERS}/{buyers.order_b.reference}/tracking", headers=buyers.bearer(buyers.order_b)
+        ),
+    ]
+
+    assert [answer.status_code for answer in answers] == [404] * 5
+    assert all(answer.json() == NOT_FOUND for answer in answers)
+    assert all("MOCK-" not in answer.text for answer in answers)

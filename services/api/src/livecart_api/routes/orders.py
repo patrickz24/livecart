@@ -24,7 +24,12 @@ The routes that act on the order are of the second tier too, with the same
   buyer back to, one of ``ALLOWED_APP_SCHEMES`` (422 otherwise). The order
   needs an address first, then a reservation still running and an attempt
   left (409 otherwise). A second click while the attempt is pending answers
-  the same URL.
+  the same URL;
+- ``GET /{reference}/tracking`` answers where the paid order's parcel is:
+  its carrier, its tracking number, its status and the time of the
+  carrier's latest event, as the worker's tracking last recorded them. An
+  order without a shipment yet answers 404 as well, the same body: the
+  token holder knows from the order's status whether it is paid.
 
 All are rate limited (``livecart_api.rate_limits``): the lookup per client
 address, its not-found answers too, so that guessing references is slow, and
@@ -48,10 +53,21 @@ from livecart_api.rate_limits import (
     client_address,
     token_subject,
 )
-from livecart_core.application.buyer_orders import LookUpOrder, SetShippingAddress
+from livecart_core.application.buyer_orders import (
+    LookUpOrder,
+    OrderTracking,
+    SetShippingAddress,
+    TrackOrder,
+)
 from livecart_core.application.checkout import StartCheckout
-from livecart_core.application.dto import MAX_URL_LENGTH, BuyerOrderRecord, ShippingAddress
-from livecart_core.domain.state_machines import OrderStatus
+from livecart_core.application.dto import (
+    MAX_URL_LENGTH,
+    BuyerOrderRecord,
+    CarrierName,
+    ShipmentRecord,
+    ShippingAddress,
+)
+from livecart_core.domain.state_machines import OrderStatus, ShipmentStatus
 
 PREFIX: Final = "/api/v1/orders"
 # A reference is 9 characters once canonical; what a buyer types may carry spaces.
@@ -128,6 +144,28 @@ class OrderDetailsResponse(OrderStatusResponse):
         )
 
 
+class TrackingResponse(BaseModel):
+    """Where the order's parcel is, as its carrier last reported it."""
+
+    reference: str
+    carrier: CarrierName
+    tracking_number: str
+    status: ShipmentStatus
+    last_event_at: datetime = Field(
+        description="The time of the carrier's latest event: the shipment's creation at first."
+    )
+
+    @classmethod
+    def of(cls, tracking: OrderTracking, shipment: ShipmentRecord) -> Self:
+        return cls(
+            reference=tracking.order.order.reference.value,
+            carrier=shipment.ref.carrier,
+            tracking_number=shipment.ref.tracking_number,
+            status=shipment.status,
+            last_event_at=shipment.last_event_at,
+        )
+
+
 class CheckoutBody(BaseModel):
     """Where the bridge page sends the buyer back once the provider's page is done."""
 
@@ -160,6 +198,7 @@ def build_order_router(
     lookup: LookUpOrder,
     addresses: SetShippingAddress,
     checkout: StartCheckout,
+    tracking: TrackOrder,
     limits: RateLimiting,
 ) -> APIRouter:
     router = APIRouter(
@@ -249,6 +288,33 @@ def build_order_router(
             await limits.record_lookup_not_found(client_address(request))
             raise _not_found()
         return OrderDetailsResponse.of(found)
+
+    @router.get(
+        "/{reference}/tracking",
+        summary="Where the order's parcel is, with the order's access token",
+        dependencies=[Depends(limit_token_requests)],
+        responses=documented(
+            {
+                404: (
+                    "No order has this reference, the token is missing or not its own, "
+                    "or the order has no shipment yet"
+                )
+            }
+        ),
+    )
+    async def get_order_tracking(
+        reference: Reference,
+        request: Request,
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_order_token)],
+    ) -> TrackingResponse:
+        tracked = await tracking.track(reference, _token(credentials))
+        if tracked is None:
+            await limits.record_lookup_not_found(client_address(request))
+            raise _not_found()
+        if tracked.shipment is None:
+            # The token holds: nothing shipped yet, which costs the address nothing.
+            raise _not_found()
+        return TrackingResponse.of(tracked, tracked.shipment)
 
     @router.post(
         "/{reference}/checkout",

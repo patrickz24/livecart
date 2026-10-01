@@ -17,16 +17,21 @@ about 2**30 values: it identifies an order, it cannot authorize anything
 behind the token: only while the order waits for its payment, since the
 shipment of a paid order is created from the address it had.
 
+``TrackOrder`` says where a paid order's parcel is, behind the token too:
+the carrier, the tracking number, the status and the time of the carrier's
+latest event, as the worker's tracking last recorded them. An order without
+a shipment yet (not paid, or paid a moment ago) has nothing to track.
+
 References are read tolerantly (``parse_order_reference``: any case, the
 hyphen optional, ``O`` for ``0`` and ``I`` or ``L`` for ``1``); a text that
 cannot be one is an unknown reference, answered without a query.
 """
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
-from livecart_core.application.dto import BuyerOrderRecord, ShippingAddress
-from livecart_core.application.ports import BuyerOrders, OrderLookup
+from livecart_core.application.dto import BuyerOrderRecord, ShipmentRecord, ShippingAddress
+from livecart_core.application.ports import BuyerOrders, OrderLookup, ShipmentLookup
 from livecart_core.domain.errors import InvalidOrderReference
 from livecart_core.domain.reference import parse_order_reference
 
@@ -78,3 +83,26 @@ class SetShippingAddress:
             return None
         order = await self._orders.set_shipping_address(found.order.id, address)
         return replace(found, order=order)
+
+
+@dataclass(frozen=True, slots=True)
+class OrderTracking:
+    """An order its buyer opened with its token, and its shipment, ``None`` until it has one."""
+
+    order: BuyerOrderRecord
+    shipment: ShipmentRecord | None
+
+
+class TrackOrder:
+    """Where an order's parcel is, behind the order's token; see the module docstring."""
+
+    def __init__(self, lookup: LookUpOrder, shipments: ShipmentLookup) -> None:
+        self._lookup = lookup
+        self._shipments = shipments
+
+    async def track(self, reference: str, token: str | None) -> OrderTracking | None:
+        """The order and its shipment; ``None`` for an unknown order or a wrong token."""
+        found = await self._lookup.with_token(reference, token)
+        if found is None:
+            return None
+        return OrderTracking(found, await self._shipments.get_by_order(found.order.id))

@@ -1066,6 +1066,30 @@ export type StreamGapData = {
 };
 
 /**
+ * TrackingResponse
+ *
+ * Where the order's parcel is, as its carrier last reported it.
+ */
+export type TrackingResponse = {
+    carrier: CarrierName;
+    /**
+     * Last Event At
+     *
+     * The time of the carrier's latest event: the shipment's creation at first.
+     */
+    last_event_at: string;
+    /**
+     * Reference
+     */
+    reference: string;
+    status: ShipmentStatus;
+    /**
+     * Tracking Number
+     */
+    tracking_number: string;
+};
+
+/**
  * ValidationError
  */
 export type ValidationError = {
@@ -1986,6 +2010,46 @@ export type PutShippingAddressResponses = {
 };
 
 export type PutShippingAddressResponse = PutShippingAddressResponses[keyof PutShippingAddressResponses];
+
+export type GetOrderTrackingData = {
+    body?: never;
+    path: {
+        /**
+         * Reference
+         *
+         * LC- then six symbols, in any case, the hyphen optional.
+         */
+        reference: string;
+    };
+    query?: never;
+    url: '/api/v1/orders/{reference}/tracking';
+};
+
+export type GetOrderTrackingErrors = {
+    /**
+     * No order has this reference, the token is missing or not its own, or the order has no shipment yet
+     */
+    404: ErrorResponse;
+    /**
+     * Validation Error
+     */
+    422: HttpValidationError;
+    /**
+     * Too many requests: try again after Retry-After seconds
+     */
+    429: ErrorResponse;
+};
+
+export type GetOrderTrackingError = GetOrderTrackingErrors[keyof GetOrderTrackingErrors];
+
+export type GetOrderTrackingResponses = {
+    /**
+     * Successful Response
+     */
+    200: TrackingResponse;
+};
+
+export type GetOrderTrackingResponse = GetOrderTrackingResponses[keyof GetOrderTrackingResponses];
 
 export type GetStorefrontData = {
     body?: never;

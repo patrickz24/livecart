@@ -1,8 +1,8 @@
-"""The storefront and the two tiers of an order on the SQL adapters and livecart_test.
+"""The storefront, the two tiers of an order and its tracking on the SQL adapters and livecart_test.
 
 The orders are opened by unit 3 itself (``SqlOrderRepository.reserve``),
-which stores the SHA-256 of each order's HMAC token: the details route must
-accept that token, and only for its own order.
+which stores the SHA-256 of each order's HMAC token: the details and the
+tracking routes must accept that token, and only for its own order.
 """
 
 from collections.abc import AsyncIterator
@@ -22,11 +22,19 @@ from livecart_api.testing import (
     open_client,
     postgres_resources,
 )
-from livecart_core.application.dto import IntentSource, OrderRecord, ReservationRequest
+from livecart_core.application.dto import (
+    IntentSource,
+    OrderRecord,
+    ReservationRequest,
+    ShipmentRequest,
+)
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.quantity import Quantity
+from livecart_core.infrastructure.carriers.mock import MockCarrier
 from livecart_core.testing.backends import ORDER_TOKENS, PostgresBackend
-from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT
+from livecart_core.testing.builders import TEST_ADDRESS
+from livecart_core.testing.fakes import FAKE_CLOCK_START, LOCKED_ACCOUNT, FakeClock
+from livecart_core.testing.keys import TEST_MOCK_CARRIER_SECRET
 
 pytestmark = pytest.mark.integration
 
@@ -37,6 +45,7 @@ NOT_FOUND = {"detail": "Not found"}
 @dataclass
 class BuyerApi:
     client: httpx2.AsyncClient
+    backend: PostgresBackend
     order_a: OrderRecord
     order_b: OrderRecord
 
@@ -83,7 +92,7 @@ async def api(
     order_b = await _reserve(backend, session.id, "buyer-b")
     app = create_app(make_settings(), postgres_resources(app_engine, clock=current_time_clock()))
     async with open_client(app) as client:
-        yield BuyerApi(client, order_a, order_b)
+        yield BuyerApi(client, backend, order_a, order_b)
 
 
 async def test_the_storefront_shows_the_live_session_and_what_is_left(api: BuyerApi) -> None:
@@ -139,3 +148,28 @@ async def test_the_details_need_the_orders_own_token(api: BuyerApi) -> None:
     assert opened.json()["shipping_address"] is None
     assert [r.status_code for r in (missing, wrong, crossed)] == [404, 404, 404]
     assert missing.json() == wrong.json() == crossed.json() == NOT_FOUND
+
+
+async def test_the_tracking_needs_the_orders_own_token_and_its_shipment(api: BuyerApi) -> None:
+    carrier = MockCarrier(TEST_MOCK_CARRIER_SECRET, FakeClock())
+    ref = await carrier.create_shipment(
+        ShipmentRequest(api.order_a.id, api.order_a.reference, TEST_ADDRESS)
+    )
+    await api.backend.shipments.add(api.order_a.id, ref)
+    tracking_a = f"/api/v1/orders/{api.order_a.reference}/tracking"
+    tracking_b = f"/api/v1/orders/{api.order_b.reference}/tracking"
+
+    tracked = await api.client.get(tracking_a, headers=api.bearer(api.order_a))
+    crossed = await api.client.get(tracking_a, headers=api.bearer(api.order_b))
+    unshipped = await api.client.get(tracking_b, headers=api.bearer(api.order_b))
+
+    assert tracked.status_code == 200
+    assert tracked.json() == {
+        "reference": api.order_a.reference.value,
+        "carrier": "mock",
+        "tracking_number": ref.tracking_number,
+        "status": "created",
+        "last_event_at": ref.created_at.isoformat().replace("+00:00", "Z"),
+    }
+    assert [r.status_code for r in (crossed, unshipped)] == [404, 404]
+    assert crossed.json() == unshipped.json() == NOT_FOUND

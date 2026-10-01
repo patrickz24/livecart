@@ -1,4 +1,4 @@
-"""``ViewStorefront`` and ``LookUpOrder`` over the fakes: what a buyer reaches, and with what."""
+"""``ViewStorefront``, ``LookUpOrder`` and ``TrackOrder`` over the fakes: what a buyer reaches."""
 
 from datetime import timedelta
 from decimal import Decimal
@@ -6,7 +6,8 @@ from uuid import UUID
 
 import pytest
 
-from livecart_core.application.buyer_orders import LookUpOrder
+from livecart_core.application.buyer_orders import LookUpOrder, TrackOrder
+from livecart_core.application.create_shipment import CreateShipment
 from livecart_core.application.dto import (
     IntentSource,
     LiveSessionRecord,
@@ -18,8 +19,15 @@ from livecart_core.application.storefront import ViewStorefront
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.quantity import Quantity
 from livecart_core.domain.state_machines import LiveSessionStatus
-from livecart_core.testing.builders import queued_comment
-from livecart_core.testing.fakes import FAKE_CLOCK_START, TEST_ORDER_TOKENS, InMemoryDatabase
+from livecart_core.testing.builders import paid_order, queued_comment
+from livecart_core.testing.fakes import (
+    FAKE_CLOCK_START,
+    TEST_ORDER_TOKENS,
+    FakeCarrierProvider,
+    FakeClock,
+    FakeEventPublisher,
+    InMemoryDatabase,
+)
 
 NOW = FAKE_CLOCK_START
 
@@ -163,3 +171,26 @@ async def test_the_detailed_view_needs_the_orders_own_token() -> None:
     assert await lookup.with_token(order_a.reference.value, altered) is None
     # The token of order A does not open order B.
     assert await lookup.with_token(order_b.reference.value, token_a) is None
+
+
+async def test_tracking_needs_the_orders_own_token_and_a_shipment() -> None:
+    database = InMemoryDatabase()
+    clock = FakeClock()
+    order = await paid_order(database)
+    other = await paid_order(database, comment="comment-2")
+    track = TrackOrder(_lookup(database), database.shipments)
+    token = TEST_ORDER_TOKENS.token_for(order.id)
+
+    before = await track.track(order.reference.value, token)
+    carrier = FakeCarrierProvider(clock)
+    created = await CreateShipment(database.shipments, carrier, FakeEventPublisher(), clock)(order)
+    after = await track.track(order.reference.value.lower(), token)
+
+    assert before is not None
+    assert (before.order.order.id, before.shipment) == (order.id, None)
+    assert after is not None
+    assert after.shipment == created.shipment
+    assert await track.track(order.reference.value, None) is None
+    assert await track.track(order.reference.value, "not-a-token") is None
+    assert await track.track(other.reference.value, token) is None
+    assert await track.track("LC-000000", token) is None

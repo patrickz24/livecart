@@ -64,7 +64,7 @@ from livecart_api.routes.session_events import (
 )
 from livecart_api.routes.storefronts import build_storefront_router
 from livecart_api.routes.webhooks import build_webhook_router
-from livecart_core.application.buyer_orders import LookUpOrder, SetShippingAddress
+from livecart_core.application.buyer_orders import LookUpOrder, SetShippingAddress, TrackOrder
 from livecart_core.application.checkout import CheckoutPages, ReturnUrlPolicy, StartCheckout
 from livecart_core.application.idempotency import IdempotentRequests
 from livecart_core.application.ingest_comments import IngestComments
@@ -241,7 +241,13 @@ def create_app(
         max_attempts=settings.payment_max_attempts,
     )
     app.include_router(
-        build_order_router(lookup, SetShippingAddress(lookup, resources.orders), checkout, limits)
+        build_order_router(
+            lookup,
+            SetShippingAddress(lookup, resources.orders),
+            checkout,
+            TrackOrder(lookup, resources.shipments),
+            limits,
+        )
     )
     # Where the provider sends the buyer's browser back, to reopen the app.
     app.include_router(build_payment_bridge_router(lookup, resources.payments, limits))

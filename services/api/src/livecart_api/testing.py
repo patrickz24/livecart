@@ -51,6 +51,7 @@ from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.products import SqlProductStockRepository
 from livecart_core.infrastructure.db.refresh_tokens import SqlRefreshTokenRepository
 from livecart_core.infrastructure.db.sellers import SqlSellerRepository
+from livecart_core.infrastructure.db.shipments import SqlShipmentRepository
 from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
@@ -171,6 +172,7 @@ def memory_resources(
         if payment_provider is not None
         else FakePaymentProvider(),
         webhook_events=webhook_events if webhook_events is not None else database.webhook_events,
+        shipments=database.shipments,
     )
 
 
@@ -219,6 +221,7 @@ def postgres_resources(
         if payment_provider is not None
         else FakePaymentProvider(),
         webhook_events=SqlWebhookEventRegistry(engine),
+        shipments=SqlShipmentRepository(engine),
     )
 
 

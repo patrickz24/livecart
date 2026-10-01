@@ -1814,6 +1814,40 @@
         "title": "StreamGapData",
         "type": "object"
       },
+      "TrackingResponse": {
+        "description": "Where the order's parcel is, as its carrier last reported it.",
+        "properties": {
+          "carrier": {
+            "$ref": "#/components/schemas/CarrierName"
+          },
+          "last_event_at": {
+            "description": "The time of the carrier's latest event: the shipment's creation at first.",
+            "format": "date-time",
+            "title": "Last Event At",
+            "type": "string"
+          },
+          "reference": {
+            "title": "Reference",
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ShipmentStatus"
+          },
+          "tracking_number": {
+            "title": "Tracking Number",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reference",
+          "carrier",
+          "tracking_number",
+          "status",
+          "last_event_at"
+        ],
+        "title": "TrackingResponse",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -3602,6 +3636,79 @@
           }
         ],
         "summary": "Record where the order goes, with its access token",
+        "tags": [
+          "orders"
+        ]
+      }
+    },
+    "/api/v1/orders/{reference}/tracking": {
+      "get": {
+        "operationId": "get_order_tracking",
+        "parameters": [
+          {
+            "description": "LC- then six symbols, in any case, the hyphen optional.",
+            "in": "path",
+            "name": "reference",
+            "required": true,
+            "schema": {
+              "description": "LC- then six symbols, in any case, the hyphen optional.",
+              "examples": [
+                "LC-7K3F9Q"
+              ],
+              "maxLength": 32,
+              "title": "Reference",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackingResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "No order has this reference, the token is missing or not its own, or the order has no shipment yet"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Too many requests: try again after Retry-After seconds"
+          }
+        },
+        "security": [
+          {
+            "OrderAccessToken": []
+          }
+        ],
+        "summary": "Where the order's parcel is, with the order's access token",
         "tags": [
           "orders"
         ]
