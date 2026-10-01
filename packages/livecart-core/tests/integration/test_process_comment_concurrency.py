@@ -4,9 +4,18 @@ Every unit of every delivery runs as livecart_app: the lease (unit 1), the
 session resolution, the catalog and unit 3. The deliveries start together
 behind an ``asyncio.Barrier``, each for a consumer of its own, as deliveries
 spread over several workers would. The tests assert invariants only.
+
+A delivery that fails with ``ServiceUnavailable`` is tried again as
+``CommentConsumer`` tries it, twice more after a jittered delay: under the
+load of the whole suite, a reservation can wait on the product's row for
+more than ``LOCK_TIMEOUT_MS`` (2 s) behind a dozen others, which rolls its
+unit back as transient, for another attempt. The consumer's retries are
+part of how the worker meets a burst; a delivery still failing after them
+fails the test, with the error's type.
 """
 
 import asyncio
+import random
 from dataclasses import dataclass
 from datetime import timedelta
 from uuid import UUID
@@ -21,7 +30,11 @@ from livecart_core.application.dto import (
     QueuedComment,
     QueueDelivery,
 )
-from livecart_core.application.ports import IntentFallback, NullIntentFallback
+from livecart_core.application.ports import (
+    IntentFallback,
+    NullIntentFallback,
+    ServiceUnavailable,
+)
 from livecart_core.application.process_comment import HandledComment, Handling, ProcessComment
 from livecart_core.domain.outcomes import IntentOutcome, LlmOutcome
 from livecart_core.domain.state_machines import CommentStatus, OrderStatus
@@ -45,6 +58,11 @@ DEMAND = 1000
 STOCK = 200
 LEASE = timedelta(seconds=30)
 TTL = timedelta(seconds=900)
+# CommentConsumer's TRANSIENT_RETRIES and RETRY_BASE_DELAY_S
+# (livecart_worker.consumer): each delay is drawn from 0 to base x 2 ** (retry - 1).
+TRANSIENT_RETRIES = 2
+RETRY_BASE_DELAY_S = 0.1
+_RANDOM = random.SystemRandom()
 
 
 @dataclass(frozen=True)
@@ -95,17 +113,44 @@ async def _setup(
     return process, queue, deliveries, session.id
 
 
+async def _deliver(
+    process: ProcessComment, delivery: QueueDelivery, *, consumer: str
+) -> HandledComment:
+    """One delivery, tried again after a transient failure as ``CommentConsumer`` tries it."""
+    retry = 0
+    while True:
+        try:
+            return await process(delivery, consumer=consumer)
+        except ServiceUnavailable:
+            retry += 1
+            if retry > TRANSIENT_RETRIES:
+                raise
+            await asyncio.sleep(_RANDOM.uniform(0, RETRY_BASE_DELAY_S * 2 ** (retry - 1)))
+
+
 async def _race(process: ProcessComment, deliveries: list[QueueDelivery]) -> list[HandledComment]:
-    """Every delivery at once: each task waits at the barrier until all are ready."""
+    """Every delivery at once: each task waits at the barrier until all are ready.
+
+    A delivery that still fails after its retries fails the test once every
+    other delivery has ended, with the type and message of each failure.
+    """
     barrier = asyncio.Barrier(len(deliveries))
 
-    async def one(n: int, delivery: QueueDelivery) -> HandledComment:
+    async def one(n: int, delivery: QueueDelivery) -> HandledComment | Exception:
         await barrier.wait()
-        return await process(delivery, consumer=f"worker-{n}")
+        try:
+            return await _deliver(process, delivery, consumer=f"worker-{n}")
+        except Exception as error:
+            return error
 
     async with asyncio.TaskGroup() as group:
         tasks = [group.create_task(one(n, delivery)) for n, delivery in enumerate(deliveries)]
-    return [task.result() for task in tasks]
+    results = [task.result() for task in tasks]
+    failures = [
+        f"{type(result).__name__}: {result}" for result in results if isinstance(result, Exception)
+    ]
+    assert failures == [], f"{len(failures)} deliveries failed: {failures}"
+    return [result for result in results if not isinstance(result, Exception)]
 
 
 async def _stored(engine: AsyncEngine, session_id: UUID) -> Stored:
