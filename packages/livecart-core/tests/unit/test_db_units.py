@@ -1,9 +1,19 @@
 """The mapping of database failures onto the ports, without a database."""
 
+import importlib
+from typing import Final
+
 import pytest
 from sqlalchemy import exc
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from livecart_core.infrastructure.db.units import is_transient, sqlstate, violated_constraint
+from livecart_core.application.ports import ServiceUnavailable
+from livecart_core.infrastructure.db.units import (
+    is_transient,
+    sqlstate,
+    transaction,
+    violated_constraint,
+)
 
 
 class _DriverError(Exception):
@@ -61,3 +71,58 @@ def test_the_violated_constraint_is_read_from_the_asyncpg_cause() -> None:
 
     assert violated_constraint(exc.IntegrityError("INSERT", None, driver)) == "uq_orders_reference"
     assert violated_constraint(exc.IntegrityError("INSERT", None, _DriverError("23505"))) is None
+
+
+# --- Connections the server refuses ------------------------------------------------------
+
+# asyncpg ships no type information (no py.typed): its exceptions are looked up
+# by name, so that mypy --strict needs no ignore for them.
+_ASYNCPG_ERRORS: Final = importlib.import_module("asyncpg.exceptions")
+
+
+def _refusing_engine(error: Exception) -> AsyncEngine:
+    """An engine whose pool's connection creator raises ``error``, as asyncpg's connect does."""
+
+    async def refuse() -> object:
+        raise error
+
+    return create_async_engine("postgresql+asyncpg://", async_creator=refuse)
+
+
+@pytest.mark.parametrize(
+    ("name", "code"),
+    [
+        ("AdminShutdownError", "57P01"),
+        ("CrashShutdownError", "57P02"),
+        ("CannotConnectNowError", "57P03"),
+        ("TooManyConnectionsError", "53300"),
+    ],
+)
+async def test_a_connection_refused_while_the_server_restarts_is_unavailable(
+    name: str, code: str
+) -> None:
+    # SQLAlchemy does not wrap what asyncpg raises while it connects: the
+    # unit gets asyncpg's own PostgresError, which must not escape as a 500.
+    error_type = getattr(_ASYNCPG_ERRORS, name)
+    engine = _refusing_engine(error_type("the database system is starting up"))
+    try:
+        with pytest.raises(ServiceUnavailable) as raised:
+            async with transaction(engine):
+                pass
+    finally:
+        await engine.dispose()
+
+    cause = raised.value.__cause__
+    assert isinstance(cause, error_type)
+    assert cause.sqlstate == code
+
+
+async def test_a_connection_refused_for_good_keeps_the_drivers_error() -> None:
+    error_type = _ASYNCPG_ERRORS.InvalidPasswordError
+    engine = _refusing_engine(error_type("password authentication failed"))
+    try:
+        with pytest.raises(error_type):
+            async with transaction(engine):
+                pass
+    finally:
+        await engine.dispose()
