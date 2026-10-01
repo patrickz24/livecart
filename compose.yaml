@@ -360,6 +360,43 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
+  # Stripe's CLI, in the stripe profile only: the default stack takes payments
+  # with the mock and needs no key. With PAYMENT_PROVIDER=stripe and the test
+  # keys of your own Stripe account in .env (CONTRIBUTING.md, "Payments"),
+  # `docker compose --profile stripe up -d` forwards the checkout.session
+  # events of that test account to the payment webhook, through nginx, as a
+  # provider's call comes in. The CLI shares the network namespace of the web
+  # container, so that it reaches nginx on localhost:8080, a host the API
+  # trusts (ALLOWED_HOSTS); its log prints the signing secret (whsec_...) that
+  # STRIPE_WEBHOOK_SECRET must hold.
+  stripe-cli:
+    image: stripe/stripe-cli:v1.52.0
+    profiles: [stripe]
+    command:
+      - listen
+      - --forward-to
+      - http://localhost:8080/api/v1/webhooks/payments/stripe
+      - --events
+      - checkout.session.completed,checkout.session.async_payment_succeeded,checkout.session.async_payment_failed,checkout.session.expired
+    environment:
+      # Read by the CLI. Empty unless set in .env, and the CLI then refuses to
+      # listen: no default, and never a ${VAR:?}, which would stop every
+      # `docker compose` command of the default stack too.
+      STRIPE_API_KEY: ${STRIPE_SECRET_KEY:-}
+    network_mode: "service:web"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 128M
+    depends_on:
+      web:
+        condition: service_healthy
+    # A missing or refused key ends the CLI: no restart loop.
+    restart: "no"
+
 networks:
   default:
     # A fixed subnet, so that nginx keeps a fixed address (NGINX_IP). The other

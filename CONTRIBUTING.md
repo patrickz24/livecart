@@ -131,6 +131,33 @@ uv run --locked python scripts/llm_eval.py --max-cost-usd 0.20           # stop 
 
 It prints each case the model got wrong, the accuracy against the resolutions of the corpus, the outcomes, the tokens and the largest output (against `max_tokens`), the latency and the cost at list price. The tests never reach Anthropic: the adapter is tested against `httpx2.MockTransport`.
 
+## Payments
+
+The stack takes payments with the mock provider by default (`PAYMENT_PROVIDER=mock`): no account and no key. The API serves its hosted page in development only, and its Pay button posts a signed `checkout.session.completed` webhook to the API, as Stripe would; the worker applies it within 2 s. [ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md) explains the decisions.
+
+One payment end to end, in Git Bash, on the running stack (`docker compose up -d --wait`), whose simulator keeps opening orders:
+
+```bash
+docker compose run --rm simulator --text --no-follow | tail -n 3   # the last order: its reference and token
+REF=LC-XXXXXX; TOKEN=<its token>
+API=http://localhost:8080/api/v1/orders/$REF
+curl -s -X PUT $API/shipping-address -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"full_name":"Camille Martin","line1":"12 rue des Lilas","postal_code":"69003","city":"Lyon","country":"FR"}'
+curl -s -X POST $API/checkout -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"return_url":"livecart://payment-return"}'                 # {"redirect_url": ".../api/v1/mock-payments/mock_cs_...", ...}
+```
+
+Open the `redirect_url` in a browser and press Pay (or `curl -s -X POST <redirect_url>/pay`, which answers the 303 to the bridge page); then `curl -s $API` shows `"status":"paid"`. A checkout left unpaid expires once its reservation and its grace have ended: the sweep expires the session at the mock first, whose page then refuses the payment, and releases the stock. To watch it within about a minute, set `RESERVATION_TTL_SECONDS=60` and `PAYMENT_GRACE_SECONDS=60` in `.env`, the least the settings accept, then `docker compose up -d --wait`.
+
+Stripe in test mode needs a Stripe account of your own, and its test keys in `.env`, never in a versioned file; the default stack never needs them:
+
+1. set `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY=sk_test_...` (a live key is refused);
+2. `docker compose --profile stripe run --rm stripe-cli listen --print-secret` prints the signing secret of the Stripe CLI: set it as `STRIPE_WEBHOOK_SECRET`;
+3. `docker compose --profile stripe up -d --wait` recreates the API and the worker with the keys and starts `stripe-cli` (`stripe/stripe-cli:v1.52.0`), which forwards the account's `checkout.session.*` events to `http://localhost:8080/api/v1/webhooks/payments/stripe`, through nginx (`docker compose logs -f stripe-cli`);
+4. run the checkout above: its `redirect_url` is Stripe's page, where the test card `4242 4242 4242 4242`, any future date and any CVC, pays the order.
+
+Back to the mock: set `PAYMENT_PROVIDER=mock` again and `docker compose stop stripe-cli`, then `docker compose up -d --wait`. The tests never reach Stripe: the adapter runs against `FakeStripeApi`, an in-memory stand-in of its API.
+
 ## Metrics
 
 The API and the worker each serve their Prometheus metrics on port 9100 of their container (`METRICS_PORT`), for a scraper on the compose network: the port is never published on the host and nginx never routes it. To read them by hand:
@@ -139,7 +166,7 @@ The API and the worker each serve their Prometheus metrics on port 9100 of their
 docker compose exec worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9100/metrics').read().decode())"
 ```
 
-The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations; with a key, the LLM fallback's outcomes (`livecart_llm_outcomes_total`) and its spend at list price (`livecart_llm_spend_usd_total`).
+The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations, the payment events by result (`livecart_payment_events_total`), the orders paid and the due checkouts the sweep asked the provider about by outcome (`livecart_checkout_expiries_total`); with a key, the LLM fallback's outcomes (`livecart_llm_outcomes_total`) and its spend at list price (`livecart_llm_spend_usd_total`).
 
 ## Seller accounts
 
