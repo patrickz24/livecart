@@ -147,14 +147,24 @@ curl -s -X POST $API/checkout -H "Authorization: Bearer $TOKEN" -H "Content-Type
   -d '{"return_url":"livecart://payment-return"}'                 # {"redirect_url": ".../api/v1/mock-payments/mock_cs_...", ...}
 ```
 
-Open the `redirect_url` in a browser and press Pay (or `curl -s -X POST <redirect_url>/pay`, which answers the 303 to the bridge page); then `curl -s $API` shows `"status":"paid"`. A checkout left unpaid expires once its reservation and its grace have ended: the sweep expires the session at the mock first, whose page then refuses the payment, and releases the stock. To watch it within about a minute, set `RESERVATION_TTL_SECONDS=60` and `PAYMENT_GRACE_SECONDS=60` in `.env`, the least the settings accept, then `docker compose up -d --wait`.
+Open the `redirect_url` in a browser and press Pay (or `curl -s -X POST <redirect_url>/pay`, which answers the 303 to the bridge page); then `curl -s $API` shows `"status":"paid"`. The seller sees it in real time on the session's SSE stream, opened before the payment in another Git Bash, with the demo seller's `SEED_DEMO_PASSWORD` of `.env` (the login refuses a call without the API's own `Origin`):
+
+```bash
+BASE=http://localhost:8080/api/v1
+ACCESS=$(curl -s -X POST $BASE/auth/login -H "Origin: http://localhost:8080" -H "Content-Type: application/json" \
+  -d '{"email":"demo-seller@livecart.test","password":"<SEED_DEMO_PASSWORD>"}' | sed -E 's/.*"access_token":"([^"]+)".*/\1/')
+curl -s $BASE/live-sessions -H "Authorization: Bearer $ACCESS"            # the id of "Friday drop"
+curl -N $BASE/live-sessions/<its id>/events -H "Authorization: Bearer $ACCESS"   # event: order.updated, "status":"paid"
+```
+
+A checkout left unpaid expires once its reservation and its grace have ended: the sweep expires the session at the mock first, whose page then refuses the payment, and releases the stock. To watch it within about a minute, set `RESERVATION_TTL_SECONDS=60` and `PAYMENT_GRACE_SECONDS=60` in `.env`, the least the settings accept, then `docker compose up -d --wait`.
 
 Stripe in test mode needs a Stripe account of your own, and its test keys in `.env`, never in a versioned file; the default stack never needs them:
 
 1. set `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY=sk_test_...` (a live key is refused);
 2. `docker compose --profile stripe run --rm stripe-cli listen --print-secret` prints the signing secret of the Stripe CLI: set it as `STRIPE_WEBHOOK_SECRET`;
 3. `docker compose --profile stripe up -d --wait` recreates the API and the worker with the keys and starts `stripe-cli` (`stripe/stripe-cli:v1.52.0`), which forwards the account's `checkout.session.*` events to `http://localhost:8080/api/v1/webhooks/payments/stripe`, through nginx (`docker compose logs -f stripe-cli`);
-4. run the checkout above: its `redirect_url` is Stripe's page, where the test card `4242 4242 4242 4242`, any future date and any CVC, pays the order.
+4. run the checkout above, with the SSE stream open: its `redirect_url` is Stripe's page, where the test card `4242 4242 4242 4242`, any future date and any CVC, pays the order; within seconds, `curl -s $API` shows `"status":"paid"` and the stream its `order.updated`. That is the end criterion of milestone 5, not run yet (see the README's status).
 
 Back to the mock: set `PAYMENT_PROVIDER=mock` again and `docker compose stop stripe-cli`, then `docker compose up -d --wait`. The tests never reach Stripe: the adapter runs against `FakeStripeApi`, an in-memory stand-in of its API.
 

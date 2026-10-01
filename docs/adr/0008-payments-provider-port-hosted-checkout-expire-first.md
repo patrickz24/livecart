@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted, 2026-10-01. Milestone 5 implemented it whole: the port and its four adapters, the hosted checkout and its bridge page, the registry of payment webhooks and the worker's loop that applies it, and the later phases of the expiry sweep, which expire the provider's session before they release any stock. The Stripe adapter is tested offline only (see "What is tested"); the mock runs the whole flow without any key.
+Accepted, 2026-10-01. Milestone 5 implemented it whole: the port and its four adapters, the hosted checkout and its bridge page, the registry of payment webhooks and the worker's loop that applies it, and the later phases of the expiry sweep, which expire the provider's session before they release any stock.
+
+The plan's end criterion for the milestone is half met. Verified: the mock runs the whole flow without any key on the compose stack, where on 2026-10-01 a payment reached `paid` and showed on the seller's SSE stream as an `order.updated`; and the Stripe adapter, with the real SDK, against `FakeStripeApi` only (see "What is tested"). Not verified: a payment with Stripe's test card 4242 reaching `paid`, visible in SSE, which needs a Stripe account's test keys, the maintainer's own, in `.env`; none was available. The steps are those of CONTRIBUTING's Payments section: `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY=sk_test_...` in `.env`; the secret printed by `docker compose --profile stripe run --rm stripe-cli listen --print-secret` as `STRIPE_WEBHOOK_SECRET`; `docker compose --profile stripe up -d --wait`; then, with the session's SSE stream open, the checkout paid on Stripe's page with `4242 4242 4242 4242`. Until that run, Stripe's own behaviour (its answers, its event bodies, its CLI's forwarding) is known from its documentation and its SDK, not from a call.
 
 ## Context
 
