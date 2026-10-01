@@ -5,10 +5,12 @@ import pytest
 import structlog
 from pydantic import SecretStr
 
+from livecart_api import resources as resources_module
 from livecart_api.app import create_app
 from livecart_api.resources import ReadinessCheck, build_resources
 from livecart_api.testing import TEST_HOST, make_app, memory_resources, open_client
 from livecart_core.application.dto import PaymentProviderName, Platform
+from livecart_core.application.ports import PaymentProvider
 from livecart_core.infrastructure.clock import SystemClock
 from livecart_core.infrastructure.comment_queue import RedisCommentQueue
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
@@ -20,6 +22,7 @@ from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
 from livecart_core.infrastructure.payments.mock import MockPaymentProvider
+from livecart_core.infrastructure.payments.stripe import StripePaymentProvider
 from livecart_core.infrastructure.platforms.simulator import SimulatorPlatformAdapter
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.settings import AppEnv, Settings
@@ -29,6 +32,8 @@ from livecart_core.testing.keys import (
     TEST_JWT_SECRET,
     TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
     TEST_ORDER_TOKEN_KEY,
+    TEST_STRIPE_SECRET_KEY,
+    TEST_STRIPE_WEBHOOK_SECRET,
 )
 
 
@@ -151,6 +156,28 @@ async def test_built_resources_probe_postgres_and_redis_and_close_cleanly() -> N
     assert resources.event_streams is not resources.session_events
     assert isinstance(resources.payment_provider, MockPaymentProvider)
     await resources.aclose()  # nothing was connected: closing must not fail
+
+
+async def test_closing_the_built_resources_releases_the_payment_providers_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    closed: list[PaymentProvider] = []
+
+    async def close(provider: PaymentProvider) -> None:
+        closed.append(provider)
+
+    monkeypatch.setattr(resources_module, "close_payment_provider", close)
+    settings = _startup_settings(
+        payment_provider=PaymentProviderName.STRIPE,
+        stripe_secret_key=TEST_STRIPE_SECRET_KEY,
+        stripe_webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+    )
+    resources = build_resources(settings)
+
+    await resources.aclose()
+
+    assert closed == [resources.payment_provider]
+    assert isinstance(resources.payment_provider, StripePaymentProvider)
 
 
 def _startup_settings(**overrides: object) -> Settings:

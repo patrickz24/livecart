@@ -43,7 +43,7 @@ from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegist
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.idempotency import RedisIdempotencyStore
 from livecart_core.infrastructure.passwords import Argon2PasswordHasher
-from livecart_core.infrastructure.payments import build_payment_provider
+from livecart_core.infrastructure.payments import build_payment_provider, close_payment_provider
 from livecart_core.infrastructure.platforms import build_platform_adapters
 from livecart_core.infrastructure.ratelimit import RedisRateLimiter
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
@@ -86,7 +86,8 @@ class Resources:
     # take a connection from the webhook, the login or /ready.
     event_streams: SessionEventStream
     # The hosted checkout of PAYMENT_PROVIDER: the mock's sessions live in the
-    # shared Redis, where the worker finds them too.
+    # shared Redis, where the worker finds them too. aclose releases Stripe's
+    # HTTP connections.
     payment_provider: PaymentProvider
     # Where the payment webhook records the provider's verified events, for
     # the worker to apply: PostgreSQL alone.
@@ -122,11 +123,16 @@ def build_resources(settings: Settings) -> Resources:
     )
     redis = create_redis_client(settings.redis_url)
     stream_redis = create_redis_client(settings.redis_url, max_connections=settings.sse_max_streams)
+    payment_provider = build_payment_provider(settings, redis, clock)
 
     async def aclose() -> None:
         try:
             try:
-                await redis.aclose()
+                try:
+                    # Stripe's HTTP connections; the mock's go with the shared client.
+                    await close_payment_provider(payment_provider)
+                finally:
+                    await redis.aclose()
             finally:
                 await stream_redis.aclose()
         finally:
@@ -157,6 +163,6 @@ def build_resources(settings: Settings) -> Resources:
         activity=SqlLiveSessionActivity(engine, currency=settings.default_currency),
         session_events=RedisSessionEvents(redis, prefix=settings.redis_key_prefix),
         event_streams=RedisSessionEvents(stream_redis, prefix=settings.redis_key_prefix),
-        payment_provider=build_payment_provider(settings, redis, clock),
+        payment_provider=payment_provider,
         webhook_events=SqlWebhookEventRegistry(engine),
     )
