@@ -207,6 +207,24 @@ PostgreSQL and Redis use non-standard host ports so that another project's serve
 
 Host-run URLs use `127.0.0.1` rather than `localhost`: on Windows, `localhost` resolves to `::1` first, and every connection would wait about 2 s before falling back to IPv4.
 
+### A port Windows reserved
+
+On Windows, a host port can be refused although no program listens on it: Windows reserves ranges of TCP ports for Hyper-V and WSL, and draws them again when Docker Desktop or the machine restarts. When a range covers `55432`, `docker compose up` or `run` recreates the postgres container and fails to publish it: PostgreSQL does not start, nor any service that waits for it. To see the ranges, in PowerShell or Git Bash:
+
+```bash
+netsh interface ipv4 show excludedportrange protocol=tcp   # a line "55386 55485" covers 55432
+```
+
+Choose a port outside every range, `55532` for example, and move PostgreSQL there in `.env`, never in a shell only: compose reads `PG_HOST_PORT` at each `up` or `run`, so a command run without the shell's override recreates the container on the port of `.env`.
+
+```bash
+PG_HOST_PORT=55532
+TEST_DATABASE_URL=postgresql+asyncpg://livecart_app:<password>@127.0.0.1:55532/livecart_test
+TEST_MIGRATOR_URL=postgresql+asyncpg://livecart_migrator:<password>@127.0.0.1:55532/livecart_test
+```
+
+In the two `TEST_*` URLs, through which `make test` connects, change the port only, keeping their passwords; do the same in `DATABASE_URL` and `MIGRATOR_URL` for the commands run from the host, such as `uv run --locked livecart-seed`. Then `docker compose up -d --wait` publishes PostgreSQL on the new port. Redis, on `56379`, moves the same way, with `REDIS_HOST_PORT`, `REDIS_URL` and `TEST_REDIS_URL`.
+
 ## Commit conventions
 
 - [Conventional Commits](https://www.conventionalcommits.org/) in English, checked by commitlint: `type(scope): subject`, for example `feat(api): add health and readiness endpoints`. Types: `feat`, `fix`, `test`, `docs`, `refactor`, `perf`, `build`, `ci`, `chore`, `style`, `revert`. Scopes: `core`, `api`, `worker`, `simulator`, `web`, `mobile`, `api-client`, `design-tokens`, `infra`, `loadtest`, `deps`; no scope for repository-wide changes.
