@@ -34,7 +34,8 @@ An order is born from a comment, for a buyer who has no account: the platform us
 
 - `GET /api/v1/orders/{reference}` needs the reference alone and answers the public projection: status, product code, variant and name, quantity, total, currency and `reserved_until`. No buyer id, no address, no seller.
 - `GET /api/v1/orders/{reference}/details` also needs `Authorization: Bearer <token>` and adds the unit price, the shipping address and the payment and expiry times. A missing, malformed or wrong token, and the token of another order, get the very 404 of an unknown reference: the route tells a guesser nothing.
-- Both are rate limited (ADR 0011): the lookup to 30 requests and 20 not-found answers a minute per client address, with a warning logged when the not-found answers of all addresses together pass a threshold; the details to 60 requests a minute per token, counted by its SHA-256.
+- The routes that act on the order or follow it are of the second tier too, with the same 404: the shipping address, the checkout (milestone 5) and `GET /api/v1/orders/{reference}/tracking` (milestone 6), which answers the carrier, the tracking number, the status and the time of the carrier's latest event of a paid order's parcel. The tracking number is a capability of its own at a real carrier, whose public pages follow a parcel to its address, so the reference alone never shows it; an order without a shipment yet answers the same 404 to its token.
+- Both tiers are rate limited (ADR 0011): the lookup to 30 requests and 20 not-found answers a minute per client address, with a warning logged when the not-found answers of all addresses together pass a threshold; the token routes to 60 requests a minute per token, counted by its SHA-256.
 - Seller routes follow the same rule for their own objects: every query filters by the seller of the access token, and another seller's session or product answers 404, never 403.
 
 ## Consequences
