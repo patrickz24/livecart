@@ -50,7 +50,11 @@ from livecart_core.settings import Settings
 from livecart_core.testing.backends import PostgresBackend
 from livecart_core.testing.database import IntegrationSettings
 from livecart_core.testing.fakes import FakeClock, FakeEventPublisher
-from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.keys import (
+    TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+    TEST_ORDER_TOKEN_KEY,
+)
 from livecart_core.testing.polling import until
 from livecart_worker.main import serve
 from livecart_worker.metrics import WorkerMetrics
@@ -137,6 +141,7 @@ async def test_an_event_recorded_while_the_worker_is_stopped_is_applied_at_resta
         redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         metrics_port=None,
         _env_file=None,

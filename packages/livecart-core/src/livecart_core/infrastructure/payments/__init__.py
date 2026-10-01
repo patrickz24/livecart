@@ -58,6 +58,17 @@ def build_payment_provider(settings: Settings, redis: Redis, clock: Clock) -> Pa
     return STUBS[provider]()
 
 
+async def close_payment_provider(provider: PaymentProvider) -> None:
+    """Release what the provider holds of its own: Stripe's HTTP connections.
+
+    The composition roots call it once, as their process stops. The mock
+    keeps its sessions through the process's Redis client, which the process
+    closes itself, and a stub holds nothing.
+    """
+    if isinstance(provider, StripePaymentProvider):
+        await provider.aclose()
+
+
 def refuse_mock_payments_in_production(settings: Settings) -> None:
     """Raise ``ValueError`` when a production process would take payments with the mock."""
     if settings.is_production and settings.payment_provider is PaymentProviderName.MOCK:

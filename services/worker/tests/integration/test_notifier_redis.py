@@ -36,7 +36,11 @@ from livecart_core.settings import Settings
 from livecart_core.testing.backends import CURRENCY, PostgresBackend
 from livecart_core.testing.builders import DEMO_MAX_QUANTITY, queued_comment
 from livecart_core.testing.database import IntegrationSettings
-from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.keys import (
+    TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+    TEST_ORDER_TOKEN_KEY,
+)
 from livecart_core.testing.polling import until
 from livecart_worker.main import serve
 
@@ -79,6 +83,7 @@ async def test_the_buyer_gets_the_derived_token_on_the_dev_stream_and_no_log_hol
         redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         _env_file=None,
     )

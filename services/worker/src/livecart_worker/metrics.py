@@ -21,6 +21,11 @@ loops record what they do:
   (``livecart_comments_dead_lettered_total``), the entries trimmed, and the
   queue's backlog as the reclaim saw it (``livecart_queue_backlog``);
 - each sweep tick: the reservations expired and their unpublished events;
+  of the due orders with a payment in flight, each the sweep asked the
+  provider about, by outcome (``livecart_checkout_expiries_total{outcome}``,
+  the closed list of ``CheckoutExpiryOutcome``: ``failed`` is the one to
+  alert on), those it released counted with the expired reservations and
+  those the buyer paid first with the orders paid;
 - each tick of the payment events loop: every event it claimed, by result
   (``livecart_payment_events_total{result}``, the closed list of
   ``PaymentEventResult``: ``amount_mismatch`` and ``attempts_exhausted`` are
@@ -51,6 +56,7 @@ from prometheus_client.registry import Collector
 
 from livecart_core.application.apply_payment_events import PaymentEventResult, PaymentEventsTick
 from livecart_core.application.dto import IntentSource
+from livecart_core.application.expire_checkouts import CheckoutExpiryOutcome, CheckoutExpiryTick
 from livecart_core.application.expire_reservations import SweepResult
 from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.process_comment import HandledComment, Handling
@@ -185,6 +191,12 @@ class WorkerMetrics:
             "Unpaid reservations expired by the sweep, their stock released.",
             registry=registry,
         )
+        self.checkout_expiries = Counter(
+            "livecart_checkout_expiries_total",
+            "Due orders with a payment in flight the sweep asked the provider about, by outcome.",
+            ["outcome"],
+            registry=registry,
+        )
         self.payment_events = Counter(
             "livecart_payment_events_total",
             "Payment events the registry loop claimed, by result (a closed list).",
@@ -210,6 +222,8 @@ class WorkerMetrics:
             self.comment_failures.labels(cause=cause.value)
         for result in PaymentEventResult:
             self.payment_events.labels(result=result.value)
+        for outcome in CheckoutExpiryOutcome:
+            self.checkout_expiries.labels(outcome=outcome.value)
 
     def watch_llm(self, guard: LlmGuard) -> None:
         """Serve the counters of the process's LLM guard with the other metrics."""
@@ -237,6 +251,15 @@ class WorkerMetrics:
     def record_sweep(self, result: SweepResult) -> None:
         self.reservations_expired.inc(result.expired)
         self.session_events_unpublished.inc(result.unpublished_events)
+
+    def record_checkout_expiry(self, tick: CheckoutExpiryTick) -> None:
+        for handled in tick.handled:
+            self.checkout_expiries.labels(outcome=handled.outcome.value).inc()
+            self.session_events_unpublished.inc(handled.unpublished_events)
+            if handled.released:
+                self.reservations_expired.inc()
+            elif handled.paid:
+                self.orders_paid.inc()
 
     def record_payment_events(self, tick: PaymentEventsTick) -> None:
         for handled in tick.handled:

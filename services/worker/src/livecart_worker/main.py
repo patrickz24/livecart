@@ -9,7 +9,9 @@ then runs the worker's loops in one TaskGroup:
   idle by another consumer redelivered or dead-lettered, then the safe trim of
   the stream;
 - the expiry sweep, every 5 s (``sweeps``): the reservations nobody paid in
-  time expired, and their stock released;
+  time expired, and their stock released; for an order whose payment is in
+  flight, once the payment provider has expired the attempt's session
+  (``ExpireCheckouts``), or settled as paid when the buyer paid first;
 - the payment events loop, every 2 s (``payments``): the events the payment
   webhook recorded in ``processed_webhook_events``, applied to their
   attempts and orders;
@@ -22,10 +24,17 @@ Redis (``RedisLlmBudget``), then one of ``LLM_SLOTS`` (4) slots, waited for
 ``LLM_SLOT_WAIT_S`` at most. Otherwise ``NullIntentFallback`` leaves them
 unresolved, and the worker runs on the parser alone.
 
-The consumer, the sweep and the payment events loop publish the session events of what they commit
-to each session's Redis stream (``RedisSessionEvents``), after the commit
-and best effort: a failure is logged, counted in the metrics, and never
-undoes the commit.
+The consumer, the sweep and the payment events loop publish the session
+events of what they commit to each session's Redis stream
+(``RedisSessionEvents``), after the commit and best effort: a failure is
+logged, counted in the metrics, and never undoes the commit.
+
+The worker builds the payment provider of ``PAYMENT_PROVIDER``, as the API
+does (``build_payment_provider``): the mock's sessions in the shared Redis,
+or Stripe in test mode. It refuses the mock in production, and creates a
+missing session again with the bridge page of ``PUBLIC_API_BASE_URL``
+(``CheckoutPages``), so that its request is the API's, under the same
+idempotency key.
 
 ``run`` serves the loops' metrics (``WorkerMetrics``) on ``METRICS_PORT``,
 the container's internal port 9100, for as long as they run.
@@ -52,6 +61,8 @@ from livecart_core.application.apply_payment_events import (
     ApplyPaymentEvent,
     ProcessPaymentEvents,
 )
+from livecart_core.application.checkout import CheckoutPages
+from livecart_core.application.expire_checkouts import ExpireCheckouts
 from livecart_core.application.expire_reservations import ExpireReservations
 from livecart_core.application.llm_guard import LlmGuard
 from livecart_core.application.ports import Clock, IntentFallback, LlmBudget, NullIntentFallback
@@ -63,10 +74,16 @@ from livecart_core.infrastructure.db.comments import SqlCommentInbox
 from livecart_core.infrastructure.db.engine import create_db_engine
 from livecart_core.infrastructure.db.live_sessions import SqlLiveSessionRepository
 from livecart_core.infrastructure.db.orders import SqlOrderRepository
+from livecart_core.infrastructure.db.payments import SqlPaymentRepository
 from livecart_core.infrastructure.db.webhook_events import SqlWebhookEventRegistry
 from livecart_core.infrastructure.events import RedisSessionEvents
 from livecart_core.infrastructure.llm_budget import RedisLlmBudget
 from livecart_core.infrastructure.notifier import SimulatedBuyerNotifier
+from livecart_core.infrastructure.payments import (
+    build_payment_provider,
+    close_payment_provider,
+    refuse_mock_payments_in_production,
+)
 from livecart_core.infrastructure.redis_client import create_redis_client, ping_redis
 from livecart_core.logging import configure_logging
 from livecart_core.metrics import MetricsServer
@@ -179,9 +196,13 @@ async def serve(
     The loops record their metrics in ``metrics``, a registry of their own
     by default.
     """
+    # The mock charges nothing: a production worker never settles payments with it.
+    refuse_mock_payments_in_production(settings)
     clock = clock if clock is not None else SystemClock()
     metrics = metrics if metrics is not None else WorkerMetrics()
     redis = create_redis_client(settings.redis_url)
+    # A stub, or a provider without its keys, stops the worker here.
+    provider = build_payment_provider(settings, redis, clock)
     fallback, llm_client = llm_fallback(
         settings, budget=RedisLlmBudget(redis, prefix=settings.redis_key_prefix), clock=clock
     )
@@ -242,16 +263,32 @@ async def serve(
         )
         expire = ExpireReservations(orders, events, clock, budget=EXPIRY_BUDGET)
         registry = SqlWebhookEventRegistry(engine)
+        apply_payment = ApplyPaymentEvent(registry, events, clock)
         payment_events = ProcessPaymentEvents(
+            registry, apply_payment, clock, budget=PAYMENT_EVENTS_BUDGET
+        )
+        # The later phases of the sweep: the due orders with a payment in flight.
+        checkouts = ExpireCheckouts(
+            orders,
+            SqlPaymentRepository(engine),
+            provider,
             registry,
-            ApplyPaymentEvent(registry, events, clock),
+            apply_payment,
+            events,
             clock,
-            budget=PAYMENT_EVENTS_BUDGET,
+            pages=CheckoutPages(settings.public_api_base_url),
+            budget=EXPIRY_BUDGET,
         )
         async with asyncio.TaskGroup() as loops:
             loops.create_task(consumer.run(stop))
             loops.create_task(
-                run_expiry_sweep(expire, stop, interval_s=expiry_interval_s, metrics=metrics)
+                run_expiry_sweep(
+                    expire,
+                    stop,
+                    checkouts=checkouts,
+                    interval_s=expiry_interval_s,
+                    metrics=metrics,
+                )
             )
             loops.create_task(
                 run_payment_events(
@@ -272,6 +309,7 @@ async def serve(
             )
     finally:
         await engine.dispose()
+        await close_payment_provider(provider)
         await redis.aclose()
         if llm_client is not None:
             await llm_client.close()

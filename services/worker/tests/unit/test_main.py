@@ -5,13 +5,21 @@ from pathlib import Path
 import pytest
 from pydantic import SecretStr
 
-from livecart_core.application.dto import FallbackReceipt
+from livecart_core.application.dto import FallbackReceipt, PaymentProviderName
 from livecart_core.application.llm_guard import LlmGuard
-from livecart_core.application.ports import NullIntentFallback
+from livecart_core.application.ports import NullIntentFallback, PaymentProvider
 from livecart_core.domain.outcomes import LlmOutcome
+from livecart_core.infrastructure.payments.stripe import StripePaymentProvider
 from livecart_core.settings import LLM_MAX_RETRIES, AppEnv, Settings
 from livecart_core.testing.fakes import FakeClock, InMemoryLlmBudget
-from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.keys import (
+    TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+    TEST_ORDER_TOKEN_KEY,
+    TEST_STRIPE_SECRET_KEY,
+    TEST_STRIPE_WEBHOOK_SECRET,
+)
+from livecart_worker import main
 from livecart_worker.main import install_stop_handlers, llm_fallback, serve
 from livecart_worker.metrics import WorkerMetrics
 
@@ -37,6 +45,7 @@ async def test_serve_returns_once_stopped_and_releases_redis(tmp_path: Path) -> 
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=heartbeat,
         _env_file=None,
     )
@@ -48,19 +57,63 @@ async def test_serve_returns_once_stopped_and_releases_redis(tmp_path: Path) -> 
     assert not heartbeat.exists()
 
 
-async def test_a_production_worker_refuses_the_simulated_notifier(tmp_path: Path) -> None:
-    settings = Settings(
+def _production(tmp_path: Path, provider: PaymentProviderName) -> Settings:
+    return Settings(
         app_env=AppEnv.PRODUCTION,
         database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        payment_provider=provider,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+        stripe_secret_key=TEST_STRIPE_SECRET_KEY,
+        stripe_webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         _env_file=None,
     )
 
-    with pytest.raises(ValueError, match="refused when APP_ENV=production"):
+
+async def test_a_production_worker_refuses_the_simulated_notifier(tmp_path: Path) -> None:
+    settings = _production(tmp_path, PaymentProviderName.STRIPE)
+
+    with pytest.raises(ValueError, match=r"simulated buyer notifier .* refused when APP_ENV"):
         await serve(settings, asyncio.Event())
+
+
+async def test_a_production_worker_refuses_the_mock_payment_provider(tmp_path: Path) -> None:
+    settings = _production(tmp_path, PaymentProviderName.MOCK)
+
+    with pytest.raises(ValueError, match="PAYMENT_PROVIDER=mock charges nothing"):
+        await serve(settings, asyncio.Event())
+
+
+async def test_serve_builds_the_payment_provider_and_closes_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    closed: list[PaymentProvider] = []
+
+    async def close(provider: PaymentProvider) -> None:
+        closed.append(provider)
+
+    monkeypatch.setattr(main, "close_payment_provider", close)
+    settings = Settings(
+        database_url=SecretStr("postgresql+asyncpg://u:p@db.invalid/livecart"),
+        redis_url=SecretStr("redis://127.0.0.1:1/0"),
+        jwt_secret=TEST_JWT_SECRET,
+        order_token_key=TEST_ORDER_TOKEN_KEY,
+        payment_provider=PaymentProviderName.STRIPE,
+        stripe_secret_key=TEST_STRIPE_SECRET_KEY,
+        stripe_webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+        worker_heartbeat_file=tmp_path / "worker.heartbeat",
+        _env_file=None,
+    )
+    stop = asyncio.Event()
+    stop.set()
+
+    await asyncio.wait_for(serve(settings, stop), timeout=2)
+
+    [provider] = closed
+    assert isinstance(provider, StripePaymentProvider)
 
 
 def _settings(*, key: str | None, enabled: bool = True) -> Settings:
@@ -69,6 +122,7 @@ def _settings(*, key: str | None, enabled: bool = True) -> Settings:
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         anthropic_api_key=None if key is None else SecretStr(key),
         llm_enabled=enabled,
         _env_file=None,
@@ -105,6 +159,7 @@ async def test_serve_scrapes_the_llm_counters_once_the_fallback_is_on(tmp_path: 
         redis_url=SecretStr("redis://127.0.0.1:1/0"),
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         anthropic_api_key=SecretStr("sk-ant-test"),
         _env_file=None,

@@ -31,7 +31,11 @@ from livecart_core.settings import Settings
 from livecart_core.testing.backends import PostgresBackend
 from livecart_core.testing.builders import queued_comment
 from livecart_core.testing.database import IntegrationSettings
-from livecart_core.testing.keys import TEST_JWT_SECRET, TEST_ORDER_TOKEN_KEY
+from livecart_core.testing.keys import (
+    TEST_JWT_SECRET,
+    TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
+    TEST_ORDER_TOKEN_KEY,
+)
 from livecart_core.testing.polling import until
 from livecart_worker.main import serve
 
@@ -48,6 +52,7 @@ def settings(
         redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         _env_file=None,
     )
@@ -219,6 +224,7 @@ async def test_the_worker_takes_back_what_a_crashed_consumer_left(
         redis_key_prefix=redis_key_prefix,
         jwt_secret=TEST_JWT_SECRET,
         order_token_key=TEST_ORDER_TOKEN_KEY,
+        mock_payment_webhook_secret=TEST_MOCK_PAYMENT_WEBHOOK_SECRET,
         worker_heartbeat_file=tmp_path / "worker.heartbeat",
         worker_batch=16,
         message_process_timeout_s=5,

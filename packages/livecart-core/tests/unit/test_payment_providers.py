@@ -3,6 +3,7 @@
 import importlib
 from collections.abc import AsyncIterator
 
+import httpx2
 import pytest
 from pydantic import SecretStr
 from redis.asyncio import Redis
@@ -12,11 +13,12 @@ from livecart_core.application.ports import PaymentProvider
 from livecart_core.infrastructure.payments import (
     STUBS,
     build_payment_provider,
+    close_payment_provider,
     refuse_mock_payments_in_production,
 )
 from livecart_core.infrastructure.payments.mock import MockPaymentProvider
 from livecart_core.infrastructure.payments.paypal import PayPalPaymentProvider
-from livecart_core.infrastructure.payments.stripe import StripePaymentProvider
+from livecart_core.infrastructure.payments.stripe import Httpx2Client, StripePaymentProvider
 from livecart_core.infrastructure.payments.stub import PaymentProviderStub
 from livecart_core.infrastructure.payments.viva import VivaPaymentProvider
 from livecart_core.infrastructure.redis_client import create_redis_client
@@ -160,3 +162,30 @@ def test_production_refuses_the_mock_and_takes_a_real_provider() -> None:
     refuse_mock_payments_in_production(
         _settings(app_env=AppEnv.PRODUCTION, payment_provider=PaymentProviderName.STRIPE)
     )
+
+
+class _ClosingClient(Httpx2Client):
+    """Stripe's HTTP client over a transport that answers nothing, noting its closing."""
+
+    def __init__(self) -> None:
+        super().__init__(transport=httpx2.MockTransport(lambda request: httpx2.Response(500)))
+        self.closed = 0
+
+    async def close_async(self) -> None:
+        self.closed += 1
+        await super().close_async()
+
+
+async def test_closing_the_provider_releases_stripes_connections_only(redis: Redis) -> None:
+    client = _ClosingClient()
+    provider = StripePaymentProvider(
+        secret_key=TEST_STRIPE_SECRET_KEY,
+        webhook_secret=TEST_STRIPE_WEBHOOK_SECRET,
+        http_client=client,
+    )
+
+    await close_payment_provider(provider)
+    # The mock shares the process's Redis client, which the process closes itself.
+    await close_payment_provider(build_payment_provider(_settings(), redis, FakeClock()))
+
+    assert client.closed == 1

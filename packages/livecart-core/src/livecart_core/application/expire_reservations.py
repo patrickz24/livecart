@@ -1,8 +1,8 @@
 """``ExpireReservations``: every 5 s, the stock of the reservations nobody paid, released.
 
-Step 14 of the plan's journey, its first phase (the orders with a payment in
-flight wait for milestone 5, which asks the provider to expire its session
-first). Each worker runs it every 5 s:
+Step 14 of the plan's journey, its first phase: the orders without a payment
+in flight (those with one are ``ExpireCheckouts``', which asks the provider
+to expire the attempt's session first). Each worker runs it every 5 s:
 
 - a batch is one unit (``ReservationExpiry.expire_due``): at most
   ``EXPIRY_BATCH`` (100) orders past ``reserved_until`` at ``now``, the
