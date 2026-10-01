@@ -1,4 +1,4 @@
-"""``PaymentAttempts`` on PostgreSQL: the attempts a checkout opens, one transaction per call.
+"""``PaymentRepository`` on PostgreSQL: the attempts a checkout opens, one transaction per call.
 
 ``open_attempt``, step 1 of ``StartCheckout``, runs before any call to the
 provider, in one READ COMMITTED transaction of SQLAlchemy Core constructs:
@@ -26,6 +26,13 @@ Once the transaction commits, the reservation outlasts the attempt's first
 minutes whatever the sweep does: an order with a pending payment is never
 expired by the first step of the sweep, and the provider's session, created
 after this commit, is expired first by its later steps (expire-first).
+
+``set_status`` settles a pending attempt by the plan's compare-and-set,
+``UPDATE payments SET status = :target WHERE id = :id AND status IN (the
+statuses the machine leaves for :target)``: no row, and the attempt is read
+back to tell a repeat (``NOOP``) from a move the machine refuses
+(``InvalidTransition``). Of two settlements at once, the second waits for
+the first, then finds its row settled.
 """
 
 from datetime import datetime, timedelta
@@ -43,7 +50,13 @@ from livecart_core.application.dto import (
 )
 from livecart_core.application.ports import RecordNotFound
 from livecart_core.domain.money import Money
-from livecart_core.domain.state_machines import OrderStatus, PaymentStatus
+from livecart_core.domain.state_machines import (
+    PAYMENT_TRANSITIONS,
+    OrderStatus,
+    PaymentStatus,
+    TransitionOutcome,
+    transition,
+)
 from livecart_core.infrastructure.db.ids import new_id
 from livecart_core.infrastructure.db.tables import orders, payments
 from livecart_core.infrastructure.db.units import transaction
@@ -180,6 +193,46 @@ class SqlPaymentRepository:
                 )
             ).one_or_none()
         return None if row is None else payment_record(row)
+
+    async def find_by_provider_ref(self, provider_ref: str) -> PaymentRecord | None:
+        async with transaction(self._engine) as connection:
+            row = (
+                await connection.execute(
+                    select(payments).where(payments.c.provider_ref == provider_ref)
+                )
+            ).one_or_none()
+        return None if row is None else payment_record(row)
+
+    async def set_status(
+        self, payment_id: UUID, target: PaymentStatus, *, provider_payment_ref: str | None = None
+    ) -> TransitionOutcome:
+        sources = sorted(current.value for current, to in PAYMENT_TRANSITIONS if to is target)
+        async with transaction(self._engine) as connection:
+            moved = (
+                await connection.execute(
+                    update(payments)
+                    .where(payments.c.id == payment_id, payments.c.status.in_(sources))
+                    .values(
+                        status=target.value,
+                        provider_payment_ref=func.coalesce(
+                            provider_payment_ref, payments.c.provider_payment_ref
+                        ),
+                    )
+                    .returning(payments.c.id)
+                )
+            ).one_or_none()
+            if moved is not None:
+                return TransitionOutcome.APPLIED
+            current = await connection.scalar(
+                select(payments.c.status).where(payments.c.id == payment_id)
+            )
+        if current is None:
+            raise RecordNotFound(f"no payment {payment_id}")
+        outcome = transition(PAYMENT_TRANSITIONS, PaymentStatus(current), target)
+        if outcome is TransitionOutcome.APPLIED:
+            # Impossible: an attempt never goes back to a status it may leave for target.
+            raise RuntimeError(f"payment {payment_id} went back to {current}")
+        return outcome
 
     @staticmethod
     async def _extend(

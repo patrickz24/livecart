@@ -40,8 +40,8 @@ from livecart_core.application.ports import (
     LiveSessionActivity,
     LiveSessionRepository,
     OrderReservations,
-    PaymentAttempts,
     PaymentProvider,
+    PaymentRepository,
     ProductStockRepository,
     RefreshTokenRepository,
     ReservationExpiry,
@@ -113,7 +113,7 @@ class ReservationBackend(Protocol):
     def activity(self) -> LiveSessionActivity: ...
 
     @property
-    def payments(self) -> PaymentAttempts: ...
+    def payments(self) -> PaymentRepository: ...
 
     @property
     def webhook_events(self) -> WebhookEventRegistry: ...
@@ -227,7 +227,7 @@ class InMemoryBackend:
         return self.database.activity
 
     @property
-    def payments(self) -> PaymentAttempts:
+    def payments(self) -> PaymentRepository:
         return self.database.payments
 
     @property
@@ -391,7 +391,7 @@ class PostgresBackend:
         return self._activity
 
     @property
-    def payments(self) -> PaymentAttempts:
+    def payments(self) -> PaymentRepository:
         return self._payments
 
     @property

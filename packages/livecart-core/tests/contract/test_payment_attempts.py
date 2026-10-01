@@ -1,10 +1,11 @@
-"""``PaymentAttempts`` and the buyer's address on every backend: the fake, then PostgreSQL.
+"""``PaymentRepository`` and the buyer's address on every backend: the fake, then PostgreSQL.
 
 StartCheckout's first step: an attempt opens for the order's total, one
 pending at a time, at most ``max_attempts``, and only while the order waits
 for its payment and its reservation runs; opening it extends the
 reservation to at least ``now + grace``. The sweep and the opening of an
-attempt never both win an order.
+attempt never both win an order. An attempt is found by its provider's
+session, and settles once, by compare-and-set.
 """
 
 import asyncio
@@ -26,9 +27,10 @@ from livecart_core.application.dto import (
 )
 from livecart_core.application.ports import OrderClosed, RecordNotFound
 from livecart_core.domain.codes import ProductCode, Variant
+from livecart_core.domain.errors import InvalidTransition
 from livecart_core.domain.money import Money
 from livecart_core.domain.quantity import Quantity
-from livecart_core.domain.state_machines import OrderStatus, PaymentStatus
+from livecart_core.domain.state_machines import OrderStatus, PaymentStatus, TransitionOutcome
 from livecart_core.testing.backends import ReservationBackend
 from livecart_core.testing.fakes import FAKE_CLOCK_START
 
@@ -308,6 +310,92 @@ async def test_an_order_without_attempts_has_no_pending_nor_latest_one(
 ) -> None:
     assert await backend.payments.get_pending(UNKNOWN) is None
     assert await backend.payments.latest(UNKNOWN) is None
+
+
+async def test_an_attempt_is_found_by_its_provider_session(backend: ReservationBackend) -> None:
+    session_id, _ = await _session(backend)
+    order = await _order(backend, session_id, "c-1")
+    opening = await _open(backend, order.id)
+    assert opening.payment is not None
+    assert await backend.payments.find_by_provider_ref("cs_1") is None
+
+    recorded = await backend.payments.record_checkout(
+        opening.payment.id, provider_ref="cs_1", redirect_url="https://payments.invalid/1"
+    )
+
+    assert await backend.payments.find_by_provider_ref("cs_1") == recorded
+    assert await backend.payments.find_by_provider_ref("cs_404") is None
+
+
+# --- Settling an attempt ---------------------------------------------------------------
+
+
+async def _pending(backend: ReservationBackend) -> UUID:
+    """A pending attempt of a new order, on the provider's session cs_1."""
+    session_id, _ = await _session(backend)
+    order = await _order(backend, session_id, "c-1")
+    opening = await _open(backend, order.id)
+    assert opening.payment is not None
+    await backend.payments.record_checkout(
+        opening.payment.id, provider_ref="cs_1", redirect_url="https://payments.invalid/1"
+    )
+    return opening.payment.id
+
+
+async def _status(backend: ReservationBackend, payment_id: UUID) -> tuple[object, object]:
+    """The attempt's status and payment ref, read back by its session."""
+    payment = await backend.payments.find_by_provider_ref("cs_1")
+    assert payment is not None
+    assert payment.id == payment_id
+    return payment.status, payment.provider_payment_ref
+
+
+async def test_a_pending_attempt_settles_once(backend: ReservationBackend) -> None:
+    payment_id = await _pending(backend)
+
+    first = await backend.payments.set_status(
+        payment_id, PaymentStatus.SUCCEEDED, provider_payment_ref="pi_1"
+    )
+    again = await backend.payments.set_status(
+        payment_id, PaymentStatus.SUCCEEDED, provider_payment_ref="pi_2"
+    )
+
+    assert (first, again) == (TransitionOutcome.APPLIED, TransitionOutcome.NOOP)
+    # The repeat changes nothing, the payment's ref included.
+    assert await _status(backend, payment_id) == (PaymentStatus.SUCCEEDED, "pi_1")
+    with pytest.raises(InvalidTransition):
+        await backend.payments.set_status(payment_id, PaymentStatus.EXPIRED)
+    with pytest.raises(InvalidTransition):
+        await backend.payments.set_status(payment_id, PaymentStatus.PENDING)
+    with pytest.raises(RecordNotFound):
+        await backend.payments.set_status(UNKNOWN, PaymentStatus.EXPIRED)
+
+
+async def test_a_settlement_without_a_payment_ref_keeps_the_attempt_without_one(
+    backend: ReservationBackend,
+) -> None:
+    payment_id = await _pending(backend)
+
+    outcome = await backend.payments.set_status(payment_id, PaymentStatus.EXPIRED)
+
+    assert outcome is TransitionOutcome.APPLIED
+    assert await _status(backend, payment_id) == (PaymentStatus.EXPIRED, None)
+
+
+async def test_of_two_settlements_at_once_one_applies(backend: ReservationBackend) -> None:
+    payment_id = await _pending(backend)
+
+    results = await asyncio.gather(
+        backend.payments.set_status(payment_id, PaymentStatus.SUCCEEDED),
+        backend.payments.set_status(payment_id, PaymentStatus.EXPIRED),
+        return_exceptions=True,
+    )
+
+    applied = [result for result in results if result is TransitionOutcome.APPLIED]
+    refused = [result for result in results if isinstance(result, InvalidTransition)]
+    assert (len(applied), len(refused)) == (1, 1)
+    status, _ = await _status(backend, payment_id)
+    assert status in (PaymentStatus.SUCCEEDED, PaymentStatus.EXPIRED)
 
 
 # --- The buyer's address ---------------------------------------------------------------
