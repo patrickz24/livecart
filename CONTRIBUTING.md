@@ -82,7 +82,7 @@ When `.env.example` gains a variable without a default (`JWT_SECRET`, `ORDER_TOK
 | `make lint`      | Node version, lint, format and type checks, pins                             | `pnpm run check:node`<br>`uv run --locked ruff check .`<br>`uv run --locked ruff format --check .`<br>`uv run --locked mypy`<br>`pnpm run lint`<br>`pnpm exec prettier --check .`<br>`pnpm -r typecheck`<br>`pnpm exec tsc -p loadtest`<br>`pnpm run check:pins` |
 | `make test`      | every test suite, on the compose PostgreSQL and Redis, and the coverage gate | `pnpm run check:node`<br>`docker compose up --detach --wait postgres redis`<br>`uv run --locked pytest --cov`<br>`pnpm -r --workspace-concurrency=1 test`<br>`pnpm run test:scripts`                                                                             |
 | `make seed`      | loads the demo data again, creating only what is missing                     | `docker compose run --rm seed`                                                                                                                                                                                                                                   |
-| `make load-test` | k6 comment spike (arrives in milestone 9)                                    | none yet                                                                                                                                                                                                                                                         |
+| `make load-test` | resets the load test session, then runs the k6 comment spike once            | `docker compose run --rm seed --reset-loadtest`<br>`docker compose --profile loadtest run --rm k6`                                                                                                                                                               |
 | `make gen-api`   | regenerates `openapi.json` and the TypeScript client                         | `pnpm run gen-api`                                                                                                                                                                                                                                               |
 | `make reset`     | stops the stack and deletes its data volumes                                 | `docker compose down --volumes`                                                                                                                                                                                                                                  |
 
@@ -226,6 +226,32 @@ docker compose exec worker python -c "import urllib.request; print(urllib.reques
 ```
 
 The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations, the payment events by result (`livecart_payment_events_total`), the orders paid and the due checkouts the sweep asked the provider about by outcome (`livecart_checkout_expiries_total`), the shipments created by outcome and by path (`livecart_shipment_creations_total`), the shipments in flight the tracking asked the carrier about by outcome (`livecart_shipment_tracking_total`) and their moves by status (`livecart_shipment_transitions_total`); with a key, the LLM fallback's outcomes (`livecart_llm_outcomes_total`) and its spend at list price (`livecart_llm_spend_usd_total`).
+
+## Load test
+
+`make load-test` puts the core claim under load: a burst of signed purchase comments on Z99 of the seeded `loadtest` session, 200 in stock, and not one unit promised twice. Its two commands run as they are in PowerShell, on the running stack (`docker compose up -d --wait`; otherwise `run` starts the API and the worker first):
+
+```bash
+docker compose run --rm seed --reset-loadtest   # the session as seeded: its comments, intents and orders deleted, Z99 back to 200
+docker compose --profile loadtest run --rm k6   # the comment spike, loadtest/comment-spike.ts
+```
+
+The reset comes first every time: the scenario sends the same comment ids from one run to the next, and the inbox would take them all for duplicates; the scenario refuses a session that was not reset (exit 107). The k6 container (`grafana/k6:2.3.0`, compose profile `loadtest`) runs the TypeScript scenario as it is, without a bundler:
+
+- 1,000 webhook calls of one comment each, in an open model (`ramping-arrival-rate`): up to 80 calls a second in 5 s, held, then back down in 5 s. 80 a second is below the comment webhook's 6,000 a minute, so the run loads the queue and the workers, not the rate limiter;
+- each call signed with `COMMENT_WEBHOOK_SECRET_SIMULATOR` from `.env`, as the simulator signs, by a buyer of its own; one call in ten replays the comment of five calls before it, which the inbox counts once. That makes 900 comments, which want about 1,260 units;
+- then `teardown()` waits for the worker's queue backlog (`livecart_queue_backlog`) to read 0, at least 40 s after the last call, and reads the session's snapshot, the first event of its stream, as the dashboard does: the stock of Z99 and the orders. `no_oversell` fails unless the orders hold at most 200 units, exactly the units the counters say are reserved and sold, with the stock unchanged.
+
+The run fails (exit 99) when a threshold does: `no_oversell`, `queue_drained`, fewer calls than planned, or any answer other than 202, with 429 (rate limit), 503 (queue backpressure) and the rest counted apart. It has no latency threshold, since the generator and the stack share the machine. k6 logs one `Request Failed ... request timeout` warning on purpose: k6 has no streaming client, so a timeout ends the read of the snapshot.
+
+Each run that reaches its check writes `loadtest/results/comment-spike-<UTC time>.json`: the parameters, the answers by status, the checks, the stock and the orders read at the end, and every k6 metric (`webhook_duration` is the webhook's own latency). Those summaries are versioned, as the only source of the measured figures (`docs/PERFORMANCE.md`, once measured runs exist), and collapsed in GitHub diffs (`linguist-generated`). The raw output stays in `loadtest/results/raw/`, which git ignores:
+
+```bash
+mkdir -p loadtest/results/raw
+docker compose --profile loadtest run --rm k6 run --out json=/results/raw/run.json /scripts/comment-spike.ts
+```
+
+To try the scenario on a smaller burst, without committing its summary: `docker compose run --rm seed --reset-loadtest`, then `docker compose --profile loadtest run --rm -e LOADTEST_COMMENTS=100 -e LOADTEST_PEAK_RATE=10 k6`. `LOADTEST_COMMENTS` must be at least five times `LOADTEST_PEAK_RATE`, the two ramps. On Linux, the image's user (uid 12345) must be able to write to `loadtest/results/`.
 
 ## Seller accounts
 

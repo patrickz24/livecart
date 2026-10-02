@@ -404,6 +404,46 @@ services:
     # A missing or refused key ends the CLI: no restart loop.
     restart: "no"
 
+  # The k6 comment spike (loadtest/comment-spike.ts), in the loadtest profile
+  # only: `make load-test` resets the load test session, then runs it once
+  # (CONTRIBUTING.md, "Load test"). It posts signed comments straight to the
+  # API container, as the simulator does, reads the worker's queue backlog on
+  # the compose network, and writes its JSON summary to loadtest/results/.
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: [loadtest]
+    command: ["run", "/scripts/comment-spike.ts"]
+    environment:
+      # The script needs no extension: never let k6 download a custom build
+      # of itself. No anonymous usage report either.
+      K6_AUTO_EXTENSION_RESOLUTION: "false"
+      K6_NO_USAGE_REPORT: "true"
+      # The simulator platform's signing secret, and the demo seller's password
+      # for the reads of setup and teardown.
+      COMMENT_WEBHOOK_SECRET_SIMULATOR: ${COMMENT_WEBHOOK_SECRET_SIMULATOR:?set it in .env (cp .env.example .env)}
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:?set it in .env (cp .env.example .env)}
+    volumes:
+      - ./loadtest:/scripts:ro
+      - ./loadtest/results:/results
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,nodev
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # The generator shares the machine with the stack it loads: bounded like
+    # each service, so that it cannot take the CPUs the API and workers need.
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 1G
+    depends_on:
+      api:
+        condition: service_healthy
+      worker:
+        condition: service_healthy
+    restart: "no"
+
 networks:
   default:
     # A fixed subnet, so that nginx keeps a fixed address (NGINX_IP). The other

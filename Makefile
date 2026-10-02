@@ -35,8 +35,9 @@ test: ## Check the Node version, start PostgreSQL and Redis, then run every suit
 seed: ## Load the demo data again, creating only what is missing (the stack seeds itself on up)
 	docker compose run --rm seed
 
-load-test: ## Run the k6 comment spike (arrives in milestone 9)
-	@echo "No load test yet: the k6 comment spike arrives in milestone 9 (compose loadtest profile)."
+load-test: ## Reset the load test session, then run the k6 comment spike once
+	docker compose run --rm seed --reset-loadtest
+	docker compose --profile loadtest run --rm k6
 
 gen-api: ## Regenerate openapi.json and the generated TypeScript client
 	pnpm run gen-api
