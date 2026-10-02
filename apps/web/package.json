@@ -17,6 +17,7 @@
     "@hookform/resolvers": "5.9.1",
     "@livecart/api-client": "workspace:*",
     "@tanstack/react-query": "5.103.2",
+    "eventsource-parser": "4.1.1",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "react-hook-form": "7.88.0",
