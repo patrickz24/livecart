@@ -10,8 +10,9 @@ no``, so that nginx relays every message at once. What the stream says is
 ``WatchLiveSession``'s (``livecart_core.application.watch_live_session``):
 
 - ``event: snapshot``, first, without ``Last-Event-ID``: the session, its
-  products and stock, its latest intents, rejections and orders, and
-  ``events_cursor``, read before the snapshot; its SSE id is that cursor;
+  products and stock, its latest intents, rejections and orders, each order
+  with its shipment as it stands, and ``events_cursor``, read before the
+  snapshot; its SSE id is that cursor;
 - one message per session event after the cursor, ``event:`` its type,
   ``id:`` its stream id, which a reconnection sends back as
   ``Last-Event-ID`` to resume without a new snapshot;
@@ -50,7 +51,13 @@ from livecart_api.deps import CurrentSeller
 from livecart_api.errors import documented_json
 from livecart_api.routes.live_sessions import PREFIX, LiveSessionResponse
 from livecart_api.routes.products import ProductResponse
-from livecart_core.application.dto import EVENT_ID_PATTERN, SessionEventType, StreamedEvent
+from livecart_core.application.dto import (
+    EVENT_ID_PATTERN,
+    OrderRecord,
+    SessionEventType,
+    ShipmentRecord,
+    StreamedEvent,
+)
 from livecart_core.application.ports import Clock
 from livecart_core.application.session_events import (
     IntentPayload,
@@ -161,12 +168,35 @@ REFUSALS: Final = {
 }
 
 
+class SnapshotOrder(OrderPayload):
+    """An order of a snapshot: its ``order.updated`` payload, and its shipment as it stands.
+
+    The session's stream keeps 15 minutes of events: a dashboard opened later
+    has none of a parcel's ``shipment.updated``, and reads where it is here.
+    """
+
+    shipment: ShipmentPayload | None = Field(
+        description=(
+            "The order's shipment, as its latest shipment.updated event would carry it; "
+            "null until the order is paid and its shipment created."
+        )
+    )
+
+    @classmethod
+    def of_order(cls, order: OrderRecord, shipment: ShipmentRecord | None) -> Self:
+        return cls(
+            **OrderPayload.of(order).model_dump(),
+            shipment=None if shipment is None else ShipmentPayload.of(shipment),
+        )
+
+
 class LiveSessionSnapshot(BaseModel):
     """The first message of a stream, ``event: snapshot``: what the dashboard starts from.
 
     The lists hold the payloads of the matching events, newest first, at most
-    ``limit`` of each; ``events_cursor`` is the id of the last event before
-    the snapshot was read, which the events that follow come after.
+    ``limit`` of each, each order with its shipment; ``events_cursor`` is the
+    id of the last event before the snapshot was read, which the events that
+    follow come after.
     """
 
     session: LiveSessionResponse
@@ -174,7 +204,7 @@ class LiveSessionSnapshot(BaseModel):
     products: list[ProductResponse]
     intents: list[IntentPayload]
     rejections: list[RejectionPayload]
-    orders: list[OrderPayload]
+    orders: list[SnapshotOrder]
     limit: int = Field(ge=1, description="The most items of each list.")
     taken_at: AwareDatetime
 
@@ -190,7 +220,10 @@ class LiveSessionSnapshot(BaseModel):
                 RejectionPayload(comment_id=item.comment_id, reason=item.reason)
                 for item in activity.rejections
             ],
-            orders=[OrderPayload.of(order) for order in activity.orders],
+            orders=[
+                SnapshotOrder.of_order(order, activity.shipments.get(order.id))
+                for order in activity.orders
+            ],
             limit=limit,
             taken_at=taken_at,
         )

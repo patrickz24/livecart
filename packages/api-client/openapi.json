@@ -465,7 +465,7 @@
         "type": "object"
       },
       "LiveSessionSnapshot": {
-        "description": "The first message of a stream, ``event: snapshot``: what the dashboard starts from.\n\nThe lists hold the payloads of the matching events, newest first, at most\n``limit`` of each; ``events_cursor`` is the id of the last event before\nthe snapshot was read, which the events that follow come after.",
+        "description": "The first message of a stream, ``event: snapshot``: what the dashboard starts from.\n\nThe lists hold the payloads of the matching events, newest first, at most\n``limit`` of each, each order with its shipment; ``events_cursor`` is the\nid of the last event before the snapshot was read, which the events that\nfollow come after.",
         "properties": {
           "events_cursor": {
             "pattern": "^(\\d{1,20})-(\\d{1,20})$",
@@ -487,7 +487,7 @@
           },
           "orders": {
             "items": {
-              "$ref": "#/components/schemas/OrderPayload"
+              "$ref": "#/components/schemas/SnapshotOrder"
             },
             "title": "Orders",
             "type": "array"
@@ -1501,6 +1501,101 @@
           "country"
         ],
         "title": "ShippingAddress",
+        "type": "object"
+      },
+      "SnapshotOrder": {
+        "additionalProperties": false,
+        "description": "An order of a snapshot: its ``order.updated`` payload, and its shipment as it stands.\n\nThe session's stream keeps 15 minutes of events: a dashboard opened later\nhas none of a parcel's ``shipment.updated``, and reads where it is here.",
+        "properties": {
+          "currency": {
+            "pattern": "^[A-Z]{3}$",
+            "title": "Currency",
+            "type": "string"
+          },
+          "expired_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expired At"
+          },
+          "order_id": {
+            "format": "uuid",
+            "title": "Order Id",
+            "type": "string"
+          },
+          "paid_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Paid At"
+          },
+          "product_id": {
+            "format": "uuid",
+            "title": "Product Id",
+            "type": "string"
+          },
+          "quantity": {
+            "maximum": 99,
+            "minimum": 1,
+            "title": "Quantity",
+            "type": "integer"
+          },
+          "reference": {
+            "pattern": "^LC-[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{6}$",
+            "title": "Reference",
+            "type": "string"
+          },
+          "reserved_until": {
+            "format": "date-time",
+            "title": "Reserved Until",
+            "type": "string"
+          },
+          "shipment": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ShipmentPayload"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The order's shipment, as its latest shipment.updated event would carry it; null until the order is paid and its shipment created."
+          },
+          "status": {
+            "$ref": "#/components/schemas/OrderStatus"
+          },
+          "total_minor": {
+            "minimum": 0,
+            "title": "Total Minor",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "order_id",
+          "reference",
+          "status",
+          "product_id",
+          "quantity",
+          "total_minor",
+          "currency",
+          "reserved_until",
+          "shipment"
+        ],
+        "title": "SnapshotOrder",
         "type": "object"
       },
       "StockPayload": {

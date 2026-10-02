@@ -107,6 +107,13 @@ def test_the_stream_item_holds_a_snapshot_or_an_event(schema: dict[str, Any]) ->
     assert {"session", "events_cursor", "products", "intents", "rejections", "orders"} <= set(
         snapshot["required"]
     )
+    # Each order carries its shipment, the payload of shipment.updated, or null: always present.
+    order = _component(schema, snapshot["properties"]["orders"]["items"]["$ref"])
+    assert "shipment" in order["required"]
+    assert order["properties"]["shipment"]["anyOf"] == [
+        {"$ref": f"{REF}ShipmentPayload"},
+        {"type": "null"},
+    ]
 
 
 def test_every_reference_of_the_document_resolves(schema: dict[str, Any]) -> None:
@@ -131,6 +138,8 @@ def test_the_generated_typescript_client_exports_the_union() -> None:
     for event_type in EVENT_TYPES:
         assert f"type: '{event_type}';" in union
     assert "export type LiveSessionSnapshot = {" in types
+    snapshot_order = types.split("export type SnapshotOrder = {", 1)[1].split("\n};", 1)[0]
+    assert "shipment: ShipmentPayload | null;" in snapshot_order
     assert "LiveSessionEvent," in index
     assert "LiveSessionSnapshot," in index
 

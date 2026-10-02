@@ -292,8 +292,9 @@ export type LiveSessionResponse = {
  * The first message of a stream, ``event: snapshot``: what the dashboard starts from.
  *
  * The lists hold the payloads of the matching events, newest first, at most
- * ``limit`` of each; ``events_cursor`` is the id of the last event before
- * the snapshot was read, which the events that follow come after.
+ * ``limit`` of each, each order with its shipment; ``events_cursor`` is the
+ * id of the last event before the snapshot was read, which the events that
+ * follow come after.
  */
 export type LiveSessionSnapshot = {
     /**
@@ -313,7 +314,7 @@ export type LiveSessionSnapshot = {
     /**
      * Orders
      */
-    orders: Array<OrderPayload>;
+    orders: Array<SnapshotOrder>;
     /**
      * Products
      */
@@ -877,6 +878,58 @@ export type ShippingAddress = {
      * Postal Code
      */
     postal_code: string;
+};
+
+/**
+ * SnapshotOrder
+ *
+ * An order of a snapshot: its ``order.updated`` payload, and its shipment as it stands.
+ *
+ * The session's stream keeps 15 minutes of events: a dashboard opened later
+ * has none of a parcel's ``shipment.updated``, and reads where it is here.
+ */
+export type SnapshotOrder = {
+    /**
+     * Currency
+     */
+    currency: string;
+    /**
+     * Expired At
+     */
+    expired_at?: string | null;
+    /**
+     * Order Id
+     */
+    order_id: string;
+    /**
+     * Paid At
+     */
+    paid_at?: string | null;
+    /**
+     * Product Id
+     */
+    product_id: string;
+    /**
+     * Quantity
+     */
+    quantity: number;
+    /**
+     * Reference
+     */
+    reference: string;
+    /**
+     * Reserved Until
+     */
+    reserved_until: string;
+    /**
+     * The order's shipment, as its latest shipment.updated event would carry it; null until the order is paid and its shipment created.
+     */
+    shipment: ShipmentPayload | null;
+    status: OrderStatus;
+    /**
+     * Total Minor
+     */
+    total_minor: number;
 };
 
 /**

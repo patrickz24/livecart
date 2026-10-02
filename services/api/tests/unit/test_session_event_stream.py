@@ -1,8 +1,9 @@
 """``GET /api/v1/live-sessions/{id}/events`` over the fakes, read frame by frame as it streams.
 
-The snapshot and its cursor, the events after it, ``Last-Event-ID``, the gap,
-the close before the token expires, the keep-alive comment, the cap of
-streams per instance, and the answers before any stream: 401, 404, 422.
+The snapshot, its cursor and its orders' shipments, the events after it,
+``Last-Event-ID``, the gap, the close before the token expires, the
+keep-alive comment, the cap of streams per instance, and the answers before
+any stream: 401, 404, 422.
 """
 
 from dataclasses import dataclass
@@ -36,16 +37,24 @@ from livecart_api.testing import (
     seller_headers,
 )
 from livecart_core.application.dto import (
+    CarrierName,
     LiveSessionRecord,
     SessionEvent,
     SessionEventType,
+    ShipmentRef,
     StockLevel,
 )
 from livecart_core.application.ports import START_CURSOR, Clock
-from livecart_core.application.session_events import stock_updated
-from livecart_core.domain.state_machines import LiveSessionStatus
+from livecart_core.application.session_events import ShipmentPayload, stock_updated
+from livecart_core.domain.state_machines import LiveSessionStatus, ShipmentStatus
 from livecart_core.infrastructure.clock import SystemClock
-from livecart_core.testing.fakes import FakeClock, InMemoryDatabase, InMemorySessionEvents
+from livecart_core.testing.builders import paid_order
+from livecart_core.testing.fakes import (
+    FAKE_CLOCK_START,
+    FakeClock,
+    InMemoryDatabase,
+    InMemorySessionEvents,
+)
 from livecart_core.testing.keys import TEST_JWT_SECRET
 from livecart_core.testing.polling import until
 
@@ -129,6 +138,33 @@ async def test_the_stream_sends_the_snapshot_then_every_event_after_its_cursor()
     assert streamed.id == cursor
     assert streamed.json() == after.model_dump(mode="json")
     assert streamed.json() != before.model_dump(mode="json")
+
+
+async def test_the_snapshot_shows_where_each_orders_parcel_stands() -> None:
+    live = _live()
+    pending = await open_order(live.database, live.session.id, buyer="buyer-pending")
+    paid = await paid_order(live.database, comment="comment-paid")
+    ref = ShipmentRef(CarrierName.MOCK, "mock_shp_1", "MOCK-0000000000000001", FAKE_CLOCK_START)
+    added = await live.database.shipments.add(paid.id, ref)
+    moved = await live.database.shipments.set_status(
+        added.shipment.id,
+        ShipmentStatus.IN_TRANSIT,
+        event_at=FAKE_CLOCK_START + timedelta(seconds=120),
+    )
+
+    async with open_event_stream(live.app, live.path, live.headers()) as stream:
+        frame = await stream.next_message()
+
+    assert frame.event == SNAPSHOT_EVENT
+    orders = {item["order_id"]: item for item in frame.json()["orders"]}
+    assert orders[str(pending.id)]["shipment"] is None
+    # As its latest shipment.updated carried it, however long ago the stream trimmed that.
+    shipment = orders[str(paid.id)]["shipment"]
+    assert shipment == ShipmentPayload.of(moved.shipment).model_dump(mode="json")
+    assert (shipment["status"], shipment["carrier"]) == ("in_transit", "mock")
+    assert shipment["tracking_number"] == "MOCK-0000000000000001"
+    assert shipment["last_event_at"] == "2026-09-26T12:02:00Z"
+    assert orders[str(paid.id)]["status"] == "paid"
 
 
 async def test_last_event_id_resumes_after_it_without_a_snapshot() -> None:
