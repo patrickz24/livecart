@@ -7,9 +7,18 @@ outcome is deterministic, the timing is not. What bounds the real concurrency
 is the pool, the worker's 20 connections: a probe records how many were
 checked out at once, and the test fails if the pool was never saturated,
 since a run without contention would prove nothing.
+
+A reservation that fails with ``ServiceUnavailable`` is tried again as
+``CommentConsumer`` tries its delivery, twice more after a jittered delay:
+under the load of the whole suite, or of a worker and a simulator on the
+same server, a reservation can wait on the product's row for more than
+``LOCK_TIMEOUT_MS`` (2 s), which rolls its unit back as transient and leaves
+its comment received for another attempt. A reservation still failing after
+its retries fails the test, with the type of each error and of its cause.
 """
 
 import asyncio
+import random
 from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal
@@ -20,6 +29,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from livecart_core.application.dto import IntentSource, ReservationResult, ResolvedIntent
+from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.application.reserve_stock import ReserveStock
 from livecart_core.domain.codes import ProductCode, Variant
 from livecart_core.domain.outcomes import IntentOutcome
@@ -38,6 +48,11 @@ DEMAND = 1000
 STOCK = 200
 ROUNDS = 3
 TTL = timedelta(seconds=900)
+# CommentConsumer's TRANSIENT_RETRIES and RETRY_BASE_DELAY_S
+# (livecart_worker.consumer): each delay is drawn from 0 to base x 2 ** (retry - 1).
+TRANSIENT_RETRIES = 2
+RETRY_BASE_DELAY_S = 0.1
+_RANDOM = random.SystemRandom()
 INTENT = ResolvedIntent(
     product_code=ProductCode("Z99"),
     variant=Variant(),
@@ -63,19 +78,51 @@ class Stored:
     processed_comments: int
 
 
+async def _reserve(
+    reserve: ReserveStock, comment_id: UUID, session_id: UUID
+) -> ReservationResult | None:
+    """One reservation, tried again after a transient failure as ``CommentConsumer`` tries it."""
+    retry = 0
+    while True:
+        try:
+            return await reserve(comment_id, session_id, INTENT)
+        except ServiceUnavailable:
+            retry += 1
+            if retry > TRANSIENT_RETRIES:
+                raise
+            await asyncio.sleep(_RANDOM.uniform(0, RETRY_BASE_DELAY_S * 2 ** (retry - 1)))
+
+
+def _described(error: Exception) -> str:
+    """An error's type and message, then its cause's: the driver's error, under a transient one."""
+    described = f"{type(error).__name__}: {error}"
+    cause = error.__cause__
+    return described if cause is None else f"{described} (from {type(cause).__name__}: {cause})"
+
+
 async def _race(
     reserve: ReserveStock, session_id: UUID, comment_ids: list[UUID]
 ) -> list[ReservationResult | None]:
-    """Every reservation at once: each task waits at the barrier until all are ready."""
+    """Every reservation at once: each task waits at the barrier until all are ready.
+
+    A reservation that still fails after its retries fails the test once every
+    other reservation has ended, with the type and message of each failure.
+    """
     barrier = asyncio.Barrier(len(comment_ids))
 
-    async def one(comment_id: UUID) -> ReservationResult | None:
+    async def one(comment_id: UUID) -> ReservationResult | Exception | None:
         await barrier.wait()
-        return await reserve(comment_id, session_id, INTENT)
+        try:
+            return await _reserve(reserve, comment_id, session_id)
+        except Exception as error:
+            return error
 
     async with asyncio.TaskGroup() as group:
         tasks = [group.create_task(one(comment_id)) for comment_id in comment_ids]
-    return [task.result() for task in tasks]
+    results = [task.result() for task in tasks]
+    failures = [_described(result) for result in results if isinstance(result, Exception)]
+    assert failures == [], f"{len(failures)} reservations failed: {failures}"
+    return [result for result in results if not isinstance(result, Exception)]
 
 
 async def _seed_round(
