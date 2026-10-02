@@ -82,15 +82,15 @@ export function LiveSessionPage() {
         <LifecycleControls session={session} />
       </div>
       {banner}
-      <div className={`mt-6 grid gap-6 lg:grid-cols-2 ${catchingUp ? "opacity-60" : ""}`.trim()}>
-        <div className="space-y-6">
-          <StockPanel products={state.products} />
+      <div className={`mt-6 grid gap-6 xl:grid-cols-3 ${catchingUp ? "opacity-60" : ""}`.trim()}>
+        <StockPanel products={state.products} />
+        <div className="xl:col-span-2">
+          <OrdersPanel state={state} />
+        </div>
+        <div className="xl:col-span-2">
           <IntentsPanel state={state} />
         </div>
-        <div className="space-y-6">
-          <OrdersPanel state={state} />
-          <RejectionsPanel rejections={state.rejections} />
-        </div>
+        <RejectionsPanel rejections={state.rejections} />
       </div>
     </section>
   );

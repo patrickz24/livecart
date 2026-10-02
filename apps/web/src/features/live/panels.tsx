@@ -20,20 +20,25 @@ function Panel({
   children: ReactNode;
 }) {
   return (
-    <section aria-labelledby={id} className="rounded-control border border-line bg-surface">
+    <section className="rounded-control border border-line bg-surface">
       <header className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
         <h2 id={id} className="text-base font-semibold">
           {title}
         </h2>
         {summary === undefined ? null : <p className="text-xs text-ink-muted">{summary}</p>}
       </header>
-      <div className="overflow-x-auto">{children}</div>
+      {/* A long list scrolls inside its panel: a named region, focusable so that
+          the keyboard scrolls it too. */}
+      <div role="region" aria-labelledby={id} tabIndex={0} className="max-h-[28rem] overflow-auto">
+        {children}
+      </div>
     </section>
   );
 }
 
-const TH = "px-3 py-2 text-xs font-medium text-ink-muted uppercase";
-const TD = "px-3 py-2";
+// Headers stay in view while a panel scrolls; cells keep references and amounts on one line.
+const TH = "sticky top-0 bg-surface px-3 py-2 text-xs font-medium text-ink-muted uppercase";
+const TD = "px-3 py-2 whitespace-nowrap";
 
 function productLabel(product: ProductResponse | undefined): string {
   if (product === undefined) {
@@ -159,7 +164,7 @@ export function OrdersPanel({ state }: { state: LiveState }) {
               const status = ORDER_STATUS[order.status];
               return (
                 <tr key={order.order_id} className="border-t border-line">
-                  <th scope="row" className={`${TD} font-mono font-medium`}>
+                  <th scope="row" className={`${TD} font-mono font-medium whitespace-nowrap`}>
                     <Link to={`/orders/${order.reference}`} className="text-brand underline">
                       {order.reference}
                     </Link>
