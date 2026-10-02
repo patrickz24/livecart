@@ -157,6 +157,8 @@ curl -s $BASE/live-sessions -H "Authorization: Bearer $ACCESS"            # the 
 curl -N $BASE/live-sessions/<its id>/events -H "Authorization: Bearer $ACCESS"   # event: order.updated, "status":"paid"
 ```
 
+Within seconds of the payment, the worker creates the order's shipment, and the same stream shows its `event: shipment.updated` with `"status":"created"` ([Shipments](#shipments) follows it).
+
 A checkout left unpaid expires once its reservation and its grace have ended: the sweep expires the session at the mock first, whose page then refuses the payment, and releases the stock. To watch it within about a minute, set `RESERVATION_TTL_SECONDS=60` and `PAYMENT_GRACE_SECONDS=60` in `.env`, the least the settings accept, then `docker compose up -d --wait`.
 
 Stripe in test mode needs a Stripe account of your own, and its test keys in `.env`, never in a versioned file; the default stack never needs them:
@@ -168,6 +170,19 @@ Stripe in test mode needs a Stripe account of your own, and its test keys in `.e
 
 Back to the mock: set `PAYMENT_PROVIDER=mock` again and `docker compose stop stripe-cli`, then `docker compose up -d --wait`. The tests never reach Stripe: the adapter runs against `FakeStripeApi`, an in-memory stand-in of its API.
 
+## Shipments
+
+Once a payment is applied, the worker creates the order's shipment at the carrier, the mock by default (`CARRIER_PROVIDER=mock`): no account, and no state, since it derives each shipment's carrier ref and `MOCK-` tracking number from the order's id under `MOCK_CARRIER_SECRET` (in `.env`, 32 bytes at least), and its status from the clock. A mock parcel moves one step every `MOCK_CARRIER_STEP_SECONDS` (120 s, from 1 to 86400): `created`, `in_transit`, `out_for_delivery`, then `delivered`, six minutes after the payment. Every `SHIPMENT_SYNC_INTERVAL_S` (60 s, from 10 to 3600), the worker's shipments loop ships the paid orders still without a shipment, then asks the carrier where the shipments in flight are and records each move; `dpd`, `chronopost` and `dhl` are documented stubs that stop the worker at startup. [ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md) explains the decisions.
+
+After the payment above, with the same `REF`, `TOKEN` and `API`:
+
+```bash
+curl -s $API/tracking -H "Authorization: Bearer $TOKEN"
+# {"reference":"LC-XXXXXX","carrier":"mock","tracking_number":"MOCK-...","status":"created","last_event_at":"..."}
+```
+
+Without the token, with another order's, or before the order has its shipment, it answers 404; the reference alone never shows the tracking number. Two minutes later the same call shows `in_transit`, and the seller's stream one `shipment.updated` per move, within a minute of it (the tracking asks every 60 s), up to `delivered`. A stream opened later, once the session's stream has trimmed those events (15 minutes), finds each order's shipment, as it stands, in its snapshot.
+
 ## Metrics
 
 The API and the worker each serve their Prometheus metrics on port 9100 of their container (`METRICS_PORT`), for a scraper on the compose network: the port is never published on the host and nginx never routes it. To read them by hand:
@@ -176,7 +191,7 @@ The API and the worker each serve their Prometheus metrics on port 9100 of their
 docker compose exec worker python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:9100/metrics').read().decode())"
 ```
 
-The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations, the payment events by result (`livecart_payment_events_total`), the orders paid and the due checkouts the sweep asked the provider about by outcome (`livecart_checkout_expiries_total`); with a key, the LLM fallback's outcomes (`livecart_llm_outcomes_total`) and its spend at list price (`livecart_llm_spend_usd_total`).
+The API counts the comments it queued (`livecart_comments_received_total`), the backlog it last saw and the HTTP latency by route (`http_request_duration_seconds`); the worker, the intents by source, the orders, the rejections by reason, the queue wait and the processing time of each comment, the reclaims, the dead letters and the expired reservations, the payment events by result (`livecart_payment_events_total`), the orders paid and the due checkouts the sweep asked the provider about by outcome (`livecart_checkout_expiries_total`), the shipments created by outcome and by path (`livecart_shipment_creations_total`), the shipments in flight the tracking asked the carrier about by outcome (`livecart_shipment_tracking_total`) and their moves by status (`livecart_shipment_transitions_total`); with a key, the LLM fallback's outcomes (`livecart_llm_outcomes_total`) and its spend at list price (`livecart_llm_spend_usd_total`).
 
 ## Seller accounts
 

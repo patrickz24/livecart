@@ -8,7 +8,15 @@ A FastAPI API, an asyncio worker and a Redis Streams queue absorb comment spikes
 
 ## Status
 
-Milestone 5 of 9: the payment. It stands on the comment ingestion, the worker, the real-time events and the optional LLM fallback of milestone 4, the HTTP API, the atomic stock reservation and the order references of milestone 3, the domain and parser of milestone 2, and the monorepo, CI and Docker stack of milestone 1.
+Milestone 6 of 9: the mock carrier. It stands on the payment of milestone 5, the comment ingestion, the worker, the real-time events and the optional LLM fallback of milestone 4, the HTTP API, the atomic stock reservation and the order references of milestone 3, the domain and parser of milestone 2, and the monorepo, CI and Docker stack of milestone 1.
+
+- **Carrier port** (6): one `CarrierProvider` port of three calls (create a shipment, idempotent per order; read its tracking; cancel it). The mock is the default and needs no account: it keeps no state, and derives each shipment's carrier ref and `MOCK-` tracking number from the order's id under `MOCK_CARRIER_SECRET`, and its status from the clock, one step every `MOCK_CARRIER_STEP_SECONDS` (120 s), so a parcel is delivered six minutes after its payment. DPD, Chronopost and DHL are documented stubs that refuse to start ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)).
+- **Shipments** (6): once a worker's tick has paid an order, the order's shipment is created at the carrier out of any transaction, within 2 s per tick so that a slow carrier never stalls the payments, and recorded once per order whatever the workers (`uq_shipments_order_id`). Every `SHIPMENT_SYNC_INTERVAL_S` (60 s), the shipments loop ships the paid orders a crash, an outage or a slow carrier left without one, then asks the carrier about the shipments in flight, each leased to one worker, and persists each move by compare-and-set.
+- **Tracking** (6): `GET /api/v1/orders/{reference}/tracking`, with the order's token, answers the carrier, the tracking number, the status and the time of the carrier's latest event, read from PostgreSQL; the reference alone never shows the tracking number. The seller's SSE stream gets one `shipment.updated` at the creation and one per move, and its snapshot carries each order's shipment as it stands. [CONTRIBUTING.md](CONTRIBUTING.md#shipments) follows one parcel.
+
+**The end criterion of milestone 6 is met.** The plan asks that a paid order's shipment progress, visible through the API and in SSE. On 2026-10-02, on the compose stack, an order of the simulator paid on the mock's page had its shipment `created` on its tracking route within seconds and `in_transit` two minutes later, and the seller's SSE stream showed its `shipment.updated` events to `out_for_delivery`, then `delivered`, six minutes after the payment.
+
+From milestone 5, the payment that the shipments follow:
 
 - **Payment provider** (5): one `PaymentProvider` port of four calls (create a hosted session, expire it, read it back, verify a webhook). The mock is the default and needs no account and no key: its hosted page is served by the API in development, and its Pay button posts a signed webhook as a provider would. Stripe Checkout runs in test mode with your own test keys; PayPal and Viva are documented stubs that refuse to start ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md)).
 - **Checkout** (5): with the order's token, the buyer records an address, then `POST /api/v1/orders/{reference}/checkout` extends the reservation to at least now + `PAYMENT_GRACE_SECONDS` (600 s) and only then creates the provider's session, under an idempotency key per attempt, 3 attempts at most. The provider sends the buyer back to a bridge page that reopens the app with the reference, never the token.
@@ -36,11 +44,11 @@ From milestone 3, the API, the reservation and the references that the worker bu
 - **Reservation**: one conditional `UPDATE` in a READ COMMITTED transaction reserves the stock, and a partial unique index allows one pending order per buyer and product. A thousand concurrent reservations of 200 units, three times over, never oversell ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)).
 - **Order references and tokens**: `LC-` and six Crockford symbols, drawn again after a collision, and an access token derived by HMAC and stored as a hash only. The reference alone shows an order's status; its details need the token ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md)).
 - **Seller API**: login with argon2id, access tokens of 15 minutes, rotating refresh tokens in an HttpOnly cookie with a 30 s grace between tabs ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md)); live sessions from draft to live to ended; products; restock by delta under an `Idempotency-Key`. Every route filters by the seller and answers 404 for another seller's objects.
-- **Buyer API**: the storefront of a seller by its slug, and an order by its reference, in two tiers.
+- **Buyer API**: the storefront of a seller by its slug, and an order by its reference, in two tiers: the reference alone shows the status, and the order's token its details, then its address and checkout (milestone 5) and its tracking (milestone 6).
 - **Perimeter**: rate limits in Redis (per address, per seller, per account and per token), security headers, trusted hosts, a 1 MiB body limit and uvicorn trusting nginx alone for the client address ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md)).
 - **Demo data and accounts**: the one-shot `seed` service creates the demo sellers and sessions; `livecart-create-seller` opens other accounts ([CONTRIBUTING.md](CONTRIBUTING.md#demo-data)).
 
-The dashboard is still a shell page that checks the API: the carrier, the dashboard itself and the buyer app arrive with milestones 6 to 8. The features described above arrive milestone by milestone; this README grows with them.
+The dashboard is still a shell page that checks the API: the dashboard itself and the buyer app arrive with milestones 7 and 8. The features described above arrive milestone by milestone; this README grows with them.
 
 ## Quickstart
 
@@ -54,21 +62,21 @@ docker compose up --build
 
 Then open the dashboard on <http://localhost:8080>, and the interactive API documentation, in development only, on <http://127.0.0.1:8000/docs>, where `POST /api/v1/auth/login` signs in the demo seller: `demo-seller@livecart.test`, with the `SEED_DEMO_PASSWORD` of `.env`. The demo storefront is <http://localhost:8080/api/v1/storefronts/demo-seller>. `docker compose down --volumes` (or `make reset`) removes the stack and its data.
 
-The stack needs no third-party key: payments go through the mock provider, and to try the LLM fallback, set `ANTHROPIC_API_KEY` in `.env` (the always-on simulator then spends the daily budget; `docker compose stop simulator` pauses it). Stripe in test mode needs your own test keys and the `stripe` compose profile ([CONTRIBUTING.md](CONTRIBUTING.md#payments)).
+The stack needs no third-party key: payments go through the mock provider and shipments through the mock carrier, and to try the LLM fallback, set `ANTHROPIC_API_KEY` in `.env` (the always-on simulator then spends the daily budget; `docker compose stop simulator` pauses it). Stripe in test mode needs your own test keys and the `stripe` compose profile ([CONTRIBUTING.md](CONTRIBUTING.md#payments)).
 
 The copy of `.env.example` is the one step before `docker compose up`: `compose.yaml` gives no default to any secret and refuses to start without them, so that no password ever has a default value in a versioned file. The `change-me-*` values are development placeholders, refused when `APP_ENV=production`.
 
-| Service      | Role                                                            | Published on                              |
-| ------------ | --------------------------------------------------------------- | ----------------------------------------- |
-| `web`        | nginx: the dashboard, and the API proxied on `/api/`            | `8080` (every interface, for a LAN phone) |
-| `api`        | FastAPI behind uvicorn                                          | `127.0.0.1:8000`                          |
-| `worker`     | asyncio worker: comments, reclaim, expiry sweep, payment events | not published                             |
-| `simulator`  | comment simulator on the demo session                           | not published                             |
-| `migrate`    | one-shot Alembic upgrade, as the schema owner                   | not published                             |
-| `seed`       | one-shot demo data, created only where missing                  | not published                             |
-| `postgres`   | PostgreSQL 16, databases `livecart` and `livecart_test`         | `127.0.0.1:55432`                         |
-| `redis`      | Redis 8 with a password, append-only file                       | `127.0.0.1:56379`                         |
-| `stripe-cli` | `stripe` profile only: Stripe's events forwarded to the API     | not published                             |
+| Service      | Role                                                                       | Published on                              |
+| ------------ | -------------------------------------------------------------------------- | ----------------------------------------- |
+| `web`        | nginx: the dashboard, and the API proxied on `/api/`                       | `8080` (every interface, for a LAN phone) |
+| `api`        | FastAPI behind uvicorn                                                     | `127.0.0.1:8000`                          |
+| `worker`     | asyncio worker: comments, reclaim, expiry sweep, payment events, shipments | not published                             |
+| `simulator`  | comment simulator on the demo session                                      | not published                             |
+| `migrate`    | one-shot Alembic upgrade, as the schema owner                              | not published                             |
+| `seed`       | one-shot demo data, created only where missing                             | not published                             |
+| `postgres`   | PostgreSQL 16, databases `livecart` and `livecart_test`                    | `127.0.0.1:55432`                         |
+| `redis`      | Redis 8 with a password, append-only file                                  | `127.0.0.1:56379`                         |
+| `stripe-cli` | `stripe` profile only: Stripe's events forwarded to the API                | not published                             |
 
 ## Demo
 
@@ -109,6 +117,7 @@ _To be completed as the milestones land; every record is in [`docs/adr/`](docs/a
 | SSE over a Redis stream per session, published after commit ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md))                                                                                                   | Best effort: an event lost to a Redis failure is caught up from the next snapshot, never retried                                                                                                       |
 | Claude only for the parser's ambiguities, in structured outputs, behind a budget and 4 slots per worker ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))                                                             | A comment past the budget or the slot wait is a missed sale rather than a late one; the model's answer is checked before it reserves anything                                                          |
 | A hosted checkout whose session the sweep expires at the provider before it releases any stock, and a PostgreSQL registry of webhooks the workers poll ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md)) | Up to 2 s before an order shows paid, and the stock of a payment in flight stays reserved while the provider cannot be reached; a payment is never applied twice, nor lost to a Redis or worker outage |
+| A stateless mock carrier, and tracking by polling with a lease per shipment ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md))                                                                                  | A mock parcel moves on a fixed schedule and the mock forgets a cancellation; a move reaches the seller up to a minute late, and each shipment is asked about once a minute whatever the workers        |
 | Metrics on an internal port only ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md))                                                                                                                          | Nothing outside the container network can read them, nor anyone until a scraper runs beside the containers                                                                                             |
 
 ## Out of scope
