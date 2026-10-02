@@ -1,9 +1,10 @@
 # JS workspace members, listed explicitly because packages/ also holds a uv
-# member. Only existing directories are listed: apps/mobile and
-# packages/design-tokens arrive in milestone 8.
+# member.
 packages:
+  - apps/mobile
   - apps/web
   - packages/api-client
+  - packages/design-tokens
 
 # pnpm blocks dependency build scripts unless they are reviewed here, and
 # fails the install on an unreviewed one (strictDepBuilds).
@@ -12,6 +13,17 @@ allowBuilds:
   # pnpm store has cached its result, so a second clone got no git hook. The
   # root "prepare" script (scripts/install-git-hooks.mjs) installs them instead.
   lefthook: false
+
+auditConfig:
+  ignoreGhsas:
+    # node-forge <= 1.4.0, HIGH, no fixed release yet: RSA PKCS#1 v1.5
+    # signature verification. Only Expo's CLI loads it (@expo/cli and its
+    # @expo/code-signing-certificates), on the developer's machine, to sign
+    # iOS builds and expo-updates manifests, which the app does not use;
+    # nothing of it reaches the app's bundle. `expo` lists the CLI as a
+    # dependency, hence a production path for `pnpm audit --prod`. Trivy
+    # skips it as unfixed. Remove this entry once node-forge ships a fix.
+    - GHSA-86w9-cpqp-85rv
 
 overrides:
   # @hey-api/json-schema-ref-parser pins js-yaml 4.2.0, which has three HIGH

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // Expo's base first (JSX, the react-native export condition, bundler
+  // resolution), then the repository's strict options, which win.
+  "extends": ["expo/tsconfig.base", "../../tsconfig.base.json"],
+  "compilerOptions": {
+    // DOM for the fetch types of the generated API client, which React
+    // Native provides at run time.
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    // app.config.ts imports brand.schema.ts by its full name: Expo transpiles
+    // the config file alone, and Node 24 loads what it imports, types stripped,
+    // only from a path that names the file.
+    "allowImportingTsExtensions": true
+  },
+  // The last two are written by Expo's CLI: the typed routes of expo-router
+  // and the reference to Expo's ambient types (`expo customize tsconfig.json`).
+  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"]
+}

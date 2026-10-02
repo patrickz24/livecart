@@ -1,0 +1,16 @@
+{
+  "id": "pomelune",
+  "displayName": "Pomelune",
+  "slug": "livecart-pomelune",
+  "scheme": "samplelive",
+  "ios": { "bundleIdentifier": "com.example.livecart.pomelune" },
+  "android": { "package": "com.example.livecart.pomelune" },
+  "sellerSlug": "sample-shop",
+  "colors": { "primary": "#6B2E8F", "onPrimary": "#FFFFFF", "accent": "#F2C14E" },
+  "assets": {
+    "logo": "logo.png",
+    "icon": "icon.png",
+    "adaptiveIcon": "adaptive-icon.png",
+    "splash": "splash-icon.png"
+  }
+}

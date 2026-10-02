@@ -6,7 +6,8 @@
 // Sources of truth: .nvmrc (Node), packageManager in package.json (pnpm),
 // .python-version (CPython) and [tool.uv] required-version in pyproject.toml
 // (uv). Copies: package.json engines, the uv_build requirement of each uv
-// member, the Dockerfiles and the CI workflow with its local actions. Every
+// member, the Dockerfiles, the CI workflow with its local actions and the
+// EAS build profiles of the buyer app (apps/mobile/eas.json). Every
 // compose.yaml image carries an explicit version tag, and an image used in
 // several files has the same tag everywhere.
 //
@@ -27,6 +28,7 @@ export const PATHS = {
   pythonDockerfile: "infra/docker/python.Dockerfile",
   webDockerfile: "infra/docker/web.Dockerfile",
   compose: "compose.yaml",
+  easJson: "apps/mobile/eas.json",
 };
 
 const EXACT_VERSION = /^v?\d+\.\d+\.\d+$/;
@@ -156,6 +158,15 @@ export function checkPins(files) {
   };
 
   const packageJson = JSON.parse(read(PATHS.packageJson) || "{}");
+  // EAS installs the Node and the pnpm a build profile names (corepack off).
+  const easProfiles = Object.entries(JSON.parse(read(PATHS.easJson) || "{}").build ?? {});
+  const easCopies = (tool) =>
+    easProfiles
+      .filter(([, profile]) => profile[tool] !== undefined)
+      .map(([name, profile]) => ({
+        where: `${PATHS.easJson} build.${name}.${tool}`,
+        value: profile[tool],
+      }));
   const pythonDockerfile = dockerfileImages(read(PATHS.pythonDockerfile));
   const webDockerfileText = read(PATHS.webDockerfile);
   const webDockerfile = dockerfileImages(webDockerfileText);
@@ -172,6 +183,7 @@ export function checkPins(files) {
         where: `${PATHS.webDockerfile}:${image.line}`,
         value: image.tag?.split("-")[0],
       })),
+    ...easCopies("node"),
   ];
   for (const file of ci) {
     for (const { value, line } of yamlValues(files[file], "node-version-file")) {
@@ -194,6 +206,7 @@ export function checkPins(files) {
       where: PATHS.webDockerfile,
       value: match[1],
     })),
+    ...easCopies("pnpm"),
   ];
   for (const file of ci) {
     for (const { value, line } of yamlValues(files[file], "PNPM_VERSION")) {

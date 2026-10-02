@@ -51,6 +51,12 @@ function consistentRepository() {
       "  api:",
       "    image: livecart-python:local",
     ].join("\n"),
+    "apps/mobile/eas.json": JSON.stringify({
+      build: {
+        base: { node: "24.21.0", pnpm: "12.6.0", corepack: false },
+        demo: { extends: "base", env: { APP_BRAND: "demo" } },
+      },
+    }),
     ".github/workflows/ci.yml": [
       "env:",
       '  UV_VERSION: "0.12.19"',
@@ -147,6 +153,13 @@ describe("checkPins", () => {
       'PNPM_VERSION: "12.5.0"',
     );
     assert.match(problems.join("\n"), /pnpm: .*PNPM_VERSION has 12\.5\.0, expected 12\.6\.0/);
+  });
+
+  it("detects an EAS build profile whose Node or pnpm differs from the pins", () => {
+    const node = problemsAfter("apps/mobile/eas.json", '"node":"24.21.0"', '"node":"24.20.0"');
+    assert.match(node.join("\n"), /Node: apps\/mobile\/eas\.json build\.base\.node has 24\.20\.0/);
+    const pnpm = problemsAfter("apps/mobile/eas.json", '"pnpm":"12.6.0"', '"pnpm":"12.5.0"');
+    assert.match(pnpm.join("\n"), /pnpm: apps\/mobile\/eas\.json build\.base\.pnpm has 12\.5\.0/);
   });
 
   it("detects a Python image that differs from .python-version", () => {
