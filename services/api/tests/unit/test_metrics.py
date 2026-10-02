@@ -5,6 +5,7 @@ from contextlib import AsyncExitStack
 
 import httpx2
 from fastapi import FastAPI
+from fastapi.routing import iter_route_contexts
 from prometheus_client import REGISTRY, CollectorRegistry
 
 from livecart_api.app import create_app
@@ -40,6 +41,15 @@ def _registry(app: FastAPI) -> CollectorRegistry:
 
 def _sample(app: FastAPI, name: str, **labels: str) -> float | None:
     return _registry(app).get_sample_value(name, labels)
+
+
+def _route_paths(app: FastAPI) -> set[str]:
+    """The paths of ``app``'s routes, those of its included routers among them.
+
+    ``app.routes`` lists an included router, not its routes. A router's mount or
+    Starlette route has no path here: FastAPI keeps one for its API routes only.
+    """
+    return {route.path for route in iter_route_contexts(app.routes) if route.path}
 
 
 async def test_queued_comments_and_the_backlog_are_counted() -> None:
@@ -95,9 +105,16 @@ def test_each_app_has_a_registry_of_its_own() -> None:
     assert REGISTRY.get_sample_value("livecart_comments_received_total") is None
 
 
-def test_the_api_port_serves_no_metrics_route() -> None:
-    paths = {getattr(route, "path", "") for route in make_app().routes}
+async def test_the_api_port_serves_no_metrics_route() -> None:
+    app = make_app()
 
+    async with open_client(app) as client:
+        response = await client.get("/metrics")
+
+    # Any route there answers otherwise: 405 for another method, a redirect for a mount.
+    assert response.status_code == 404
+    paths = _route_paths(app)
+    assert "/health" in paths
     assert "/metrics" not in paths
 
 
