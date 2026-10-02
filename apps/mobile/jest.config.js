@@ -10,6 +10,11 @@ module.exports = {
     "node_modules/(?!(?:\\.pnpm/[^/]+/node_modules/)?(?:(?:jest-)?react-native|@react-native(?:-community)?|expo(?:nent)?|@expo(?:nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@unimodules/.*|unimodules|react-native-svg|standard-navigation))",
   ],
   testPathIgnorePatterns: ["/node_modules/", "/.expo/"],
+  // On a cold cache (a fresh CI runner, after `jest --clearCache`) the first
+  // render of each file waits for Babel to transform React Native and
+  // expo-router, lazily required, in every worker at once: well past the
+  // 5 s default. A warm run needs well under a second per test.
+  testTimeout: 30_000,
   // metro.config.js resolves the brand's logo in a build; the tests draw the demo's.
   moduleNameMapper: { "^@brand/logo$": "<rootDir>/brands/demo/logo.png" },
 };
