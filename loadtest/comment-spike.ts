@@ -146,6 +146,9 @@ const stockReserved = new Gauge("loadtest_stock_reserved");
 const stockSold = new Gauge("loadtest_stock_sold");
 const orderCount = new Gauge("loadtest_orders");
 const orderUnits = new Gauge("loadtest_order_units");
+// Seconds from the end of the burst to the first backlog of 0 read: an upper
+// bound, as coarse as the worker's sampling (30 s) and never below its delay.
+const drainedWithin = new Gauge("loadtest_drained_within_s");
 
 // --- The API's answers, as far as the scenario reads them ---------------------
 
@@ -279,10 +282,14 @@ export function teardown(target: Target): void {
 
 /** Whether the comment queue's backlog (lag + pending) read 0 once every call had been answered. */
 function waitForDrain(): boolean {
+  const burstEnd = Date.now();
   sleep(DRAIN_SAMPLE_DELAY_S);
   const deadline = Date.now() + DRAIN_TIMEOUT_S * 1000;
   for (;;) {
-    if (queueBacklog() === 0) return true;
+    if (queueBacklog() === 0) {
+      drainedWithin.add((Date.now() - burstEnd) / 1000);
+      return true;
+    }
     if (Date.now() >= deadline) return false;
     sleep(2);
   }
@@ -418,6 +425,10 @@ export function handleSummary(data: {
       count: value("loadtest_orders", "value"),
       units: value("loadtest_order_units", "value"),
     },
+    drain: {
+      first_reading_after_s: DRAIN_SAMPLE_DELAY_S,
+      within_s: value("loadtest_drained_within_s", "value"),
+    },
     thresholds_ok: Object.values(data.metrics).every((metric) =>
       Object.values(metric?.thresholds ?? {}).every((threshold) => threshold.ok),
     ),
@@ -441,6 +452,7 @@ export function handleSummary(data: {
     `  responses: ${JSON.stringify(summary.responses)}`,
     `  webhook latency: med ${ms("med")} ms, p(95) ${ms("p(95)")} ms`,
     `  ${PRODUCT_CODE}: ${JSON.stringify(summary.stock)}, orders: ${JSON.stringify(summary.orders)}`,
+    `  drain: ${JSON.stringify(summary.drain)}`,
     `  no_oversell ${verdict(summary.checks.no_oversell)}, queue_drained ${verdict(summary.checks.queue_drained)}, thresholds ${verdict(summary.thresholds_ok)}`,
     checked ? `  summary: ${file}` : "  no summary written: the run never reached no_oversell",
   ];
