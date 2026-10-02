@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-25. Milestone 1 put the tooling in place; Jest (milestone 8) and k6 (milestone 9) are not in the repository yet.
+Accepted, 2026-09-25. Milestone 1 put the tooling in place and milestone 8 added Jest; k6 (milestone 9) is not in the repository yet.
 
 ## Context
 
@@ -21,7 +21,7 @@ A public portfolio repository is judged on the discipline of its tooling as much
 - ESLint 10.11.0 with a flat config (`eslint.config.js`): `@eslint/js` recommended for JavaScript with Node globals, and for TypeScript the `strictTypeChecked` and `stylisticTypeChecked` presets of typescript-eslint 8.70.1, type-aware through `projectService`, so each member's `tsconfig.json` drives the rules. Generated code, build output and the native mobile folders are ignored.
 - Prettier 3.9.9 (`printWidth: 100`) formats JS, TS, JSON, Markdown, YAML, CSS and HTML; the lockfile and the generated files are excluded. `tsc` runs per member through `pnpm -r typecheck`.
 - Vitest 5.0.1 tests `apps/web` in jsdom, configured in the same `vite.config.ts` as the build. The root scripts are tested with `node:test` (`pnpm run test:scripts`).
-- Jest 29 with jest-expo arrives with the mobile app in milestone 8 (jest-expo 57 does not run on Jest 30); it is not in the repository yet.
+- Jest 29.7.0 with jest-expo 57 tests `apps/mobile` (jest-expo 57 does not run on Jest 30), with React Native Testing Library 14 and expo-router's testing library, which renders the real routes. CI's `mobile` job adds expo-doctor 1.20.4, a devDependency of the app, and an `expo export` of each brand (ADR 0013).
 
 ### Git hooks: lefthook, commitlint and gitleaks
 
@@ -34,7 +34,7 @@ A public portfolio repository is judged on the discipline of its tooling as much
 - The `security` job runs on every pull request, every push to `main` and weekly, so that advisories published since the last change still fail CI: gitleaks over the full history; a Trivy v0.74.0 filesystem scan (vulnerabilities, secrets, misconfigurations; fixable HIGH and CRITICAL fail) that covers `pnpm-lock.yaml` and the Dockerfiles; pip-audit 2.10.1 with `--strict --require-hashes` on a `uv export --locked --all-packages` of the Python lockfile; `pnpm audit --prod --audit-level=high`.
 - The `docker` job builds `livecart-python:local` and `livecart-web:local`, runs the compose smoke test and scans both images with Trivy (fixable HIGH and CRITICAL fail). Images are never pushed.
 - Trivy 0.74.0 cannot read the `uv.lock` of a virtual workspace root, so Python dependencies are covered by pip-audit and by the image scan, which reads the installed virtual environment.
-- A fixable HIGH advisory in a transitive dependency is lifted with a pnpm `override` (`js-yaml` under the Hey API parser), not ignored.
+- A fixable HIGH advisory in a transitive dependency is lifted with a pnpm `override` (`js-yaml` under the Hey API parser), not ignored. One without any fixed release, in a dependency that never reaches what the project ships, is ignored by its GHSA id in `auditConfig.ignoreGhsas` of `pnpm-workspace.yaml`, with the reason beside it: node-forge under Expo's CLI, which signs iOS builds and expo-updates manifests on the developer's machine. Trivy skips it as unfixed.
 - Every third-party GitHub Action is pinned by its full commit SHA with the release in a trailing comment (`actions/checkout`, `actions/setup-node`, `actions/cache`, `astral-sh/setup-uv`, `aquasecurity/trivy-action`), because a tag can be moved (GHSA-69fq-xp46-6x23, the trivy-action compromise). The tool versions of the workflow (`UV_VERSION`, `PNPM_VERSION`, `PIP_AUDIT_VERSION`, `GITLEAKS_VERSION`, `TRIVY_VERSION`) are exact. `pnpm run check:pins` enforces both rules, and that one action has one SHA across files. The workflow runs with `contents: read` and checks out without persisted credentials.
 
 ### Load test: k6
