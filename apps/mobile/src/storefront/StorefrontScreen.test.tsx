@@ -2,13 +2,9 @@ import { describe, expect, it } from "@jest/globals";
 import type { StorefrontResponse } from "@livecart/api-client";
 import { screen } from "expo-router/testing-library";
 
-import TabsLayout from "../app/(tabs)/_layout";
-import StorefrontRoute from "../app/(tabs)/index";
 import { FakeApi, json } from "../test/fakeApi";
 import { renderRoutes } from "../test/renderRoutes";
 import { formatMoney } from "../ui/format";
-
-const ROUTES = { "(tabs)/_layout": TabsLayout, "(tabs)/index": StorefrontRoute };
 
 const LIVE: StorefrontResponse = {
   slug: "sample-shop",
@@ -42,7 +38,7 @@ describe("the live storefront", () => {
   it("shows the products of the brand's own seller", async () => {
     const api = new FakeApi().on("GET", "/api/v1/storefronts/sample-shop", json(200, LIVE));
 
-    await renderRoutes(ROUTES, "/", { brandId: "pomelune", api });
+    await renderRoutes("/", { brandId: "pomelune", api });
 
     expect(await screen.findByText("Linen shirt")).toBeTruthy();
     expect(screen.getByText("Pomelune")).toBeTruthy();
@@ -64,7 +60,7 @@ describe("the live storefront", () => {
       json(404, { detail: "Not found" }),
     );
 
-    await renderRoutes(ROUTES, "/", { api });
+    await renderRoutes("/", { api });
 
     expect(await screen.findByText("Store not found")).toBeTruthy();
     expect(
@@ -80,7 +76,7 @@ describe("the live storefront", () => {
       json(200, { ...LIVE, slug: "demo-seller", live_session: null }),
     );
 
-    await renderRoutes(ROUTES, "/", { api });
+    await renderRoutes("/", { api });
 
     expect(
       await screen.findByText("LiveCart Demo is not live at the moment. Pull down to check again."),
@@ -92,7 +88,7 @@ describe("the live storefront", () => {
       throw new TypeError("Network request failed");
     });
 
-    await renderRoutes(ROUTES, "/", { api });
+    await renderRoutes("/", { api });
 
     expect(await screen.findByText("The live cannot be loaded")).toBeTruthy();
     expect(

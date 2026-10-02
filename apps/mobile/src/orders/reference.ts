@@ -27,3 +27,30 @@ export function parseOrderReference(text: string): string | null {
 export function isOrderToken(text: string): boolean {
   return TOKEN.test(text);
 }
+
+/**
+ * The token of a buyer link's fragment, `t=<token>` (the part after # of
+ * `<scheme>://link/LC-7K3F9Q#t=<token>`), or null. The fragment is the one
+ * part of a URL a browser or an app never sends to a server.
+ */
+export function readLinkFragment(fragment: string | undefined): string | null {
+  if (fragment === undefined) {
+    return null;
+  }
+  const token = new URLSearchParams(fragment.replace(/^#/, "")).get("t");
+  return token !== null && isOrderToken(token) ? token : null;
+}
+
+/**
+ * The reference and token of a whole buyer link pasted as text (as
+ * `livecart-simulate --text` prints it), or null when it is no such link.
+ */
+export function parseOrderLink(text: string): { reference: string; token: string } | null {
+  const match = /^[a-z][a-z0-9+.-]*:\/\/link\/([^/?#]+)#(.+)$/i.exec(text.trim());
+  if (match?.[1] === undefined) {
+    return null;
+  }
+  const reference = parseOrderReference(decodeURIComponent(match[1]));
+  const token = readLinkFragment(match[2]);
+  return reference === null || token === null ? null : { reference, token };
+}

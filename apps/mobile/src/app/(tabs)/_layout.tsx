@@ -18,6 +18,7 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen name="index" options={{ title: "Live", headerShown: false }} />
+      <Tabs.Screen name="orders" options={{ title: "My orders" }} />
     </Tabs>
   );
 }
