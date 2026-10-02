@@ -1,0 +1,26 @@
+{
+  "$schema": "https://raw.githubusercontent.com/expo/eas-cli/main/packages/eas-json/schema/eas.schema.json",
+  "cli": {
+    "version": ">= 24.8.0",
+    "appVersionSource": "local"
+  },
+  "build": {
+    "base": {
+      "node": "24.21.0",
+      "pnpm": "12.6.0",
+      "corepack": false,
+      "developmentClient": true,
+      "distribution": "internal",
+      "android": { "buildType": "apk" },
+      "ios": { "simulator": true }
+    },
+    "demo": {
+      "extends": "base",
+      "env": { "APP_BRAND": "demo" }
+    },
+    "pomelune": {
+      "extends": "base",
+      "env": { "APP_BRAND": "pomelune" }
+    }
+  }
+}

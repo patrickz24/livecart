@@ -1,14 +1,15 @@
-import { StyleSheet, Text, View } from "react-native";
+import { Stack } from "expo-router";
+import { SafeAreaView } from "react-native-safe-area-context";
+
+import { BrandBanner } from "../brand/BrandBanner";
+import { useBrandTheme } from "../brand/brandTheme";
 
 export default function HomeScreen() {
+  const { color } = useBrandTheme();
   return (
-    <View style={styles.screen}>
-      <Text style={styles.title}>LiveCart</Text>
-    </View>
+    <SafeAreaView edges={["top"]} style={{ flex: 1, backgroundColor: color.primary }}>
+      <Stack.Screen options={{ headerShown: false }} />
+      <BrandBanner />
+    </SafeAreaView>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: { flex: 1, alignItems: "center", justifyContent: "center" },
-  title: { fontSize: 24, fontWeight: "600" },
-});

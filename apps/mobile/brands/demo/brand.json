@@ -1,0 +1,16 @@
+{
+  "id": "demo",
+  "displayName": "LiveCart Demo",
+  "slug": "livecart-demo",
+  "scheme": "livecart",
+  "ios": { "bundleIdentifier": "com.example.livecart.demo" },
+  "android": { "package": "com.example.livecart.demo" },
+  "sellerSlug": "demo-seller",
+  "colors": { "primary": "#1F6FEB", "onPrimary": "#FFFFFF", "accent": "#F2994A" },
+  "assets": {
+    "logo": "logo.png",
+    "icon": "icon.png",
+    "adaptiveIcon": "adaptive-icon.png",
+    "splash": "splash-icon.png"
+  }
+}

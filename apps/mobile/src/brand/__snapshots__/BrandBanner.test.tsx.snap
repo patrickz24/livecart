@@ -1,0 +1,127 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`BrandBanner draws the demo brand in its own name, logo and colors 1`] = `
+<View
+  accessibilityRole="header"
+  style={
+    [
+      {
+        "alignItems": "center",
+        "flexDirection": "row",
+      },
+      {
+        "backgroundColor": "#1F6FEB",
+        "gap": 12,
+        "padding": 16,
+      },
+    ]
+  }
+>
+  <Image
+    accessibilityLabel="LiveCart Demo logo"
+    source={
+      {
+        "uri": "brands/demo/logo.png",
+      }
+    }
+    style={
+      {
+        "height": 48,
+        "width": 48,
+      }
+    }
+  />
+  <View
+    style={
+      {
+        "flex": 1,
+      }
+    }
+  >
+    <Text
+      style={
+        {
+          "color": "#FFFFFF",
+          "fontSize": 20,
+          "fontWeight": "700",
+        }
+      }
+    >
+      LiveCart Demo
+    </Text>
+    <Text
+      style={
+        {
+          "color": "#FFFFFF",
+          "fontSize": 13,
+        }
+      }
+    >
+      Live now
+    </Text>
+  </View>
+</View>
+`;
+
+exports[`BrandBanner draws the pomelune brand in its own name, logo and colors 1`] = `
+<View
+  accessibilityRole="header"
+  style={
+    [
+      {
+        "alignItems": "center",
+        "flexDirection": "row",
+      },
+      {
+        "backgroundColor": "#6B2E8F",
+        "gap": 12,
+        "padding": 16,
+      },
+    ]
+  }
+>
+  <Image
+    accessibilityLabel="Pomelune logo"
+    source={
+      {
+        "uri": "brands/pomelune/logo.png",
+      }
+    }
+    style={
+      {
+        "height": 48,
+        "width": 48,
+      }
+    }
+  />
+  <View
+    style={
+      {
+        "flex": 1,
+      }
+    }
+  >
+    <Text
+      style={
+        {
+          "color": "#FFFFFF",
+          "fontSize": 20,
+          "fontWeight": "700",
+        }
+      }
+    >
+      Pomelune
+    </Text>
+    <Text
+      style={
+        {
+          "color": "#FFFFFF",
+          "fontSize": 13,
+        }
+      }
+    >
+      Live now
+    </Text>
+  </View>
+</View>
+`;
