@@ -14,11 +14,12 @@
 | Seen by the engine       | `docker info`: 12 CPUs, total memory 8,161,259,520 bytes (7.6 GiB)      |
 | Other running containers | Patrick's, untouched during the runs (below)                            |
 
-Running beside the stack, as background load:
+Running beside the stack during the counted runs, as background load (`docker ps` at the start of each run):
 
 - `supabase_db_sequences-local` (`supabase/postgres:17.11.0.002`), `supabase_kong_sequences-local` (`supabase/kong:2.8.1`) and `supabase_rest_sequences-local` (`supabase/postgrest:v16.4`), idle;
-- `engage-mariadb` (`mariadb:10.2.44`);
-- `engage-back` (`node:20-alpine`), stuck in a restart loop, so it started and exited again and again during the runs.
+- `engage-mariadb` (`mariadb:10.2.44`).
+
+An earlier series of three runs that day ran under different background load, with a container (`engage-back`) restarting in a loop, and is not counted.
 
 ## Stack configuration as it ran
 
@@ -56,22 +57,22 @@ The three runs ran back to back, on the stack brought up with `docker compose up
 
 | Run | Summary                                                                                        | Finished (UTC)           |
 | --- | ---------------------------------------------------------------------------------------------- | ------------------------ |
-| 1   | [comment-spike-20261002T163446Z.json](../loadtest/results/comment-spike-20261002T163446Z.json) | 2026-10-02T16:34:46.302Z |
-| 2   | [comment-spike-20261002T163607Z.json](../loadtest/results/comment-spike-20261002T163607Z.json) | 2026-10-02T16:36:07.270Z |
-| 3   | [comment-spike-20261002T163733Z.json](../loadtest/results/comment-spike-20261002T163733Z.json) | 2026-10-02T16:37:33.369Z |
+| 1   | [comment-spike-20261002T164442Z.json](../loadtest/results/comment-spike-20261002T164442Z.json) | 2026-10-02T16:44:42.514Z |
+| 2   | [comment-spike-20261002T164559Z.json](../loadtest/results/comment-spike-20261002T164559Z.json) | 2026-10-02T16:45:59.610Z |
+| 3   | [comment-spike-20261002T164716Z.json](../loadtest/results/comment-spike-20261002T164716Z.json) | 2026-10-02T16:47:16.600Z |
 
 ### Correctness
 
 | Run    | Calls | 202  | 429 | 503 | Other | Orders | Units reserved | Stock | `no_oversell` | `queue_drained` | Backlog first read 0 after |
 | ------ | ----- | ---- | --- | --- | ----- | ------ | -------------- | ----- | ------------- | --------------- | -------------------------- |
-| 1      | 1000  | 1000 | 0   | 0   | 0     | 145    | 200            | 200   | passed        | passed          | 40.009 s                   |
-| 2      | 1000  | 1000 | 0   | 0   | 0     | 146    | 200            | 200   | passed        | passed          | 40.002 s                   |
-| 3      | 1000  | 1000 | 0   | 0   | 0     | 144    | 200            | 200   | passed        | passed          | 40 s                       |
-| Median | 1000  | 1000 | 0   | 0   | 0     | 145    | 200            | 200   |               |                 | 40.002 s                   |
+| 1      | 1000  | 1000 | 0   | 0   | 0     | 144    | 200            | 200   | passed        | passed          | 40.006 s                   |
+| 2      | 1000  | 1000 | 0   | 0   | 0     | 144    | 200            | 200   | passed        | passed          | 40 s                       |
+| 3      | 1000  | 1000 | 0   | 0   | 0     | 144    | 200            | 200   | passed        | passed          | 40.002 s                   |
+| Median | 1000  | 1000 | 0   | 0   | 0     | 144    | 200            | 200   |               |                 | 40.002 s                   |
 
 Units reserved is the counter `reserved`. `sold` was 0 in every run, since no buyer paid. In every run, the orders held exactly those 200 units, and every threshold passed.
 
-- **The number of orders changes from run to run while the units do not.** The worker's 16 handlers settle the comments in a slightly different order each time, so different buyers, asking for one to three units, win the last units.
+- **The units are the invariant, not the orders.** The three runs ended with 144 orders each, but nothing in the scenario fixes that count: it depends on which buyers, asking for one to three units, win the last units, in the order the worker's 16 handlers settle the comments.
 - **Drain time.** The backlog read 0 at the very first reading, which the scenario takes 40 s after the burst. All this says is that the queue was empty within 40 s of the last call; it cannot say how much sooner. The resolution is the worker's sampling interval, about 30 s.
 - **The open model held.** Every planned call was sent: `webhook_calls` 1000, and its threshold passed. k6 never needed more than its 80 pre-allocated VUs (`vus_max` 80).
 
@@ -79,14 +80,14 @@ Units reserved is the counter `reserved`. `sold` was 0 in every run, since no bu
 
 `webhook_duration`, the time from k6 sending a webhook call to receiving its answer, in milliseconds, rounded to 0.01 ms (the summaries hold the full values). Each median is the median of the three runs' values:
 
-| Run    | p50  | p95  | p99   | max    |
-| ------ | ---- | ---- | ----- | ------ |
-| 1      | 5.67 | 8.92 | 46.33 | 129.80 |
-| 2      | 5.56 | 8.93 | 35.73 | 57.04  |
-| 3      | 5.56 | 9.97 | 33.31 | 49.40  |
-| Median | 5.56 | 8.93 | 35.73 | 57.04  |
+| Run    | p50  | p95  | p99  | max    |
+| ------ | ---- | ---- | ---- | ------ |
+| 1      | 2.76 | 4.01 | 5.95 | 9.74   |
+| 2      | 2.76 | 3.90 | 8.37 | 411.36 |
+| 3      | 2.79 | 4.31 | 5.29 | 18.60  |
+| Median | 2.76 | 4.01 | 5.95 | 18.60  |
 
-Each run's slowest 1 % of calls take several times the p95, and the single slowest call of run 1 is more than twice the slowest of the other two. Three runs cannot say where that tail comes from.
+Run 2 had one call far slower than all the others: its max is 411.36 ms against a p99 of 8.37 ms. A single call in 1,000 barely moves the percentiles, and three runs cannot say what caused it.
 
 ## What is measured, and what is not
 
@@ -99,7 +100,7 @@ Each run's slowest 1 % of calls take several times the p95, and the single slowe
 ## Limits
 
 - **The generator and the target share one laptop**, in the same Docker VM, so k6's CPU competes with the API's, the worker's, PostgreSQL's and Redis's. Each service is capped at 1 CPU, of the 12 the engine sees.
-- **Background load:** the five containers listed under [Machine](#machine) ran during the series. `engage-back` was restarting in a loop throughout.
+- **Background load:** the four containers listed under [Machine](#machine) ran during the series.
 - **One API process, one worker, one product.** No scaling was measured. Every reservation waits on the same row lock, which is the case the claim is about, not a typical workload.
 - **Three runs, back to back, on one evening, at one rate below the rate limit.** Nothing here looked for the point where the stack stops keeping up: this is evidence that 1,000 concurrent purchase comments do not oversell on this machine, not a capacity figure.
 - **Development settings:** `APP_ENV=development` and INFO logs on stdout, collected by Docker Desktop.
