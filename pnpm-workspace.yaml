@@ -1,10 +1,10 @@
 # JS workspace members, listed explicitly because packages/ also holds a uv
-# member. Only existing directories are listed: packages/design-tokens
-# arrives in milestone 8.
+# member.
 packages:
   - apps/mobile
   - apps/web
   - packages/api-client
+  - packages/design-tokens
 
 # pnpm blocks dependency build scripts unless they are reviewed here, and
 # fails the install on an unreviewed one (strictDepBuilds).
