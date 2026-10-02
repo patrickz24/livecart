@@ -32,12 +32,11 @@ import { parseOrderReference } from "./reference";
 export function OrderDetailScreen() {
   const params = useLocalSearchParams<"/orders/[reference]">();
   const reference = parseOrderReference(params.reference);
-  const { color, space } = useBrandTheme();
   const token = useOrderToken(reference);
 
   const title = <Stack.Screen options={{ title: reference ?? "Order" }} />;
   if (token.isPending) {
-    return <ActivityIndicator style={{ margin: space.xl }} color={color.primary} />;
+    return <Loading />;
   }
   if (reference === null || token.data == null) {
     return (
@@ -63,7 +62,7 @@ function OrderDetails({ reference, token }: { reference: string; token: string }
   const store = useOrderAccess();
   const queryClient = useQueryClient();
   const router = useRouter();
-  const { color, space } = useBrandTheme();
+  const { color } = useBrandTheme();
   const details = useQuery(orderDetailsQuery(client, reference, token));
   const paid = details.data !== undefined && isPaid(details.data.status);
   const tracking = useQuery({ ...orderTrackingQuery(client, reference, token), enabled: paid });
@@ -76,7 +75,7 @@ function OrderDetails({ reference, token }: { reference: string; token: string }
   };
 
   if (details.isPending) {
-    return <ActivityIndicator style={{ margin: space.xl }} color={color.primary} />;
+    return <Loading />;
   }
   return (
     <Screen
@@ -120,6 +119,17 @@ function OrderDetails({ reference, token }: { reference: string; token: string }
         </>
       )}
     </Screen>
+  );
+}
+
+function Loading() {
+  const { color, space } = useBrandTheme();
+  return (
+    <ActivityIndicator
+      style={{ margin: space.xl }}
+      color={color.primary}
+      accessibilityLabel="Loading the order"
+    />
   );
 }
 
@@ -222,7 +232,7 @@ function OrderSummary({ order }: { order: OrderDetailsResponse }) {
 function Tracking({ tracking }: { tracking: UseQueryResult<TrackingResponse> }) {
   const { color, space, fontSize } = useBrandTheme();
   if (tracking.isPending) {
-    return <ActivityIndicator color={color.primary} />;
+    return <ActivityIndicator color={color.primary} accessibilityLabel="Loading the delivery" />;
   }
   if (tracking.isError) {
     return isNotFound(tracking.error) ? (
@@ -247,18 +257,24 @@ function Tracking({ tracking }: { tracking: UseQueryResult<TrackingResponse> }) 
       <Line>Last update {formatDateTime(parcel.last_event_at)}</Line>
       {parcel.status === "cancelled" ? null : (
         <View style={{ gap: space.xs, marginTop: space.sm }}>
-          {SHIPMENT_STEPS.map((step, index) => (
-            <Text
-              key={step}
-              style={{
-                color: index <= reached ? color.success : color.textMuted,
-                fontSize: fontSize.body,
-                fontWeight: index === reached ? fontWeight.bold : fontWeight.regular,
-              }}
-            >
-              {index <= reached ? "●" : "○"} {SHIPMENT_STATUS_TEXT[step]}
-            </Text>
-          ))}
+          {SHIPMENT_STEPS.map((step, index) => {
+            const done = index <= reached;
+            return (
+              <Text
+                key={step}
+                // Read as "In transit, done": the label replaces the dot, which a
+                // screen reader would name ("black circle").
+                accessibilityLabel={`${SHIPMENT_STATUS_TEXT[step]}, ${done ? "done" : "not yet"}`}
+                style={{
+                  color: done ? color.success : color.textMuted,
+                  fontSize: fontSize.body,
+                  fontWeight: index === reached ? fontWeight.bold : fontWeight.regular,
+                }}
+              >
+                {done ? "●" : "○"} {SHIPMENT_STATUS_TEXT[step]}
+              </Text>
+            );
+          })}
         </View>
       )}
     </Card>

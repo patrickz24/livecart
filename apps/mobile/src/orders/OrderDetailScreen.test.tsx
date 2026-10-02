@@ -79,6 +79,33 @@ describe("an order's detail", () => {
     expect(api.sent("GET", TRACKING)[0]?.headers.get("Authorization")).toBe(`Bearer ${tokenAt(1)}`);
   });
 
+  it("reads each step of the parcel to a screen reader as done or not yet, not as its dot", async () => {
+    const { store } = await storedOrder();
+    const api = new FakeApi()
+      .on("GET", DETAILS, json(200, orderDetails({ status: "paid" })))
+      .on("GET", TRACKING, json(200, tracking({ status: "in_transit" })));
+
+    await renderRoutes("/orders/LC-7K3F9Q", { api, store });
+
+    expect(await screen.findByLabelText("Label created, done")).toBeTruthy();
+    expect(screen.getByLabelText("In transit, done")).toBeTruthy();
+    expect(screen.getByLabelText("Out for delivery, not yet")).toBeTruthy();
+    expect(screen.getByLabelText("Delivered, not yet")).toBeTruthy();
+  });
+
+  it("names its spinner while the order loads", async () => {
+    const { store } = await storedOrder();
+    const api = new FakeApi().on("GET", DETAILS, () => new Promise<Response>(() => undefined));
+
+    await renderRoutes("/orders/LC-7K3F9Q", { api, store });
+
+    expect(await screen.findByLabelText("Loading the order")).toBeTruthy();
+    await waitFor(() => {
+      expect(api.sent("GET", DETAILS)).toHaveLength(1);
+    });
+    expect(screen.getByLabelText("Loading the order")).toBeTruthy();
+  });
+
   it("says a paid order has not shipped yet while the API has no shipment for it", async () => {
     const { store } = await storedOrder();
     const api = new FakeApi()

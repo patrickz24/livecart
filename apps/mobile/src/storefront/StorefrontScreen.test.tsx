@@ -53,6 +53,21 @@ describe("the live storefront", () => {
     ]);
   });
 
+  it("reads each product to a screen reader as one line: code, name, stock and price", async () => {
+    const api = new FakeApi().on("GET", "/api/v1/storefronts/sample-shop", json(200, LIVE));
+
+    await renderRoutes("/", { brandId: "pomelune", api });
+
+    const shirt = await screen.findByLabelText(
+      `A12 M, Linen shirt, 2 left, ${formatMoney(2500, "EUR")}`,
+    );
+    expect(shirt.props.accessible).toBe(true);
+    expect(
+      screen.getByLabelText(`B07, Silk scarf, sold out, ${formatMoney(1990, "EUR")}`).props
+        .accessible,
+    ).toBe(true);
+  });
+
   it("says the store is not found when the API does not know the brand's seller", async () => {
     const api = new FakeApi().on(
       "GET",

@@ -45,7 +45,7 @@ export function PaymentReturnScreen() {
   if (reference === null || status === null) {
     content = <Notice tone="error" title="This link is not a payment return" />;
   } else if (token.isPending) {
-    content = <ActivityIndicator color={color.primary} />;
+    content = <ActivityIndicator color={color.primary} accessibilityLabel="Loading the order" />;
   } else if (token.data == null) {
     content = <Notice title="This order is not on this phone" />;
   } else if (status === "cancel") {
@@ -94,7 +94,7 @@ function PaymentConfirmation({
   if (confirmation.kind === "confirming") {
     return (
       <View style={{ gap: space.md, alignItems: "center" }}>
-        <ActivityIndicator color={color.primary} />
+        <ActivityIndicator color={color.primary} accessibilityLabel="Confirming the payment" />
         <Text style={{ color: color.text, fontSize: fontSize.body }}>
           Confirming the payment of {reference}…
         </Text>

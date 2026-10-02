@@ -22,7 +22,13 @@ export function OrdersScreen() {
   };
 
   if (references.isPending) {
-    return <ActivityIndicator style={{ margin: space.xl }} color={color.primary} />;
+    return (
+      <ActivityIndicator
+        style={{ margin: space.xl }}
+        color={color.primary}
+        accessibilityLabel="Loading your orders"
+      />
+    );
   }
   return (
     <FlatList

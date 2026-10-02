@@ -111,9 +111,13 @@ function ProductRow({ product }: { product: StorefrontProduct }) {
   const { color, space, radius, fontSize } = useBrandTheme();
   const soldOut = product.available === 0;
   const code = product.variant === "" ? product.code : `${product.code} ${product.variant}`;
+  const stock = soldOut ? "Sold out" : `${String(product.available)} left`;
+  const price = formatMoney(product.price_minor, product.currency);
   return (
+    // One element for a screen reader, which reads its label instead of each text.
     <View
-      accessibilityLabel={`${code}, ${product.name}`}
+      accessible
+      accessibilityLabel={`${code}, ${product.name}, ${stock.toLowerCase()}, ${price}`}
       style={{
         flexDirection: "row",
         alignItems: "center",
@@ -140,11 +144,11 @@ function ProductRow({ product }: { product: StorefrontProduct }) {
         <Text
           style={{ color: soldOut ? color.danger : color.textMuted, fontSize: fontSize.caption }}
         >
-          {soldOut ? "Sold out" : `${String(product.available)} left`}
+          {stock}
         </Text>
       </View>
       <Text style={{ color: color.text, fontSize: fontSize.body, fontWeight: fontWeight.semibold }}>
-        {formatMoney(product.price_minor, product.currency)}
+        {price}
       </Text>
     </View>
   );

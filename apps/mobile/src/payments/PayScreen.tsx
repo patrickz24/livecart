@@ -26,7 +26,13 @@ export function PayScreen() {
   const { color, space } = useBrandTheme();
 
   if (token.isPending) {
-    return <ActivityIndicator style={{ margin: space.xl }} color={color.primary} />;
+    return (
+      <ActivityIndicator
+        style={{ margin: space.xl }}
+        color={color.primary}
+        accessibilityLabel="Loading the order"
+      />
+    );
   }
   if (reference === null || token.data == null) {
     return (
@@ -89,7 +95,13 @@ function Checkout({ reference, token }: { reference: string; token: string }) {
   });
 
   if (details.isPending) {
-    return <ActivityIndicator style={{ margin: space.xl }} color={color.primary} />;
+    return (
+      <ActivityIndicator
+        style={{ margin: space.xl }}
+        color={color.primary}
+        accessibilityLabel="Loading the order"
+      />
+    );
   }
   if (details.isError) {
     return (
