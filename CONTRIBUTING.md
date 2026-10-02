@@ -53,7 +53,7 @@ Update the version in that line when `.nvmrc` changes.
 
 ### Version pins
 
-`pnpm run check:pins` fails when a copy of these versions (Dockerfiles, CI, `package.json` engines) drifts from its source of truth. To upgrade a tool, change the source of truth and every copy the check lists, in one commit.
+`pnpm run check:pins` fails when a copy of these versions (Dockerfiles, CI, `package.json` engines, the EAS build profiles of `apps/mobile/eas.json`) drifts from its source of truth. To upgrade a tool, change the source of truth and every copy the check lists, in one commit.
 
 ## First setup
 
@@ -182,6 +182,40 @@ curl -s $API/tracking -H "Authorization: Bearer $TOKEN"
 ```
 
 Without the token, with another order's, or before the order has its shipment, it answers 404; the reference alone never shows the tracking number. Two minutes later the same call shows `in_transit`, and the seller's stream one `shipment.updated` per move, within a minute of it (the tracking asks every 60 s), up to `delivered`. A stream opened later, once the session's stream has trimmed those events (15 minutes), finds each order's shipment, as it stands, in its snapshot.
+
+## Buyer app
+
+`apps/mobile` is the buyer app, Expo SDK 57, one white-label build per brand of `apps/mobile/brands/` (`demo` and `pomelune`), chosen by `APP_BRAND` (`demo` when unset); [the brands' README](apps/mobile/brands/README.md) lists their fields and how to add one, and [ADR 0013](docs/adr/0013-white-label-brand-config-eas-profiles-design-tokens.md) explains the decisions. Every check runs on the PC, without a phone:
+
+```bash
+pnpm --filter @livecart/mobile test        # Jest: the config of each brand, the screens on a fake API
+pnpm --filter @livecart/mobile typecheck   # the typed routes (expo customize tsconfig.json), then tsc
+pnpm --filter @livecart/mobile run doctor  # expo-doctor; APP_BRAND=pomelune for the other brand
+cd apps/mobile && APP_BRAND=pomelune npx expo export --platform android   # Metro's bundle, in apps/mobile/dist
+```
+
+### On an Android phone, with Expo Go
+
+The phone and the PC on the same Wi-Fi, Expo Go (for SDK 57) on the phone, and the stack running (`docker compose up -d --wait`):
+
+1. Find the PC's address on the Wi-Fi: `ipconfig`, its "IPv4 Address", for example `192.168.1.20`.
+2. In the root `.env`, add it to `ALLOWED_HOSTS` (`localhost,127.0.0.1,api,192.168.1.20`) and set `PUBLIC_API_BASE_URL=http://192.168.1.20:8080`, then `docker compose up -d --wait` again: the API then accepts the phone's requests, and builds the payment pages' links on that address.
+3. Copy `apps/mobile/.env.example` to `apps/mobile/.env` and set `EXPO_PUBLIC_API_URL=http://192.168.1.20:8080`, the same value.
+4. Let Windows' firewall accept ports 8080 (nginx) and 8081 (Metro) on the private network; 8000 stays on `127.0.0.1`.
+5. `cd apps/mobile`, then `npx expo start` (`APP_BRAND=pomelune npx expo start` for the other brand; in PowerShell, `$env:APP_BRAND = "pomelune"` first), and scan the QR code with Expo Go.
+
+The demo path: `docker compose run --rm simulator --text --no-follow | tail -n 3` prints the last order's reference and token. In the app, My orders, Add an order: paste both (or the whole link, which fills both). The order opens; Pay, type an address, Pay on the mock's page, then "Return to the app": the payment return reads the order's status until it is paid, within a few seconds. Expo Go does not register the brands' schemes, so the buyer links (`livecart://link/LC-XXXXXX#t=...`) open only in a development build; its payment return goes through `exp://192.168.1.20:8081/--/payment-return`, which the API takes in development, from a private address, only.
+
+### A development build, with EAS
+
+It needs an Expo account (free) and the EAS CLI, run with npx rather than installed globally. From `apps/mobile`, for each brand:
+
+1. `npx eas-cli@24.8.0 login`, then `APP_BRAND=demo npx eas-cli@24.8.0 init`, and copy the project id it prints into `brands/demo/brand.json` as `"easProjectId"`.
+2. `npx eas-cli@24.8.0 build --profile demo --platform android`: an APK with the development client, `livecart` as its scheme, to install on the phone.
+3. `npx expo start --dev-client`, with `apps/mobile/.env` as above; the development build loads the bundle from Metro.
+4. A buyer link now opens the app: `adb shell am start -W -a android.intent.action.VIEW -d "livecart://link/LC-XXXXXX#t=<token>"`, or the simulator's link opened on the phone. The token goes from the link's fragment to SecureStore, and the order opens.
+
+The profiles build with Node 24.21.0 and pnpm 12.6.0, Corepack off. iOS is configured (bundle identifiers, an iOS simulator build in the base profile) but not built. The identifiers `com.example.livecart.<brand>` are placeholders: replace them before any store build.
 
 ## Metrics
 
