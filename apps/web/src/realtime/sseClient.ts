@@ -123,6 +123,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+/** Let go of an answer's body without waiting: only its status mattered. */
+function discard(response: Response): void {
+  response.body?.cancel().catch(() => undefined);
+}
+
 function retryAfterMs(response: Response): number {
   const seconds = Number.parseInt(response.headers.get("Retry-After") ?? "", 10);
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0;
@@ -261,7 +266,7 @@ export function openLiveStream(options: StreamOptions): LiveStream {
       watchdog.feed();
       parser.feed(decoder.decode(chunk.value, { stream: true }));
       if (state.end.kind === "closed") {
-        await reader.cancel();
+        reader.cancel().catch(() => undefined);
         return state.end;
       }
     }
@@ -290,7 +295,7 @@ export function openLiveStream(options: StreamOptions): LiveStream {
         new Request(url, { headers, cache: "no-store", signal: controller.signal }),
       );
       if (response.status === 401) {
-        await response.body?.cancel();
+        discard(response);
         unauthorizedInARow += 1;
         try {
           if ((await auth.refresh()) === null) {
@@ -303,11 +308,11 @@ export function openLiveStream(options: StreamOptions): LiveStream {
         return unauthorizedInARow > 1 ? backoff() : { kind: "retry", delayMs: 0 };
       }
       if (response.status === 404) {
-        await response.body?.cancel();
+        discard(response);
         return { kind: "stop", status: "not_found" };
       }
       if (!response.ok || response.body === null) {
-        await response.body?.cancel();
+        discard(response);
         return backoff(retryAfterMs(response));
       }
 

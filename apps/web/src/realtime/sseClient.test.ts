@@ -114,7 +114,11 @@ const gapMessage = () =>
 /** Let the client's promises settle without moving the clock. */
 const settle = () => vi.advanceTimersByTimeAsync(0);
 
-function open(server: FakeServer, tokens: (string | null)[] = ["t1"], random = () => 0) {
+function open(
+  server: Pick<FakeServer, "send">,
+  tokens: (string | null)[] = ["t1"],
+  random = () => 0,
+) {
   const received: { snapshots: string[]; events: SessionEvent[]; gaps: number } = {
     snapshots: [],
     events: [],
@@ -276,6 +280,19 @@ describe("openLiveStream", () => {
 
     expect(refused.statuses.at(-1)).toBe("signed_out");
     expect(missing.statuses.at(-1)).toBe("not_found");
+  });
+
+  it("lets go of a refused answer without waiting for its body", async () => {
+    // A body whose cancel never settles, as a tee'd or stalled one can be.
+    const stalled = new ReadableStream<Uint8Array>({
+      cancel: () => new Promise<void>(() => undefined),
+    });
+    const { statuses } = open({
+      send: () => Promise.resolve(new Response(stalled, { status: 404 })),
+    });
+    await settle();
+
+    expect(statuses.at(-1)).toBe("not_found");
   });
 
   it("forgets its cursor on stream.gap and hands over the snapshot that follows", async () => {
