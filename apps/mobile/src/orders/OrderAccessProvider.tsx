@@ -8,6 +8,10 @@ const OrderAccessContext = createContext<OrderAccessStore | null>(null);
 /** The query key of the stored references, which every change to the store invalidates. */
 export const storedOrdersKey = ["stored-orders"] as const;
 
+/** The query key of one order's token, under `storedOrdersKey`. */
+export const orderTokenKey = (reference: string | null) =>
+  [...storedOrdersKey, reference, "token"] as const;
+
 /** The store of the buyer's order tokens: SecureStore's, unless a test passes another. */
 export function OrderAccessProvider({
   store,
@@ -42,7 +46,7 @@ export function useStoredReferences() {
 export function useOrderToken(reference: string | null) {
   const store = useOrderAccess();
   return useQuery({
-    queryKey: [...storedOrdersKey, reference, "token"],
+    queryKey: orderTokenKey(reference),
     queryFn: () => (reference === null ? null : store.tokenFor(reference)),
   });
 }

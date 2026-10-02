@@ -164,4 +164,28 @@ describe("an order's detail", () => {
     expect(storage.values.has("order_LC-7K3F9Q")).toBe(false);
     expect(await store.references()).toEqual([]);
   });
+
+  it("leaves a forgotten order without reading its token again, then lists the rest", async () => {
+    const { store } = await storedOrder();
+    const tokenReads: string[] = [];
+    const watched = {
+      ...store,
+      tokenFor: (reference: string) => {
+        tokenReads.push(reference);
+        return store.tokenFor(reference);
+      },
+    };
+    const api = new FakeApi().on("GET", DETAILS, json(404, { detail: "Not found" }));
+
+    const app = await renderRoutes("/orders/LC-7K3F9Q", { api, store: watched });
+    await fireEvent.press(await screen.findByRole("button", { name: "Remove it from this phone" }));
+
+    await waitFor(() => {
+      expect(app.getPathname()).toBe("/orders");
+    });
+    expect(await screen.findByText("No orders yet")).toBeTruthy();
+    // Read again while its screen is still up, the token would be gone, and the
+    // screen would say "not on this phone" on its way out.
+    expect(tokenReads).toEqual(["LC-7K3F9Q"]);
+  });
 });

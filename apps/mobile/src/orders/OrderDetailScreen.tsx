@@ -12,7 +12,12 @@ import { Button } from "../ui/Button";
 import { Notice } from "../ui/Notice";
 import { formatDateTime, formatMoney } from "../ui/format";
 
-import { storedOrdersKey, useOrderAccess, useOrderToken } from "./OrderAccessProvider";
+import {
+  orderTokenKey,
+  storedOrdersKey,
+  useOrderAccess,
+  useOrderToken,
+} from "./OrderAccessProvider";
 import {
   ORDER_STATUS_TEXT,
   SHIPMENT_STATUS_TEXT,
@@ -70,7 +75,14 @@ function OrderDetails({ reference, token }: { reference: string; token: string }
   const refresh = () => void queryClient.invalidateQueries({ queryKey: orderKeys.all(reference) });
   const forget = async () => {
     await store.remove(reference);
-    await queryClient.invalidateQueries({ queryKey: storedOrdersKey });
+    // The list is read again now; this order's token only once its screen is
+    // gone: read now, it would be null, and the screen would flash "not on this
+    // phone" on its way out.
+    await queryClient.invalidateQueries({ queryKey: storedOrdersKey, exact: true });
+    await queryClient.invalidateQueries({
+      queryKey: orderTokenKey(reference),
+      refetchType: "none",
+    });
     router.dismissTo("/orders");
   };
 
