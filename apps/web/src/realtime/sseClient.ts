@@ -180,7 +180,8 @@ export function openLiveStream(options: StreamOptions): LiveStream {
     failures += 1;
     const exponential = Math.min(maxBackoffMs, initialBackoffMs * 2 ** (failures - 1));
     const jittered = Math.min(maxBackoffMs, exponential + random() * initialBackoffMs);
-    return { kind: "retry", delayMs: Math.min(maxBackoffMs, Math.max(jittered, atLeastMs)) };
+    // The cap bounds the client's own backoff, never the server's Retry-After.
+    return { kind: "retry", delayMs: Math.max(jittered, atLeastMs) };
   }
 
   function sleep(ms: number): Promise<void> {

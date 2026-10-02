@@ -260,6 +260,18 @@ describe("openLiveStream", () => {
     stream.close();
   });
 
+  it("waits the whole Retry-After of a 429, even beyond the 30 s cap", async () => {
+    const server = new FakeServer().answer({ status: 429, headers: { "Retry-After": "60" } });
+    const { stream } = open(server);
+    await settle();
+
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(server.attempts).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(server.attempts).toHaveLength(2);
+    stream.close();
+  });
+
   it("refreshes the token on a 401 and reconnects with it at once", async () => {
     const server = new FakeServer().answer(401);
     const { auth, stream } = open(server, ["t1", "t2"]);
