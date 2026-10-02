@@ -199,9 +199,15 @@ importers:
 
   apps/mobile:
     dependencies:
+      '@livecart/api-client':
+        specifier: workspace:*
+        version: link:../../packages/api-client
       '@livecart/design-tokens':
         specifier: workspace:*
         version: link:../../packages/design-tokens
+      '@tanstack/react-query':
+        specifier: 5.103.2
+        version: 5.103.2(react@19.2.3)
       expo:
         specifier: 57.0.26
         version: 57.0.26(245f7ff5c6a0cf24f4efa1d0742c3de5)
@@ -7503,6 +7509,11 @@ snapshots:
       vite: 8.3.1(@types/node@24.13.6)(jiti@2.6.1)(terser@5.51.2)(yaml@2.9.1)
 
   '@tanstack/query-core@5.103.2': {}
+
+  '@tanstack/react-query@5.103.2(react@19.2.3)':
+    dependencies:
+      '@tanstack/query-core': 5.103.2
+      react: 19.2.3
 
   '@tanstack/react-query@5.103.2(react@19.3.0)':
     dependencies:

@@ -13,7 +13,9 @@
     "test": "jest"
   },
   "dependencies": {
+    "@livecart/api-client": "workspace:*",
     "@livecart/design-tokens": "workspace:*",
+    "@tanstack/react-query": "5.103.2",
     "expo": "57.0.26",
     "expo-constants": "~57.0.20",
     "expo-dev-client": "~57.0.19",
