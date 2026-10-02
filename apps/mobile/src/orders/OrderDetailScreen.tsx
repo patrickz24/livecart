@@ -8,10 +8,11 @@ import { ActivityIndicator, RefreshControl, ScrollView, Text, View } from "react
 import { useApiClient } from "../api/ApiProvider";
 import { describeError, isNotFound } from "../api/errors";
 import { useBrandTheme } from "../brand/brandTheme";
+import { Button } from "../ui/Button";
 import { Notice } from "../ui/Notice";
 import { formatDateTime, formatMoney } from "../ui/format";
 
-import { storedOrdersKey, useOrderAccess } from "./OrderAccessProvider";
+import { storedOrdersKey, useOrderAccess, useOrderToken } from "./OrderAccessProvider";
 import {
   ORDER_STATUS_TEXT,
   SHIPMENT_STATUS_TEXT,
@@ -31,12 +32,8 @@ import { parseOrderReference } from "./reference";
 export function OrderDetailScreen() {
   const params = useLocalSearchParams<"/orders/[reference]">();
   const reference = parseOrderReference(params.reference);
-  const store = useOrderAccess();
   const { color, space } = useBrandTheme();
-  const token = useQuery({
-    queryKey: ["order-token", reference],
-    queryFn: () => (reference === null ? null : store.tokenFor(reference)),
-  });
+  const token = useOrderToken(reference);
 
   const title = <Stack.Screen options={{ title: reference ?? "Order" }} />;
   if (token.isPending) {
@@ -111,6 +108,14 @@ function OrderDetails({ reference, token }: { reference: string; token: string }
       ) : (
         <>
           <OrderSummary order={details.data} />
+          {details.data.status === "pending_payment" ? (
+            <Button
+              label={`Pay ${formatMoney(details.data.total_minor, details.data.currency)}`}
+              onPress={() => {
+                router.push({ pathname: "/orders/[reference]/pay", params: { reference } });
+              }}
+            />
+          ) : null}
           {paid ? <Tracking tracking={tracking} /> : null}
         </>
       )}

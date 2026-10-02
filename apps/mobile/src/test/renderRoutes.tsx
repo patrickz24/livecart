@@ -10,7 +10,9 @@ import StorefrontRoute from "../app/(tabs)/index";
 import OrdersRoute from "../app/(tabs)/orders";
 import OrderLinkRoute from "../app/link/[reference]";
 import OrderDetailRoute from "../app/orders/[reference]/index";
+import PayRoute from "../app/orders/[reference]/pay";
 import AddOrderRoute from "../app/orders/add";
+import PaymentReturnRoute from "../app/payment-return";
 import { BrandProvider } from "../brand/brandTheme";
 import { OrderAccessProvider } from "../orders/OrderAccessProvider";
 import { createOrderAccessStore, type OrderAccessStore } from "../orders/orderAccessStore";
@@ -27,7 +29,9 @@ export const APP_ROUTES = {
   "(tabs)/orders": OrdersRoute,
   "orders/add": AddOrderRoute,
   "orders/[reference]/index": OrderDetailRoute,
+  "orders/[reference]/pay": PayRoute,
   "link/[reference]": OrderLinkRoute,
+  "payment-return": PaymentReturnRoute,
 } satisfies MockContextConfig;
 
 export interface RenderRoutesOptions {

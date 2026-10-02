@@ -33,3 +33,16 @@ export function useStoredReferences() {
   const store = useOrderAccess();
   return useQuery({ queryKey: storedOrdersKey, queryFn: () => store.references() });
 }
+
+/**
+ * The token of `reference` on this phone, read from SecureStore, or null. It
+ * stays in memory (the query cache, which nothing persists) while a screen
+ * uses it, and goes to the Authorization header of that order's requests.
+ */
+export function useOrderToken(reference: string | null) {
+  const store = useOrderAccess();
+  return useQuery({
+    queryKey: [...storedOrdersKey, reference, "token"],
+    queryFn: () => (reference === null ? null : store.tokenFor(reference)),
+  });
+}

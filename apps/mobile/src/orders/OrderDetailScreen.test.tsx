@@ -36,6 +36,20 @@ describe("an order's detail", () => {
     expect(api.sent("GET", TRACKING)).toEqual([]);
   });
 
+  it("leads an order awaiting its payment to the payment", async () => {
+    const { store } = await storedOrder();
+    const api = new FakeApi().on("GET", DETAILS, json(200, orderDetails()));
+
+    const app = await renderRoutes("/orders/LC-7K3F9Q", { api, store });
+    await fireEvent.press(
+      await screen.findByRole("button", { name: `Pay ${formatMoney(2500, "EUR")}` }),
+    );
+
+    await waitFor(() => {
+      expect(app.getPathname()).toBe("/orders/LC-7K3F9Q/pay");
+    });
+  });
+
   it("follows the parcel of a paid order", async () => {
     const { store } = await storedOrder();
     const api = new FakeApi()

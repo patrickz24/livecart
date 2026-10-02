@@ -43,6 +43,8 @@ export default function RootLayout() {
               <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
               <Stack.Screen name="orders/add" options={{ title: "Add an order" }} />
               <Stack.Screen name="link/[reference]" options={{ title: "Your order" }} />
+              <Stack.Screen name="orders/[reference]/pay" options={{ title: "Payment" }} />
+              <Stack.Screen name="payment-return" options={{ title: "Payment" }} />
             </Stack>
           </OrderAccessProvider>
         </ApiProvider>
