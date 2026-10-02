@@ -8,7 +8,7 @@ import { useServices } from "../../app/services";
 import { PLATFORM_LABELS } from "../../strings";
 import { Button } from "../../ui/Button";
 import { SelectField, TextField } from "../../ui/fields";
-import { Alert } from "../../ui/feedback";
+import { Alert, focusPageTitle } from "../../ui/feedback";
 import { formatMoney } from "../../ui/format";
 import { newIdempotencyKey, saveSession, SaveFailed, type SavedState } from "./saveSession";
 import {
@@ -68,6 +68,7 @@ export function SessionForm({
   }, [session]);
   // One key per (product, delta): a retry of the same restock sends the same key.
   const restockKeys = useRef(new Map<string, { delta: number; key: string }>());
+  const addButton = useRef<HTMLButtonElement>(null);
 
   const status = session?.status ?? "draft";
   const ended = status === "ended";
@@ -82,6 +83,25 @@ export function SessionForm({
     const key = newIdempotencyKey();
     restockKeys.current.set(productId, { delta, key });
     return key;
+  }
+
+  /**
+   * Remove a row not saved yet. Its button goes with it, so the focus moves
+   * first, rather than falling to the page: to the code of the row before, of
+   * the row that takes its place, or to "Add a product" once none is left
+   * (the heading on an ended session, which offers no Add).
+   */
+  function removeRow(index: number) {
+    if (index > 0) {
+      form.setFocus(rowField(index - 1, "code"));
+    } else if (index + 1 < fields.length) {
+      form.setFocus(rowField(index + 1, "code"));
+    } else if (addButton.current === null) {
+      focusPageTitle();
+    } else {
+      addButton.current.focus();
+    }
+    remove(index);
   }
 
   async function submit(output: SessionFormOutput) {
@@ -253,7 +273,7 @@ export function SessionForm({
                       variant="ghost"
                       className="mt-2"
                       onClick={() => {
-                        remove(index);
+                        removeRow(index);
                       }}
                     >
                       Remove product {number}
@@ -266,6 +286,7 @@ export function SessionForm({
         </ol>
         {ended ? null : (
           <Button
+            ref={addButton}
             className="mt-4"
             disabled={fields.length >= MAX_PRODUCTS}
             onClick={() => {

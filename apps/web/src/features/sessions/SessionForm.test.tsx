@@ -136,6 +136,35 @@ describe("session form", () => {
     expect(api.sent("POST", PRODUCTS)).toHaveLength(2);
   });
 
+  it("moves the focus to a neighbouring row, then to Add a product, as rows are removed", async () => {
+    const { user } = renderApp("/sessions/new", signedInApi());
+    const add = await screen.findByRole("button", { name: "Add a product" });
+    await user.click(add);
+    await user.click(add);
+    for (const [number, code] of [
+      [1, "A1"],
+      [2, "B2"],
+      [3, "C3"],
+    ] as const) {
+      await user.type(product(number).getByLabelText("Code"), code);
+    }
+
+    // The last row: the focus goes to the row before.
+    await user.click(product(3).getByRole("button", { name: "Remove product 3" }));
+    expect(document.activeElement).toBe(product(2).getByLabelText("Code"));
+    expect(product(2).getByLabelText<HTMLInputElement>("Code").value).toBe("B2");
+
+    // The first row: the focus goes to the row that takes its place.
+    await user.click(product(1).getByRole("button", { name: "Remove product 1" }));
+    expect(document.activeElement).toBe(product(1).getByLabelText("Code"));
+    expect(product(1).getByLabelText<HTMLInputElement>("Code").value).toBe("B2");
+
+    // The only row: the focus goes to the button that adds one again.
+    await user.click(product(1).getByRole("button", { name: "Remove product 1" }));
+    expect(screen.getByText("No products yet.")).toBeTruthy();
+    expect(document.activeElement).toBe(add);
+  });
+
   it("shows a taken live id on its field", async () => {
     const api = signedInApi().on("POST", SESSIONS, () =>
       Response.json({ detail: "Another session has this platform and live id" }, { status: 409 }),
