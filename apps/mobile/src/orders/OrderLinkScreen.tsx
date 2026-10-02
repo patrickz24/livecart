@@ -12,8 +12,8 @@ import { parseOrderReference, readLinkFragment } from "./reference";
 /**
  * Where a buyer link opens the app: `<scheme>://link/LC-7K3F9Q#t=<token>`.
  * The token is read from the fragment (expo-router gives it as the `#`
- * param), kept in SecureStore, and the screen is replaced at once, so that
- * no route of the app keeps the link, the token in it, any longer.
+ * param), kept in SecureStore, and the screen is replaced by the order's, so
+ * that no route of the app keeps the link, the token in it, any longer.
  *
  * Expo Go does not register the brand's scheme: such links open the
  * development build only. "Add order" is the path that works everywhere.
@@ -36,10 +36,11 @@ export function OrderLinkScreen() {
     let active = true;
     store
       .save(reference, token)
-      .then(async () => {
+      .then(async (saved) => {
         await queryClient.invalidateQueries({ queryKey: storedOrdersKey });
         if (active) {
-          router.dismissTo("/orders");
+          // Replaced, not pushed: the link, token included, leaves the stack.
+          router.replace({ pathname: "/orders/[reference]", params: { reference: saved } });
         }
       })
       .catch(() => {

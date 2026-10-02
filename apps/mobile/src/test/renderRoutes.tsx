@@ -9,6 +9,7 @@ import TabsLayout from "../app/(tabs)/_layout";
 import StorefrontRoute from "../app/(tabs)/index";
 import OrdersRoute from "../app/(tabs)/orders";
 import OrderLinkRoute from "../app/link/[reference]";
+import OrderDetailRoute from "../app/orders/[reference]/index";
 import AddOrderRoute from "../app/orders/add";
 import { BrandProvider } from "../brand/brandTheme";
 import { OrderAccessProvider } from "../orders/OrderAccessProvider";
@@ -25,6 +26,7 @@ export const APP_ROUTES = {
   "(tabs)/index": StorefrontRoute,
   "(tabs)/orders": OrdersRoute,
   "orders/add": AddOrderRoute,
+  "orders/[reference]/index": OrderDetailRoute,
   "link/[reference]": OrderLinkRoute,
 } satisfies MockContextConfig;
 

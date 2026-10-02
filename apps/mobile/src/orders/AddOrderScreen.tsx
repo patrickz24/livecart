@@ -43,9 +43,9 @@ export function AddOrderScreen() {
       );
       return store.save(order.reference, order.token);
     },
-    onSuccess: async () => {
+    onSuccess: async (saved) => {
       await queryClient.invalidateQueries({ queryKey: storedOrdersKey });
-      router.dismissTo("/orders");
+      router.replace({ pathname: "/orders/[reference]", params: { reference: saved } });
     },
     onError: (error) => {
       setProblems({

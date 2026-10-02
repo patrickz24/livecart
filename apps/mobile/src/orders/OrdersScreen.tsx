@@ -1,6 +1,6 @@
 import { fontWeight } from "@livecart/design-tokens";
-import { useRouter } from "expo-router";
-import { ActivityIndicator, FlatList, Text, View } from "react-native";
+import { Link, useRouter } from "expo-router";
+import { ActivityIndicator, FlatList, Pressable, Text } from "react-native";
 
 import { useBrandTheme } from "../brand/brandTheme";
 import { Button } from "../ui/Button";
@@ -48,18 +48,25 @@ export function OrdersScreen() {
 function OrderRow({ reference }: { reference: string }) {
   const { color, space, radius, fontSize } = useBrandTheme();
   return (
-    <View
-      style={{
-        padding: space.lg,
-        borderRadius: radius.md,
-        borderWidth: 1,
-        borderColor: color.border,
-        backgroundColor: color.surface,
-      }}
-    >
-      <Text style={{ color: color.text, fontSize: fontSize.title, fontWeight: fontWeight.bold }}>
-        {reference}
-      </Text>
-    </View>
+    <Link href={{ pathname: "/orders/[reference]", params: { reference } }} asChild>
+      <Pressable
+        accessibilityRole="link"
+        style={({ pressed }) => ({
+          padding: space.lg,
+          borderRadius: radius.md,
+          borderWidth: 1,
+          borderColor: color.border,
+          backgroundColor: color.surface,
+          opacity: pressed ? 0.8 : 1,
+        })}
+      >
+        <Text style={{ color: color.text, fontSize: fontSize.title, fontWeight: fontWeight.bold }}>
+          {reference}
+        </Text>
+        <Text style={{ color: color.textMuted, fontSize: fontSize.caption }}>
+          Status, payment and delivery
+        </Text>
+      </Pressable>
+    </Link>
   );
 }

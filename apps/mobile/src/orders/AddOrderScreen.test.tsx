@@ -1,24 +1,10 @@
 import { describe, expect, it } from "@jest/globals";
-import type { OrderDetailsResponse } from "@livecart/api-client";
 import { fireEvent, screen, waitFor } from "expo-router/testing-library";
 
 import { FakeApi, json } from "../test/fakeApi";
 import { tokenAt } from "../test/memoryStorage";
+import { orderDetails } from "../test/orders";
 import { memoryOrderStore, renderRoutes } from "../test/renderRoutes";
-
-const DETAILS: OrderDetailsResponse = {
-  reference: "LC-7K3F9Q",
-  status: "pending_payment",
-  product: { code: "A12", variant: "M", name: "Linen shirt" },
-  quantity: 1,
-  unit_price_minor: 2500,
-  total_minor: 2500,
-  currency: "EUR",
-  reserved_until: "2026-10-02T18:15:00Z",
-  shipping_address: null,
-  paid_at: null,
-  expired_at: null,
-};
 
 async function fill(reference: string, token?: string) {
   await fireEvent.changeText(await screen.findByLabelText("Reference"), reference);
@@ -31,14 +17,18 @@ async function fill(reference: string, token?: string) {
 describe("adding an order", () => {
   it("checks the pair with the API, the token in the header only, then stores it", async () => {
     const token = tokenAt(5);
-    const api = new FakeApi().on("GET", "/api/v1/orders/LC-7K3F9Q/details", json(200, DETAILS));
+    const api = new FakeApi().on(
+      "GET",
+      "/api/v1/orders/LC-7K3F9Q/details",
+      json(200, orderDetails()),
+    );
     const { store } = memoryOrderStore();
 
     const app = await renderRoutes("/orders/add", { api, store });
     await fill("lc-7k3f9q", token);
 
     await waitFor(() => {
-      expect(app.getPathname()).toBe("/orders");
+      expect(app.getPathname()).toBe("/orders/LC-7K3F9Q");
     });
     expect(await store.tokenFor("LC-7K3F9Q")).toBe(token);
     const [request] = api.sent("GET", "/api/v1/orders/LC-7K3F9Q/details");
@@ -48,14 +38,18 @@ describe("adding an order", () => {
 
   it("fills both fields from a whole pasted link", async () => {
     const token = tokenAt(6);
-    const api = new FakeApi().on("GET", "/api/v1/orders/LC-7K3F9Q/details", json(200, DETAILS));
+    const api = new FakeApi().on(
+      "GET",
+      "/api/v1/orders/LC-7K3F9Q/details",
+      json(200, orderDetails()),
+    );
     const { store } = memoryOrderStore();
 
     const app = await renderRoutes("/orders/add", { api, store });
     await fill(`livecart://link/LC-7K3F9Q#t=${token}`);
 
     await waitFor(() => {
-      expect(app.getPathname()).toBe("/orders");
+      expect(app.getPathname()).toBe("/orders/LC-7K3F9Q");
     });
     expect(await store.tokenFor("LC-7K3F9Q")).toBe(token);
   });
