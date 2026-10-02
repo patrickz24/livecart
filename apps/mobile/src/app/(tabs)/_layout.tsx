@@ -12,7 +12,9 @@ export default function TabsLayout() {
         headerTintColor: color.onPrimary,
         tabBarActiveTintColor: color.primary,
         tabBarInactiveTintColor: color.textMuted,
-        // Labels only: the app ships no icon font.
+        // Labels only: the tabs have no icons. (The Android bundle does hold
+        // MaterialSymbols_400Regular.ttf, which expo-router brings through
+        // expo-symbols, but nothing here draws with it.)
         tabBarIconStyle: { display: "none" },
         tabBarLabelStyle: { fontSize: fontSize.body },
       }}
