@@ -90,6 +90,30 @@ describe("an order's detail", () => {
     expect(await screen.findByText("Not shipped yet: the parcel is being prepared.")).toBeTruthy();
   });
 
+  it("says when the server is unavailable, and loads the order when asked again", async () => {
+    const { store } = await storedOrder();
+    const api = new FakeApi().on(
+      "GET",
+      DETAILS,
+      json(503, { detail: "Database unavailable" }, { "Retry-After": "1" }),
+    );
+
+    await renderRoutes("/orders/LC-7K3F9Q", { api, store });
+
+    expect(await screen.findByText("The order cannot be loaded")).toBeTruthy();
+    expect(
+      screen.getByText("The server is unavailable right now. Try again in a moment."),
+    ).toBeTruthy();
+    // Unavailable is not unknown: the order stays on this phone.
+    expect(screen.queryByRole("button", { name: "Remove it from this phone" })).toBeNull();
+    expect(await store.tokenFor("LC-7K3F9Q")).toBe(tokenAt(1));
+
+    api.on("GET", DETAILS, json(200, orderDetails()));
+    await fireEvent.press(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Awaiting payment")).toBeTruthy();
+  });
+
   it("asks nothing of the API for an order this phone has no token for", async () => {
     const api = new FakeApi();
 
