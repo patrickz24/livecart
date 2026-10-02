@@ -81,3 +81,39 @@ export function signedInApi(token = "access-1"): FakeApi {
     .on("POST", "/api/v1/auth/refresh", tokenAnswer(token))
     .on("GET", "/api/v1/auth/me", Response.json(SELLER));
 }
+
+/**
+ * An SSE route of the fake API: each request gets a streaming 200 whose body
+ * the test writes with `push`; an aborted request errors its body, as fetch does.
+ */
+export function eventStream() {
+  const encoder = new TextEncoder();
+  const opened: { request: Request; push(text: string): void }[] = [];
+  const handler = (request: Request): Response => {
+    let controller: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const body = new ReadableStream<Uint8Array>({
+      start(streamController) {
+        controller = streamController;
+      },
+    });
+    request.signal.addEventListener("abort", () => {
+      controller?.error(request.signal.reason);
+    });
+    opened.push({ request, push: (text) => controller?.enqueue(encoder.encode(text)) });
+    return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+  };
+  return {
+    handler,
+    opened,
+    /** Write one SSE message to the latest connection. */
+    send(event: string, data: unknown, id?: string) {
+      const last = opened.at(-1);
+      if (last === undefined) {
+        throw new Error("the stream is not open yet");
+      }
+      last.push(
+        `${id === undefined ? "" : `id: ${id}\n`}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`,
+      );
+    },
+  };
+}

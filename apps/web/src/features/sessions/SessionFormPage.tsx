@@ -1,7 +1,7 @@
 import type { LiveSessionResponse } from "@livecart/api-client";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import { useLocation, useNavigate, useParams } from "react-router";
+import { Link, useLocation, useNavigate, useParams } from "react-router";
 
 import { ApiError, describeError } from "../../api/errors";
 import { keys, productsQuery, sessionQuery } from "../../api/queries";
@@ -85,6 +85,12 @@ export function EditSessionPage() {
         <div className="flex flex-wrap items-center gap-3">
           <PageTitle title={`Edit ${session.data.title}`}>{session.data.title}</PageTitle>
           <Badge tone={status.tone}>{status.label}</Badge>
+          <Link
+            to={`/sessions/${session.data.id}/live`}
+            className="text-sm font-medium text-brand underline"
+          >
+            Open the live view
+          </Link>
         </div>
         <LifecycleControls session={session.data} />
       </div>

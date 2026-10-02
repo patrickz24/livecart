@@ -1,4 +1,4 @@
-/** Formatting for the seller's locale: money in minor units, dates. */
+/** Formatting for the seller's locale: money in minor units, dates, durations. */
 
 const moneyFormats = new Map<string, Intl.NumberFormat>();
 
@@ -48,4 +48,20 @@ const dateTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeS
 
 export function formatDateTime(iso: string): string {
   return dateTime.format(new Date(iso));
+}
+
+const time = new Intl.DateTimeFormat(undefined, { timeStyle: "medium" });
+
+export function formatTime(iso: string): string {
+  return time.format(new Date(iso));
+}
+
+/** A countdown as "14:05", or "1:02:03" past an hour; never negative. */
+export function formatCountdown(milliseconds: number): string {
+  const total = Math.max(0, Math.ceil(milliseconds / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = total % 60;
+  const mmss = `${String(minutes).padStart(hours > 0 ? 2 : 1, "0")}:${String(seconds).padStart(2, "0")}`;
+  return hours > 0 ? `${String(hours)}:${mmss}` : mmss;
 }

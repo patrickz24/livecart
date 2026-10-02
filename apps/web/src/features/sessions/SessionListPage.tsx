@@ -80,10 +80,17 @@ export function SessionListPage() {
                     </Badge>
                   </td>
                   <td className="px-4 py-3 text-ink-muted">{formatDateTime(session.created_at)}</td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <Link
+                      to={`/sessions/${session.id}/live`}
+                      className="font-medium text-brand underline"
+                      aria-label={`Live view of ${session.title}`}
+                    >
+                      Live view
+                    </Link>
                     <Link
                       to={`/sessions/${session.id}/edit`}
-                      className="font-medium text-brand underline"
+                      className="ml-4 font-medium text-brand underline"
                       aria-label={`Edit ${session.title}`}
                     >
                       Edit
