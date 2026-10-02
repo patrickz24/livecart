@@ -7,7 +7,6 @@ import pytest
 import structlog
 
 from livecart_core.application.create_shipment import (
-    CARRIER_CALL_TIMEOUT,
     SHIPMENT_FALLBACK_GRACE,
     CreateShipment,
     ShipmentCreationOutcome,
@@ -33,6 +32,7 @@ from livecart_core.testing.fakes import (
     InMemoryShipmentRepository,
 )
 from livecart_core.testing.polling import until
+from livecart_core.testing.virtual_time import on_virtual_time
 from livecart_worker.metrics import WorkerMetrics
 from livecart_worker.shipments import (
     run_shipments,
@@ -116,6 +116,11 @@ class SlowCarrier(FakeCarrierProvider):
         return await super().create_shipment(request)
 
 
+# On the virtual clock, the budget's cut and the check before the next order
+# read the same time. On the system's clock, the cut could come up to a tick
+# (15.6 ms on Windows) before ``loop.time()`` reached the deadline, and the
+# next order then started, and was cut at once.
+@on_virtual_time
 async def test_a_slow_carrier_holds_a_tick_for_its_budget_and_the_fallback_ships_the_rest() -> None:
     world = World()
     carrier = SlowCarrier(world.clock)
@@ -127,9 +132,10 @@ async def test_a_slow_carrier_holds_a_tick_for_its_budget_and_the_fallback_ships
     with structlog.testing.capture_logs() as logs:
         created = await ship_paid(ship, orders, world.metrics, budget_s=0.1)
 
-    # The first call was cut at the budget, the others never started: far
-    # from the three call timeouts (30 s) the tick would otherwise have spent.
-    assert loop.time() - started < CARRIER_CALL_TIMEOUT.total_seconds()
+    # The first call was cut at the budget, the others never started: the
+    # tick took its budget, not the three call timeouts (30 s) it would
+    # otherwise have spent.
+    assert loop.time() - started == pytest.approx(0.1)
     assert [item.outcome for item in created] == [ShipmentCreationOutcome.RETRY]
     assert isinstance(created[0].error, TimeoutError)
     assert [(log["event"], log["order_id"]) for log in logs] == [
