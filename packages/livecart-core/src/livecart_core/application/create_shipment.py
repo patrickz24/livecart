@@ -17,14 +17,16 @@ shipment is created out of any transaction, in this order:
 The worker creates the shipment of every order a tick of its payment loop,
 or a reconciliation of the expiry sweep, paid, once that tick has ended, one
 order after the other: no connection is held during a carrier's call, and
-never two at once. Whatever fails then (the worker stops, the carrier or
-PostgreSQL is down) is left to the fallback, ``ShipUnshippedOrders``, which
-the shipments loop runs every minute: the paid orders still without a
-shipment (``ShipmentRepository.unshipped_orders``, ``FOR UPDATE SKIP
-LOCKED``), paid ``SHIPMENT_FALLBACK_GRACE`` (30 s) ago at least, so that it
-leaves the orders being shipped to the payment's own path, get theirs the
-same way. Two creations of one shipment cost a carrier call more, never a
-second shipment.
+never two at once. A deadline bounds that time, so that a slow carrier never
+stalls the loop: no carrier's call runs past it, and the worker starts no
+creation after it. Whatever fails then, or comes after the deadline (the
+worker stops, the carrier or PostgreSQL is down, the carrier is slow), is
+left to the fallback, ``ShipUnshippedOrders``, which the shipments loop runs
+every minute: the paid orders still without a shipment
+(``ShipmentRepository.unshipped_orders``, ``FOR UPDATE SKIP LOCKED``), paid
+``SHIPMENT_FALLBACK_GRACE`` (30 s) ago at least, so that it leaves the
+orders being shipped to the payment's own path, get theirs the same way. Two
+creations of one shipment cost a carrier call more, never a second shipment.
 
 A paid order without an address cannot ship. The checkout refuses to start
 without one, so it needs a person (``no_address``, logged at ERROR); the
@@ -107,15 +109,26 @@ class CreateShipment:
         self._clock = clock
         self._call_timeout = call_timeout
 
-    async def __call__(self, order: OrderRecord) -> CreatedShipment:
-        """The order's shipment; it never raises for the carrier or the database."""
+    async def __call__(
+        self, order: OrderRecord, *, deadline: float | None = None
+    ) -> CreatedShipment:
+        """The order's shipment; it never raises for the carrier or the database.
+
+        ``deadline``, a time of the event loop's clock (``loop.time()``, what
+        ``asyncio.timeout_at`` reads), ends the carrier's call then if
+        ``call_timeout`` has not ended it before: a ``retry``, for the
+        fallback.
+        """
         if order.status is not OrderStatus.PAID:
             raise ValueError(f"order {order.id} is {order.status}: only a paid order ships")
         address = order.shipping_address
         if address is None:
             return CreatedShipment(order, ShipmentCreationOutcome.NO_ADDRESS)
+        call_ends = asyncio.get_running_loop().time() + self._call_timeout.total_seconds()
+        if deadline is not None:
+            call_ends = min(call_ends, deadline)
         try:
-            async with asyncio.timeout(self._call_timeout.total_seconds()):
+            async with asyncio.timeout_at(call_ends):
                 ref = await self._carrier.create_shipment(
                     ShipmentRequest(order.id, order.reference, address)
                 )

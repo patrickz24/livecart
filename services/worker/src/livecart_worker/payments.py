@@ -10,8 +10,9 @@ the next one tries again: the events wait in the registry, durable, for as
 long as it takes, a worker stopped for a while included.
 
 Once a tick has ended, the orders it paid get their shipments
-(``shipments.ship_paid``), one after the other, out of any transaction; one
-the tick could not ship is left to the shipments loop's fallback.
+(``shipments.ship_paid``), one after the other, out of any transaction, for
+2 s at most, so that a slow carrier never stalls the payments; one the tick
+could not ship in that time is left to the shipments loop's fallback.
 
 What needs a person is logged at ERROR: an event whose amount or currency
 is not its order's, one that failed its 10 attempts, and a payment that

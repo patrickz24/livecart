@@ -12,6 +12,7 @@ from uuid import UUID
 import pytest
 
 from livecart_core.application.create_shipment import (
+    CARRIER_CALL_TIMEOUT,
     SHIPMENT_FALLBACK_GRACE,
     CreateShipment,
     ShipmentCreationOutcome,
@@ -171,6 +172,34 @@ async def test_a_carrier_too_slow_is_cut_at_its_timeout() -> None:
 
     assert created.outcome is ShipmentCreationOutcome.RETRY
     assert isinstance(created.error, TimeoutError)
+
+
+async def test_a_deadline_cuts_the_carriers_call_before_its_timeout() -> None:
+    world = Harness()
+    order = await paid_order(world.database)
+    create = CreateShipment(
+        world.database.shipments, SlowCarrier(world.clock), world.events, world.clock
+    )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    created = await create(order, deadline=started + 0.05)
+
+    assert created.outcome is ShipmentCreationOutcome.RETRY
+    assert isinstance(created.error, TimeoutError)
+    # Cut at the deadline, long before the call's own timeout.
+    assert loop.time() - started < CARRIER_CALL_TIMEOUT.total_seconds() / 2
+    assert world.database.tables.shipments == {}
+    assert world.events.published == []
+
+
+async def test_a_deadline_later_than_the_call_leaves_it_alone() -> None:
+    world = Harness()
+    order = await paid_order(world.database)
+
+    created = await world.create(order, deadline=asyncio.get_running_loop().time() + 60)
+
+    assert created.outcome is ShipmentCreationOutcome.CREATED
 
 
 async def test_any_other_failure_is_reported_and_left_to_the_fallback() -> None:

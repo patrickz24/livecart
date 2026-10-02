@@ -6,7 +6,11 @@ own units have committed, out of any transaction:
 - the tick that paid the order: the payment events loop (``payments``) and
   the reconciliation of the expiry sweep (``sweeps``) hand ``ship_paid`` the
   orders their tick paid, once it has ended, and their shipments are
-  created one order after the other;
+  created one order after the other, within ``SHIP_PAID_BUDGET_S`` (2 s):
+  no carrier's call runs past it and no creation starts after it, so that a
+  slow carrier delays the loop's next tick by that much at most, never by a
+  10 s call timeout per order. The orders it leaves are logged, for the
+  fallback;
 - the shipments loop, every ``SHIPMENT_SYNC_INTERVAL_S`` (60 s): the
   fallback (``ShipUnshippedOrders``) ships the paid orders still without a
   shipment, those a worker stopped, or a carrier or PostgreSQL down, left
@@ -24,8 +28,10 @@ tracking asked about is counted by outcome
 applied by status (``livecart_shipment_transitions_total{status}``), and
 logged. What needs a person is logged at ERROR: a paid order without an
 address, a creation or a tracking that failed for another reason than an
-outage. The logs carry the order's id and reference and the shipment's id,
-never the tracking number, which follows a parcel to its buyer's door.
+outage; an order the budget left to the fallback is a warning
+(``shipment_left_to_fallback``). The logs carry the order's id and reference
+and the shipment's id, never the tracking number, which follows a parcel to
+its buyer's door.
 """
 
 import asyncio
@@ -53,6 +59,11 @@ from livecart_worker.metrics import ShipmentPath, WorkerMetrics
 logger = structlog.get_logger(__name__)
 
 SHIPMENTS_INTERVAL_S: Final = 60.0
+# The most a tick spends on the shipments of the orders it paid: the payment
+# events loop's interval (payments.PAYMENT_EVENTS_INTERVAL_S). The fallback
+# ships what it leaves once their SHIPMENT_FALLBACK_GRACE (30 s) has passed,
+# at its next tick.
+SHIP_PAID_BUDGET_S: Final = 2.0
 
 
 def _log(created: CreatedShipment, via: ShipmentPath) -> None:
@@ -91,12 +102,37 @@ def _record(
 
 
 async def ship_paid(
-    ship: CreateShipment, orders: Iterable[OrderRecord], metrics: WorkerMetrics | None = None
+    ship: CreateShipment,
+    orders: Iterable[OrderRecord],
+    metrics: WorkerMetrics | None = None,
+    *,
+    budget_s: float = SHIP_PAID_BUDGET_S,
 ) -> tuple[CreatedShipment, ...]:
-    """The shipments of the orders a tick paid, one after the other, once the tick has ended."""
-    created = await ship.each(orders)
-    _record(created, ShipmentPath.PAYMENT, metrics)
-    return created
+    """The shipments of the orders a tick paid, one after the other, once the tick has ended.
+
+    Within ``budget_s``: a carrier's call still running then is cut (a
+    ``retry``), and the orders after it are left, each logged, for the
+    fallback. What comes back is the creations that started, in order.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + budget_s
+    created: list[CreatedShipment] = []
+    left: list[OrderRecord] = []
+    for order in orders:
+        if loop.time() >= deadline:
+            left.append(order)
+        else:
+            created.append(await ship(order, deadline=deadline))
+    _record(tuple(created), ShipmentPath.PAYMENT, metrics)
+    for order in left:
+        logger.warning(
+            "shipment_left_to_fallback",
+            order_id=str(order.id),
+            reference=order.reference.value,
+            via=ShipmentPath.PAYMENT.value,
+            budget_s=budget_s,
+        )
+    return tuple(created)
 
 
 async def ship_unshipped_once(

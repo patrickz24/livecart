@@ -12,7 +12,7 @@ from livecart_core.application.apply_payment_events import (
     ApplyPaymentEvent,
     ProcessPaymentEvents,
 )
-from livecart_core.application.create_shipment import CreateShipment
+from livecart_core.application.create_shipment import CARRIER_CALL_TIMEOUT, CreateShipment
 from livecart_core.application.dto import (
     CheckoutEventType,
     EventClaim,
@@ -22,6 +22,8 @@ from livecart_core.application.dto import (
     PaymentSettlement,
     ReservationRequest,
     SessionEventType,
+    ShipmentRef,
+    ShipmentRequest,
 )
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.domain.codes import ProductCode, Variant
@@ -303,6 +305,38 @@ async def test_the_orders_a_tick_paid_get_their_shipments_once_it_has_ended(worl
         SessionEventType.SHIPMENT_UPDATED,
     ]
     assert world.sample("livecart_shipment_creations_total", outcome="created", via="payment") == 1
+
+
+class SilentCarrier(FakeCarrierProvider):
+    """A carrier that never answers a creation."""
+
+    async def create_shipment(self, request: ShipmentRequest) -> ShipmentRef:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+
+async def test_a_carrier_that_never_answers_holds_the_tick_for_its_budget_only(
+    world: World,
+) -> None:
+    [order] = world.database.tables.orders.values()
+    await world.database.orders.set_shipping_address(order.id, TEST_ADDRESS)
+    await world.record()
+    ship = CreateShipment(
+        world.database.shipments, SilentCarrier(world.clock), world.events, world.clock
+    )
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    with structlog.testing.capture_logs() as logs:
+        await process_once(world.process, world.metrics, ship)
+
+    # The payment is applied, and its shipment's call cut at the tick's budget
+    # (2 s), not at the carrier's 10 s timeout: the next payment tick is not stalled.
+    assert loop.time() - started < CARRIER_CALL_TIMEOUT.total_seconds()
+    assert world.order_status is OrderStatus.PAID
+    assert [log["event"] for log in logs] == ["payment_event_handled", "shipment_creation_deferred"]
+    assert world.sample("livecart_shipment_creations_total", outcome="retry", via="payment") == 1
+    assert world.database.tables.shipments == {}
 
 
 async def test_a_tick_that_paid_nothing_ships_nothing(world: World) -> None:

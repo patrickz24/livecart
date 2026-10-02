@@ -13,7 +13,8 @@ One tick runs the three phases of the plan's step 14, one after the other:
    registry of payment events; anything else waits for the next lease.
 
 An order the reconciliation paid gets its shipment once the tick has
-ended (``shipments.ship_paid``), as one the payment events loop paid does.
+ended (``shipments.ship_paid``), as one the payment events loop paid does,
+within the same 2 s, the rest left to the shipments loop's fallback.
 
 Every worker runs the loop; their sweeps skip each other's orders (``FOR
 UPDATE SKIP LOCKED``, and the lease), so a busy deployment sweeps faster

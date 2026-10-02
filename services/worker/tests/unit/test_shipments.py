@@ -1,4 +1,4 @@
-"""The shipments of the paid orders from the worker's loops: logs, metrics, the fallback's ticks."""
+"""The shipments of the paid orders from the worker's loops: logs, metrics, budget, fallback."""
 
 import asyncio
 from datetime import datetime, timedelta
@@ -7,8 +7,10 @@ import pytest
 import structlog
 
 from livecart_core.application.create_shipment import (
+    CARRIER_CALL_TIMEOUT,
     SHIPMENT_FALLBACK_GRACE,
     CreateShipment,
+    ShipmentCreationOutcome,
     ShipUnshippedOrders,
 )
 from livecart_core.application.dto import (
@@ -16,6 +18,8 @@ from livecart_core.application.dto import (
     OrderRecord,
     SessionEventType,
     ShipmentRecord,
+    ShipmentRef,
+    ShipmentRequest,
 )
 from livecart_core.application.ports import ServiceUnavailable
 from livecart_core.application.sync_shipment_tracking import SyncShipmentTracking
@@ -99,6 +103,75 @@ async def test_what_needs_a_person_is_an_error_and_an_outage_a_warning() -> None
     assert logs[1]["error"] == "ServiceUnavailable"
     assert world.creations("no_address", "payment") == 1
     assert world.creations("retry", "payment") == 1
+
+
+class SlowCarrier(FakeCarrierProvider):
+    """A carrier whose creations answer after a minute, until it is fast again."""
+
+    fast = False
+
+    async def create_shipment(self, request: ShipmentRequest) -> ShipmentRef:
+        if not self.fast:
+            await asyncio.sleep(60)
+        return await super().create_shipment(request)
+
+
+async def test_a_slow_carrier_holds_a_tick_for_its_budget_and_the_fallback_ships_the_rest() -> None:
+    world = World()
+    carrier = SlowCarrier(world.clock)
+    ship = CreateShipment(world.shipments, carrier, world.events, world.clock)
+    orders = [await paid_order(world.database, comment=f"comment-{n}") for n in range(3)]
+    loop = asyncio.get_running_loop()
+    started = loop.time()
+
+    with structlog.testing.capture_logs() as logs:
+        created = await ship_paid(ship, orders, world.metrics, budget_s=0.1)
+
+    # The first call was cut at the budget, the others never started: far
+    # from the three call timeouts (30 s) the tick would otherwise have spent.
+    assert loop.time() - started < CARRIER_CALL_TIMEOUT.total_seconds()
+    assert [item.outcome for item in created] == [ShipmentCreationOutcome.RETRY]
+    assert isinstance(created[0].error, TimeoutError)
+    assert [(log["event"], log["order_id"]) for log in logs] == [
+        ("shipment_creation_deferred", str(orders[0].id)),
+        ("shipment_left_to_fallback", str(orders[1].id)),
+        ("shipment_left_to_fallback", str(orders[2].id)),
+    ]
+    assert logs[1] == {
+        "event": "shipment_left_to_fallback",
+        "log_level": "warning",
+        "order_id": str(orders[1].id),
+        "reference": orders[1].reference.value,
+        "via": "payment",
+        "budget_s": 0.1,
+    }
+    assert world.creations("retry", "payment") == 1
+    assert world.creations("created", "payment") == 0
+    assert world.database.tables.shipments == {}
+
+    # The carrier answers again: once their grace has passed, the fallback ships all three.
+    carrier.fast = True
+    world.clock.advance(SHIPMENT_FALLBACK_GRACE + timedelta(seconds=1))
+    await ship_unshipped_once(
+        ShipUnshippedOrders(world.shipments, ship, world.clock), world.metrics
+    )
+
+    assert world.creations("created", "fallback") == 3
+    assert {shipment.order_id for shipment in world.database.tables.shipments.values()} == {
+        order.id for order in orders
+    }
+    assert len(world.events.of_type(SessionEventType.SHIPMENT_UPDATED)) == 3
+
+
+async def test_a_fast_carrier_ships_every_order_within_the_budget() -> None:
+    world = World()
+    orders = [await paid_order(world.database, comment=f"comment-{n}") for n in range(5)]
+
+    with structlog.testing.capture_logs() as logs:
+        created = await ship_paid(world.ship, orders, world.metrics)
+
+    assert [item.outcome for item in created] == [ShipmentCreationOutcome.CREATED] * 5
+    assert "shipment_left_to_fallback" not in {log["event"] for log in logs}
 
 
 class LostOrders(InMemoryShipmentRepository):
