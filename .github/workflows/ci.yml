@@ -105,8 +105,10 @@ jobs:
       - name: TypeScript
         run: pnpm -r typecheck
 
+      # One package at a time, as `make test` does: Vitest and Jest each use
+      # every core, and in parallel they push each other's tests past their timeouts.
       - name: Vitest and Jest
-        run: pnpm -r test
+        run: pnpm -r --workspace-concurrency=1 test
 
       - name: Script tests (node:test)
         run: pnpm run test:scripts

@@ -21,11 +21,14 @@ lint: ## Check the Node version, lint, check formatting and types, then the vers
 	pnpm -r typecheck
 	pnpm run check:pins
 
+# The JS packages' suites run one after another: the web's Vitest and the
+# mobile app's Jest each use every core, and together they slow down the
+# timing-sensitive tests of the other past their timeouts.
 test: ## Check the Node version, start PostgreSQL and Redis, then run every suite and the coverage gate
 	pnpm run check:node
 	docker compose up --detach --wait postgres redis
 	uv run --locked pytest --cov
-	pnpm -r test
+	pnpm -r --workspace-concurrency=1 test
 	pnpm run test:scripts
 
 seed: ## Load the demo data again, creating only what is missing (the stack seeds itself on up)
