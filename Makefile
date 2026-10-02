@@ -19,6 +19,7 @@ lint: ## Check the Node version, lint, check formatting and types, then the vers
 	pnpm run lint
 	pnpm exec prettier --check .
 	pnpm -r typecheck
+	pnpm exec tsc -p loadtest
 	pnpm run check:pins
 
 # The JS packages' suites run one after another: the web's Vitest and the

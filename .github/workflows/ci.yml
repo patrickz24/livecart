@@ -105,6 +105,10 @@ jobs:
       - name: TypeScript
         run: pnpm -r typecheck
 
+      # The k6 scripts belong to no package: k6 runs them, tsc only checks them.
+      - name: TypeScript of the k6 load test
+        run: pnpm exec tsc -p loadtest
+
       # One package at a time, as `make test` does: Vitest and Jest each use
       # every core, and in parallel they push each other's tests past their timeouts.
       - name: Vitest and Jest

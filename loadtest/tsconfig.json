@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  // The k6 scripts: k6 strips their types itself, so tsc only checks them. The
+  // imports name their .ts files, as k6 resolves no extension.
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "types": [],
+    "noEmit": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["**/*.ts"]
+}
