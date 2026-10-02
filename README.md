@@ -6,89 +6,75 @@ A FastAPI API, an asyncio worker and a Redis Streams queue absorb comment spikes
 
 > **Personal demo project, fictional brand, not affiliated with any company.**
 
-## Status
+## Demo
 
-Milestone 8 of 9: the white-label buyer app. It stands on the seller dashboard of milestone 7, the mock carrier of milestone 6, the payment of milestone 5, the comment ingestion, the worker, the real-time events and the optional LLM fallback of milestone 4, the HTTP API, the atomic stock reservation and the order references of milestone 3, the domain and parser of milestone 2, and the monorepo, CI and Docker stack of milestone 1.
+**Demo GIF to be recorded.**
 
-- **Brands** (8): one white-label build per folder of `apps/mobile/brands/`: `brand.json` (name, slug, scheme, bundle identifier, Android package, the seller of its storefront, three colors, four images) and its images. `app.config.ts` builds the brand `APP_BRAND` names, after checking it against a strict zod schema: an unknown brand, a field missing, unknown or malformed, or an image missing fails `expo start`, `expo export` and EAS alike, with every reason. Two brands: LiveCart Demo (scheme `livecart`, seller `demo-seller`) and Pomelune, an invented name (scheme `samplelive`, seller `sample-shop`); their identifiers, `com.example.livecart.<brand>`, are placeholders to replace before any store build. `eas.json` has one profile per brand (Node 24.21.0, pnpm 12.6.0, Corepack off), `packages/design-tokens` the shared tokens a brand recolors, and a build bundles its own brand's logo and no other's ([ADR 0013](docs/adr/0013-white-label-brand-config-eas-profiles-design-tokens.md)).
-- **Live** (8): the Live tab shows the storefront of the brand's seller, through the generated client: the live session, each product's price and the stock left; a 404 shows "Store not found", since the brand then names no seller of that API.
-- **My orders** (8): each order's token lives in `expo-secure-store` only, one entry per order and an index of 50 references at most, the oldest forgotten for a 51st, and leaves it only for the `Authorization` header of its own order's requests. Orders come in through "Add order" (the reference and the token that `livecart-simulate --text` prints, or the whole link), checked with the API before anything is stored, or through a link, `<scheme>://link/LC-XXXXXX#t=<token>`, whose fragment no server ever receives and which leaves the navigation once the token is stored.
-- **Order and tracking** (8): an order's status, product, total and address, then, once paid, its parcel's carrier, tracking number and step, all through the token routes, limited per token rather than per address.
-- **Payment** (8): the address typed in the app, then the checkout opened in an auth session (`openAuthSessionAsync`, ephemeral on iOS, a Custom Tab on Android). The bridge page's button returns to `<scheme>://payment-return` (Expo Go: `exp://...`) with the outcome and the reference only; the app then reads the order's status every 3 s, then less often, for 60 s at most, until it is paid or expired.
-- **Quality** (8): 75 Jest tests (jest-expo on Jest 29, React Native Testing Library 14, expo-router's testing library over the real routes, on a fake API and an in-memory SecureStore), among them a snapshot per brand, the refusals of the brand config, "Store not found", the store with 50 orders, the `#t=` fragment and the payment return. CI's new `mobile` job runs expo-doctor and an Android `expo export` of each brand; the JS packages' suites now run one after another.
-
-**The end criterion of milestone 8 is not met yet: it needs a phone and an Expo account.** The plan asks that the app runs in Expo Go on a physical Android phone; that the phone, on the LAN, reaches `/api/v1` and the bridge page through nginx; that the buyer adds an order from the simulator's output and pays it; and that the payment return is checked, and dated, on the development build, iOS being "configured, not built".
-
-- Run, on 2026-10-02, on the development PC, by the coding agent: TypeScript, ESLint, Prettier and the 75 Jest tests of the app; `make lint`; expo-doctor (21 checks out of 21) and `expo export --platform android` for both brands, the Pomelune bundle holding its own logo only; `expo config` refusing an unknown brand; the API's return-URL policy taking `livecart://payment-return`, `samplelive://payment-return` and Expo Go's `exp://192.168.1.20:8081/--/payment-return` in development; the running stack's storefronts read with curl (`demo-seller` live, `sample-shop` without a live, an unknown slug 404).
-- Not run: the app on any phone or emulator, Expo Go, and EAS (`eas init`, the Android development build), hence the deep links and the payment return on a device; the iOS build, configured only.
-- To run it, as [CONTRIBUTING.md](CONTRIBUTING.md#buyer-app) says: the PC's LAN address in `ALLOWED_HOSTS`, `PUBLIC_API_BASE_URL` and `apps/mobile/.env`'s `EXPO_PUBLIC_API_URL`, `npx expo start` in `apps/mobile` and Expo Go on the phone, then the demo path through "Add order"; then, with an Expo account, `eas init` and `npx eas-cli@24.8.0 build --profile demo --platform android` for the development build, a buyer link and a payment return on it.
-
-From milestone 7, the seller dashboard the orders come from:
-
-- **Sign-in** (7): `/login`, then every page behind `RequireAuth`. The access token stays in the tab's memory, never in a storage a script could read; a reload trades the HttpOnly `lc_refresh` cookie for a new one. One refresh at a time: the callers of a tab share it, and tabs take turns under a Web Lock (`navigator.locks`), so no two tabs ever send the same refresh token. A request answered 401 is retried once after that refresh; an unreachable server never signs the seller out ([ADR 0017](docs/adr/0017-dashboard-auth-and-event-stream-client.md)).
-- **Sessions and products** (7): `/sessions`, and `/sessions/new` and `/sessions/:id/edit`, one react-hook-form form for a session and its products, checked by a zod schema typed against the generated request bodies, with the API's 422 shown on the field it names. Stock moves by restock deltas through the idempotent endpoint, under an `Idempotency-Key` kept for every retry of the same change. "Start live" and "End live" follow the session's machine, ending only after a confirmation, and a 409 shows the status the server holds.
-- **Live view** (7): `/sessions/:id/live`, from the session's SSE stream read with `fetch` and eventsource-parser: stock per product, orders with their reservation countdown, status, `paid_after_expiry` badge and shipment, intents with an "AI" badge for the LLM's, and rejected comments by reason. A pure reducer, `applyEvent`, applies each event by upsert, so a duplicate changes nothing; the stream resumes with `Last-Event-ID`, backs off from 1 to 30 s, refreshes its token on a 401, reloads the snapshot after a gap, drops a connection silent for 45 s, and shows a banner once it has been down for 5 s. `/orders/:reference` shows one order. nginx relays the stream unbuffered.
-- **Look and feel** (7): English UI, plain Tailwind CSS 4 with a theme of a few tokens in `app.css`, no component library; labelled fields with announced errors, a visible focus ring, the focus on each new page's heading, a skip link. The built SPA keeps its CSP (`default-src 'self'`): one stylesheet and one script of its own origin, nothing inline, no `eval`.
-
-**The end criterion of milestone 7 is met, with what a browser in the agent's session could show.** The plan asks that events arrive live on <http://localhost:8080>, and that the stream resumes after `docker compose restart api`. On 2026-10-02, after `docker compose up -d --build --wait`, in a browser pane driven by the coding agent: the demo seller signed in, the friday-drop live view showed the simulator's orders and stock changing, and `docker compose restart api` cut its stream for about 4 s, after which new orders kept arriving; a 30 s stop of the API showed the outage banner 5 s after the cut and live updates again once the API was back. The same stream client, run under Node through nginx, logged its reconnection with `Last-Event-ID` and no new snapshot. Not run: a session created through the form against the stack (the form's requests and the API's 422 and 409 bodies were checked separately, with tests and curl), two real tabs refreshing at the same moment (the lock is tested with a fake one), and any browser other than the agent's Chromium pane.
-
-From milestone 6, the mock carrier whose parcels the dashboard follows:
-
-- **Carrier port** (6): one `CarrierProvider` port of three calls (create a shipment, idempotent per order; read its tracking; cancel it). The mock is the default and needs no account: it keeps no state, and derives each shipment's carrier ref and `MOCK-` tracking number from the order's id under `MOCK_CARRIER_SECRET`, and its status from the clock, one step every `MOCK_CARRIER_STEP_SECONDS` (120 s), so a parcel is delivered six minutes after its payment. DPD, Chronopost and DHL are documented stubs that refuse to start ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)).
-- **Shipments** (6): once a worker's tick has paid an order, the order's shipment is created at the carrier out of any transaction, within 2 s per tick so that a slow carrier never stalls the payments, and recorded once per order whatever the workers (`uq_shipments_order_id`). Every `SHIPMENT_SYNC_INTERVAL_S` (60 s), the shipments loop ships the paid orders a crash, an outage or a slow carrier left without one, then asks the carrier about the shipments in flight, each leased to one worker, and persists each move by compare-and-set.
-- **Tracking** (6): `GET /api/v1/orders/{reference}/tracking`, with the order's token, answers the carrier, the tracking number, the status and the time of the carrier's latest event, read from PostgreSQL; the reference alone never shows the tracking number. The seller's SSE stream gets one `shipment.updated` at the creation and one per move, and its snapshot carries each order's shipment as it stands. [CONTRIBUTING.md](CONTRIBUTING.md#shipments) follows one parcel.
-
-**The end criterion of milestone 6 is met.** The plan asks that a paid order's shipment progress, visible through the API and in SSE. On 2026-10-02, on the compose stack, an order of the simulator paid on the mock's page had its shipment `created` on its tracking route within seconds and `in_transit` two minutes later, and the seller's SSE stream showed its `shipment.updated` events to `out_for_delivery`, then `delivered`, six minutes after the payment.
-
-From milestone 5, the payment that the shipments follow:
-
-- **Payment provider** (5): one `PaymentProvider` port of four calls (create a hosted session, expire it, read it back, verify a webhook). The mock is the default and needs no account and no key: its hosted page is served by the API in development, and its Pay button posts a signed webhook as a provider would. Stripe Checkout runs in test mode with your own test keys; PayPal and Viva are documented stubs that refuse to start ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md)).
-- **Checkout** (5): with the order's token, the buyer records an address, then `POST /api/v1/orders/{reference}/checkout` extends the reservation to at least now + `PAYMENT_GRACE_SECONDS` (600 s) and only then creates the provider's session, under an idempotency key per attempt, 3 attempts at most. The provider sends the buyer back to a bridge page that reopens the app with the reference, never the token.
-- **Webhooks** (5): the signature is checked before anything is read, the event reduced to an allow-list without the customer's details and recorded once in PostgreSQL, then 200, with Redis up or down. Every worker applies that registry every 2 s, each event once whatever its deliveries, the amount checked against the order's.
-- **Expire-first** (5): the sweep never releases the stock of an order whose payment is in flight before the provider has expired the session. One worker at a time asks about each order (a 30 s lease), a session the buyer paid first is settled as paid, and an attempt left without its session gets the same one again under its key ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)). [CONTRIBUTING.md](CONTRIBUTING.md#payments) runs one mock payment end to end, and one expiry.
-
-**The end criterion of milestone 5 is half met.** The plan asks for the mock's flow without any key, and for a payment with Stripe's test card 4242 that reaches `paid`, visible in SSE.
-
-- Run: the mock's flow on the compose stack. On 2026-10-01, an order of the simulator, its address, its checkout and Pay on the mock's page gave `paid`, and the seller's SSE stream showed its `order.updated` with the status `paid`; a checkout left unpaid was expired at the mock, then its stock released.
-- Not run: the 4242 payment. There is no Stripe test key yet, so the Stripe adapter is verified only against `FakeStripeApi`, an in-memory stand-in of Stripe's API (no test calls Stripe), and the `stripe` compose profile, the Stripe CLI forwarding a test account's events through nginx, has never met a real account.
-- To run it, with the maintainer's own Stripe test keys in `.env`, never in a versioned file, as the [Payments section of CONTRIBUTING.md](CONTRIBUTING.md#payments) says: set `PAYMENT_PROVIDER=stripe` and `STRIPE_SECRET_KEY=sk_test_...`; set the secret that `docker compose --profile stripe run --rm stripe-cli listen --print-secret` prints as `STRIPE_WEBHOOK_SECRET`; `docker compose --profile stripe up -d --wait`; open the session's SSE stream, run the checkout and pay on Stripe's page with `4242 4242 4242 4242`, any future date and any CVC.
-
-From milestone 4, the comment path and the events the payment builds on:
-
-- **Comment ingestion** (4a): one signed webhook per platform, `POST /api/v1/webhooks/comments/{platform}`, in a common format (`IncomingComment`), its HMAC-SHA256 signature checked before anything is read. The simulator's adapter is real; Facebook, Instagram and TikTok are documented stubs that refuse to start. Each batch goes to a Redis stream in one pipeline and the webhook answers 202, or 503 with `Retry-After` once the workers' backlog reaches `QUEUE_MAX_DEPTH` ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md)).
-- **Worker** (4a): a consumer group reads the stream; a PostgreSQL inbox, with a lease per delivery, makes every comment count once whatever its deliveries; the parser reads it and one transaction reserves the stock and opens the order. Idle deliveries are reclaimed after 120 s, dead-lettered after 3 deliveries, and the settled history trimmed safely. Every 5 s, the reservations nobody paid expire and their stock is for sale again ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)). The buyer receives the order's reference and its access token, derived again at each delivery, on a development stream.
-- **Comment simulator** (4a): a live audience on the demo session, comments arriving as a Poisson process, mostly orders, some noise and some ambiguous ones ([CONTRIBUTING.md](CONTRIBUTING.md#comment-simulator)).
-- **Real time** (4b): each change is published to its session's Redis stream after its commit, and `GET /api/v1/live-sessions/{id}/events` streams it to the seller over SSE, after a snapshot and its cursor, resumable with `Last-Event-ID` ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md)). The `LiveSessionEvent` union is in the OpenAPI contract and the generated client.
-- **Observability** (4a to 4c): JSON logs with request and correlation ids, and Prometheus metrics on each process's internal port 9100, published nowhere ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md)).
-- **LLM fallback** (4c): optional. With `ANTHROPIC_API_KEY` set, the comments the parser leaves ambiguous go to Claude (`claude-opus-5` at low effort) in structured outputs, once per comment, and the domain checks the answer against the catalog before anything is reserved. A budget shared in Redis (200 calls per session, $1.00 a day) and 4 slots per worker, waited for 7 s at most, bound the cost and the wait; `scripts/llm_eval.py` measures a model on the corpus before any change ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md)). It has not been run against the real API yet. Without a key, everything runs on the parser alone.
-
-From milestone 3, the API, the reservation and the references that the worker builds on:
-
-- **Schema** (`livecart_core.infrastructure.db`): every table of the data model, from sellers to shipments, as SQLAlchemy Core metadata and an Alembic revision that a test compares with it, with UUID v7 keys, integer minor units and the plan's named constraints ([ADR 0003](docs/adr/0003-backend-stack-fastapi-sqlalchemy-core-alembic.md)).
-- **Reservation**: one conditional `UPDATE` in a READ COMMITTED transaction reserves the stock, and a partial unique index allows one pending order per buyer and product. A thousand concurrent reservations of 200 units, three times over, never oversell ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)).
-- **Order references and tokens**: `LC-` and six Crockford symbols, drawn again after a collision, and an access token derived by HMAC and stored as a hash only. The reference alone shows an order's status; its details need the token ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md)).
-- **Seller API**: login with argon2id, access tokens of 15 minutes, rotating refresh tokens in an HttpOnly cookie with a 30 s grace between tabs ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md)); live sessions from draft to live to ended; products; restock by delta under an `Idempotency-Key`. Every route filters by the seller and answers 404 for another seller's objects.
-- **Buyer API**: the storefront of a seller by its slug, and an order by its reference, in two tiers: the reference alone shows the status, and the order's token its details, then its address and checkout (milestone 5) and its tracking (milestone 6).
-- **Perimeter**: rate limits in Redis (per address, per seller, per account and per token), security headers, trusted hosts, a 1 MiB body limit and uvicorn trusting nginx alone for the client address ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md)).
-- **Demo data and accounts**: the one-shot `seed` service creates the demo sellers and sessions; `livecart-create-seller` opens other accounts ([CONTRIBUTING.md](CONTRIBUTING.md#demo-data)).
-
-The features described above arrive milestone by milestone; this README grows with them.
+<!--
+  Path: docs/assets/demo.gif (the file does not exist yet).
+  What to record, on the compose stack of the quickstart: the seller signing in
+  on http://localhost:8080; the "Friday drop" live view while the simulator's
+  comments come in (intents, orders with their countdown, stock going down);
+  one order paid on the mock provider's page, from the buyer app or with the
+  curl steps of CONTRIBUTING.md#payments, turning paid on the dashboard; then
+  its shipment moving on. Replace the line above with
+  ![LiveCart demo](docs/assets/demo.gif) once the file is committed.
+-->
 
 ## Quickstart
 
 With Docker (Docker Desktop with the WSL 2 backend on Windows):
 
 ```bash
-git clone <repository-url> livecart && cd livecart
+git clone <url> livecart && cd livecart
 cp .env.example .env
 docker compose up --build
 ```
 
-Then open the dashboard on <http://localhost:8080> and sign in as the demo seller, `demo-seller@livecart.test`, with the `SEED_DEMO_PASSWORD` of `.env`: the friday-drop session is live, and the simulator's comments show up in its live view. The interactive API documentation, in development only, is on <http://127.0.0.1:8000/docs>. The demo storefront is <http://localhost:8080/api/v1/storefronts/demo-seller>. `docker compose down --volumes` (or `make reset`) removes the stack and its data.
+Then open:
 
-The stack needs no third-party key: payments go through the mock provider and shipments through the mock carrier, and to try the LLM fallback, set `ANTHROPIC_API_KEY` in `.env` (the always-on simulator then spends the daily budget; `docker compose stop simulator` pauses it). Stripe in test mode needs your own test keys and the `stripe` compose profile ([CONTRIBUTING.md](CONTRIBUTING.md#payments)).
+| What                                           | Where                                                                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The seller dashboard                           | <http://localhost:8080>: sign in as `demo-seller@livecart.test` with the `SEED_DEMO_PASSWORD` of `.env` (`change-me-demo-seller`, as `.env.example` sets it), then open the live view of "Friday drop" |
+| The interactive API documentation              | <http://127.0.0.1:8000/docs>, in development only                                                                                                                                                      |
+| The demo storefront, as the buyer app reads it | <http://localhost:8080/api/v1/storefronts/demo-seller>                                                                                                                                                 |
+| The buyers' messages (reference, token, link)  | `docker compose run --rm simulator --text --no-follow`                                                                                                                                                 |
+| A payment, a shipment, the buyer app           | [CONTRIBUTING.md](CONTRIBUTING.md#payments): one mock payment with curl; [Buyer app](CONTRIBUTING.md#buyer-app): Expo Go on a phone of the same network                                                |
 
-The copy of `.env.example` is the one step before `docker compose up`: `compose.yaml` gives no default to any secret and refuses to start without them, so that no password ever has a default value in a versioned file. The `change-me-*` values are development placeholders, refused when `APP_ENV=production`.
+The "Friday drop" session is live, and the simulator comments on it from the start, one comment every 5 s on average ([CONTRIBUTING.md](CONTRIBUTING.md#comment-simulator)). The stack needs no third-party key: payments go through the mock provider and shipments through the mock carrier. To try the LLM fallback, set `ANTHROPIC_API_KEY` in `.env` (the always-on simulator then spends the daily budget; `docker compose stop simulator` pauses it). Stripe in test mode needs your own test keys and the `stripe` compose profile ([CONTRIBUTING.md](CONTRIBUTING.md#payments)).
+
+The copy of `.env.example` is the one step before `docker compose up`: `compose.yaml` gives no default to any secret and refuses to start without them, so that no password ever has a default value in a versioned file. The `change-me-*` values are development placeholders, refused when `APP_ENV=production`. `docker compose down --volumes` (or `make reset`) removes the stack and its data.
+
+## Architecture
+
+```mermaid
+flowchart LR
+  SIM["Comment simulator"] -->|"signed webhook"| API["FastAPI API: webhooks, REST, SSE"]
+  PLAT["Facebook, Instagram, TikTok adapters (stubs)"] -.-> API
+  API -->|"XADD, one pipeline"| QC[("Redis: comments stream")]
+  QC -->|"XREADGROUP, XACK"| W["asyncio worker, N replicas"]
+  W -->|"inbox, stock, orders, payment registry polled every 2 s"| PG[("PostgreSQL 16")]
+  API -->|"SQL, payment registry"| PG
+  W -.->|"ambiguous comments only"| LLM["Claude API, optional"]
+  W -->|"XADD after commit"| EV[("Redis: one stream per session")]
+  EV -->|"XREAD BLOCK"| API
+  WEB["React dashboard"] -->|"REST and SSE"| NGX["nginx: SPA, /api proxy"]
+  MOB["Expo buyer app"] -->|"REST"| NGX
+  NGX --> API
+  API -->|"Checkout Session"| PAY["Stripe test mode, or the mock"]
+  W -->|"expire a session"| PAY
+  PAY -->|"signed webhook"| NGX
+  W --> CAR["Mock carrier"]
+```
+
+A comment is acknowledged as soon as it is queued: the webhook checks its signature, puts it on a Redis stream and answers 202, without touching PostgreSQL. A worker then claims it in a PostgreSQL inbox, so that a comment counts once whatever its deliveries, reads it with the parser (and Claude only for an ambiguity), reserves the stock with one conditional `UPDATE` and opens the order, then publishes the change to the session's stream, which the API relays to the seller over SSE. [docs/INTERVIEW_NOTES.md](docs/INTERVIEW_NOTES.md#le-parcours-complet-dun-commentaire) (in French) follows one comment through the code, file by file.
+
+The Python code is layered, and imports only go inwards ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)); an architecture test fails on any import that breaks the rule of the two inner layers:
+
+- **domain** (`livecart_core.domain`): value objects, state machines and the parser, standard library only;
+- **application** (`livecart_core.application`): the ports, the data that crosses them and the use cases, with pydantic;
+- **infrastructure** (`livecart_core.infrastructure`): the SQL repositories, the Redis queue, session streams, idempotency store, rate limiter and LLM budget, the platform adapters, the payment providers, the carriers, argon2id and the clock;
+- **entry points** (`livecart_api`, `livecart_worker`, the CLIs): routes, loops and the wiring of the adapters; the worker also holds the Claude adapter, the one module that needs the Anthropic SDK.
 
 | Service      | Role                                                                       | Published on                              |
 | ------------ | -------------------------------------------------------------------------- | ----------------------------------------- |
@@ -100,63 +86,136 @@ The copy of `.env.example` is the one step before `docker compose up`: `compose.
 | `seed`       | one-shot demo data, created only where missing                             | not published                             |
 | `postgres`   | PostgreSQL 16, databases `livecart` and `livecart_test`                    | `127.0.0.1:55432`                         |
 | `redis`      | Redis 8 with a password, append-only file                                  | `127.0.0.1:56379`                         |
-| `stripe-cli` | `stripe` profile only: Stripe's events forwarded to the API                | not published                             |
-
-## Demo
-
-_To be completed: `docs/assets/demo.gif`, recorded once the dashboard and the buyer app exist._
-
-## Architecture
-
-_To be completed: the Mermaid diagram of the comment path, from the signed webhook to the SSE event._
-
-The Python code is layered, and imports only go inwards ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)):
-
-- **domain** (`livecart_core.domain`): value objects, state machines and the parser, standard library only;
-- **application** (`livecart_core.application`): the ports, the data that crosses them and the use cases, with pydantic;
-- **infrastructure** (`livecart_core.infrastructure`): the SQL repositories, the Redis comment queue, session streams, idempotency store, rate limiter and LLM budget, the platform adapters, argon2id and the clock today, then the payment providers and the carriers;
-- **entry points** (`livecart_api`, `livecart_worker`, the CLIs): routes, loops and the wiring of the adapters; the worker also holds the Claude adapter, the one module that needs the Anthropic SDK.
-
-An architecture test fails on any import that breaks the rule of the two inner layers.
+| `stripe-cli` | `stripe` profile only: Stripe's events forwarded to the API through nginx  | not published                             |
+| `k6`         | `loadtest` profile only: the comment spike of `make load-test`             | not published                             |
 
 ## Features
 
-_To be completed as each milestone lands: comment ingestion and intent parsing, atomic reservations and order references, Stripe Checkout, mock carrier, real-time dashboard, white-label buyer app._
+### From comment to order
+
+- **Comment ingestion**: one signed webhook per platform, `POST /api/v1/webhooks/comments/{platform}`, in a common format (`IncomingComment`), its HMAC-SHA256 signature checked before the body is read. The simulator's adapter is real; Facebook, Instagram and TikTok are documented stubs that refuse to start. A batch goes to a Redis stream in one pipeline and gets 202, or 503 with `Retry-After` once the workers' backlog reaches `QUEUE_MAX_DEPTH` ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md)).
+- **Worker**: a consumer group reads the stream; a PostgreSQL inbox with a lease per delivery makes every comment count once; idle deliveries are reclaimed after 120 s and dead-lettered after 3 deliveries ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md)).
+- **Intent parsing**: a deterministic French and English parser (codes, variants, quantities, typos, emojis), held to a corpus of 200 comments. With `ANTHROPIC_API_KEY` set, the comments it leaves ambiguous go to Claude (`claude-opus-5` at low effort) in structured outputs, once per comment, under a budget shared in Redis (200 calls per session, $1.00 a day) and 4 slots per worker; the domain checks the answer against the catalog before anything is reserved. Without a key, everything runs on the parser alone ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md)).
+- **Reservation**: one conditional `UPDATE` in a READ COMMITTED transaction, and one pending order per buyer and product; `test_reservation_concurrency.py::test_a_thousand_concurrent_reservations_never_oversell` sends 1,000 concurrent reservations at 200 units, three times over. Every 5 s, the reservations nobody paid expire and their stock is for sale again ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md)).
+- **Order references and tokens**: `LC-` and six Crockford symbols, drawn again after a collision, and an access token derived by HMAC and stored as a hash only. The reference alone shows an order's status; its details, address, checkout and tracking need the token ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md)).
+
+### Payment and shipping
+
+- **Payment provider**: one `PaymentProvider` port. The mock is the default and needs no account; Stripe Checkout runs in test mode with your own test keys; PayPal and Viva are documented stubs. A checkout extends the reservation to at least now + `PAYMENT_GRACE_SECONDS` (600 s), 3 attempts per order at most ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md)).
+- **Webhooks and expire-first**: a payment webhook is checked, reduced to an allow-list and recorded once in PostgreSQL, with Redis up or down; the workers apply that registry every 2 s. The sweep never releases the stock of a payment in flight before the provider has expired its session ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md)).
+- **Shipments**: one `CarrierProvider` port and a stateless mock carrier, whose parcel moves one step every 120 s, to `delivered` six minutes after the payment; DPD, Chronopost and DHL are documented stubs. The buyer follows the parcel with the order's token ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md)).
+
+### Seller dashboard (React, Vite)
+
+- **Sign-in**: the access token in the tab's memory only, the HttpOnly refresh cookie traded for a new one on a reload, one refresh at a time across tabs under a Web Lock ([ADR 0017](docs/adr/0017-dashboard-auth-and-event-stream-client.md)).
+- **Sessions and products**: one form for a session and its products, typed against the generated request bodies; restocks by delta under an `Idempotency-Key`; "Start live" and "End live" along the session's state machine.
+- **Live view**: the session's SSE stream, read with `fetch` and resumed with `Last-Event-ID`: stock per product, orders with their reservation countdown and shipment, intents with an "AI" badge for the LLM's, rejected comments by reason. A pure reducer applies each event by upsert, so a duplicate changes nothing ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md)). The built SPA runs under `default-src 'self'`, with no inline script and no `eval`.
+
+### Buyer app (Expo, white label)
+
+- **Brands**: one folder per brand in `apps/mobile/brands/`, its `brand.json` checked by a strict zod schema in `app.config.ts`, so that a broken brand never builds; one EAS profile per brand. Two brands: LiveCart Demo (scheme `livecart`) and Pomelune, an invented name (scheme `samplelive`) ([ADR 0013](docs/adr/0013-white-label-brand-config-eas-profiles-design-tokens.md)).
+- **Screens**: the brand's live storefront ("Store not found" on a 404); my orders, whose tokens live in `expo-secure-store` only, 50 at most; "Add order" (the reference and token the simulator prints); a buyer link, `<scheme>://link/LC-XXXXXX#t=<token>`, whose fragment no server receives; the order's detail and tracking; the payment in an auth session, then a payment return that reads the order's status for 60 s at most. A token, typed or linked, is checked with the API before it is stored.
+
+### Platform
+
+- **Seller auth**: argon2id, access tokens of 15 minutes, rotating refresh tokens in an HttpOnly cookie with a 30 s grace between tabs; accounts opened by `livecart-create-seller`, no public sign-up ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md)).
+- **Perimeter**: one origin through nginx, the only trusted proxy; rate limits in Redis per address, seller, account and token; security headers; least-privilege PostgreSQL roles; non-root, read-only containers ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md)). [SECURITY.md](SECURITY.md) reviews the code against the OWASP API Security Top 10.
+- **API contract**: the OpenAPI document exported from FastAPI and the TypeScript client generated from it, shared by the dashboard and the buyer app, committed and checked for drift in CI ([ADR 0012](docs/adr/0012-api-contract-openapi-and-generated-typescript-client.md)).
+- **Observability**: JSON logs with request and correlation ids, `/health` and `/ready`, and Prometheus metrics on each process's internal port 9100, published nowhere ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md)).
+- **Quality**: ruff, mypy `--strict`, pytest with an 80 % branch coverage gate on the domain and the application, ESLint, Prettier and strict TypeScript, Vitest and Jest, git hooks (lefthook, commitlint, gitleaks), and a CI with dependency, secret and image scans and every action pinned by SHA ([ADR 0015](docs/adr/0015-quality-tooling-and-supply-chain.md)).
+- **Load test**: a k6 comment spike in a compose profile, `make load-test`, with its `no_oversell` check ([Performance](#performance)).
 
 ## Key decisions and trade-offs
 
-_To be completed as the milestones land; every record is in [`docs/adr/`](docs/adr/README.md)._
+Every record is in [`docs/adr/`](docs/adr/README.md).
 
-| Decision                                                                                                                                                                                                                                  | Trade-off                                                                                                                                                                                              |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| One `cp .env.example .env` before `docker compose up`                                                                                                                                                                                     | One extra command, so that secrets never have a default in a versioned file                                                                                                                            |
-| One Python image for the API, the worker, migrate and seed                                                                                                                                                                                | A slightly larger image per process, but migrations always ship with the code that uses them                                                                                                           |
-| A deterministic parser first, an LLM only for its ambiguities ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))                                                                                                       | A phrasing the lexicon misses is rejected or costs a model call until it is added; clear orders never wait for, pay for or trust a model                                                               |
-| Protocol ports with in-memory fakes, hand-written state machines ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md))                                                                                             | The fakes hold rules the SQL adapters must match, so both are tested on the same scenarios; every rule is tested without Docker                                                                        |
-| One conditional `UPDATE` reserves the stock, in READ COMMITTED ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md))                                                                                                            | Reservations of one product wait on its row lock, one short transaction each; none oversells, and a long burst on one product can pass the 2 s lock timeout, which costs a retry                       |
-| A public reference, and an access token derived by HMAC for the rest ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md))                                                                                                 | The buyer keeps two things; a leak of `ORDER_TOKEN_KEY` would expose every token, and its rotation is not implemented                                                                                  |
-| Access tokens of 15 minutes, rotating refresh tokens with a 30 s grace ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md))                                                                                     | An access token lives until it expires; tabs racing on one refresh token keep the seller signed in                                                                                                     |
-| Rate limits in Redis, logins closed while it is down ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md))                                                                                                                               | A Redis outage refuses new logins; fixed windows let a burst of up to twice a limit through at their edge                                                                                              |
-| Redis Streams with backpressure on the backlog, and a leased PostgreSQL inbox ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md))                                                                                         | Delivery is at least once and the inbox makes it harmless; after a worker crashes, its comments wait about two minutes for a reclaim                                                                   |
-| SSE over a Redis stream per session, published after commit ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md))                                                                                                   | Best effort: an event lost to a Redis failure is caught up from the next snapshot, never retried                                                                                                       |
-| Claude only for the parser's ambiguities, in structured outputs, behind a budget and 4 slots per worker ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))                                                             | A comment past the budget or the slot wait is a missed sale rather than a late one; the model's answer is checked before it reserves anything                                                          |
-| A hosted checkout whose session the sweep expires at the provider before it releases any stock, and a PostgreSQL registry of webhooks the workers poll ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md)) | Up to 2 s before an order shows paid, and the stock of a payment in flight stays reserved while the provider cannot be reached; a payment is never applied twice, nor lost to a Redis or worker outage |
-| A stateless mock carrier, and tracking by polling with a lease per shipment ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md))                                                                                  | A mock parcel moves on a fixed schedule and the mock forgets a cancellation; a move reaches the seller up to a minute late, and each shipment is asked about once a minute whatever the workers        |
-| The dashboard's access token in memory only, one refresh at a time across tabs under a Web Lock, the event stream read with `fetch` ([ADR 0017](docs/adr/0017-dashboard-auth-and-event-stream-client.md))                                 | Each reload and new tab costs a refresh; on plain HTTP to a LAN address there are no Web Locks, and tabs fall back on the API's 30 s grace                                                             |
-| One folder per brand (`brand.json` and its images) checked by `app.config.ts`, one EAS profile per brand, the built brand's logo alone in its bundle ([ADR 0013](docs/adr/0013-white-label-brand-config-eas-profiles-design-tokens.md))   | A broken brand never builds; every brand is an Expo project and a store listing of its own, and the free plan's builds are shared by all                                                               |
-| Metrics on an internal port only ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md))                                                                                                                          | Nothing outside the container network can read them, nor anyone until a scraper runs beside the containers                                                                                             |
+| Decision                                                                                                                                                                      | Trade-off                                                                                                                                                                                |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| One `cp .env.example .env` before `docker compose up`, since `compose.yaml` requires every secret ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md))                      | One extra command, so that secrets never have a default in a versioned file                                                                                                              |
+| pnpm and uv workspaces, one lockfile per ecosystem, no orchestrator ([ADR 0001](docs/adr/0001-monorepo-workspaces-and-runtime-versions.md))                                   | Two package managers; each version has copies in several files, which `pnpm run check:pins` checks                                                                                       |
+| Protocol ports with in-memory fakes, hand-written state machines ([ADR 0002](docs/adr/0002-layered-architecture-ports-and-state-machines.md))                                 | The fakes hold rules the SQL adapters must match, so both run the same contract tests; every rule is tested without Docker                                                               |
+| FastAPI with SQLAlchemy Core, no ORM; one Python image for the API, the worker, migrate and seed ([ADR 0003](docs/adr/0003-backend-stack-fastapi-sqlalchemy-core-alembic.md)) | No lazy loading or identity map, and a schema change is two edits that a test compares; migrations always ship with the code that uses them                                              |
+| Redis Streams with backpressure on the backlog, and a leased PostgreSQL inbox ([ADR 0004](docs/adr/0004-redis-streams-queue-and-leased-inbox.md))                             | Delivery is at least once and the inbox makes it harmless; after a worker crashes, its comments wait about two minutes for a reclaim                                                     |
+| One conditional `UPDATE` reserves the stock, in READ COMMITTED ([ADR 0005](docs/adr/0005-anti-oversell-conditional-update.md))                                                | Reservations of one product wait on its row lock; none oversells, and a long burst on one product can pass the 2 s lock timeout, which costs a retry                                     |
+| A deterministic parser first, Claude only for its ambiguities, behind a budget and 4 slots per worker ([ADR 0006](docs/adr/0006-deterministic-parser-then-llm-fallback.md))   | A phrasing the lexicon misses is rejected or costs a model call; a comment past the budget or the slot wait is a missed sale rather than a late one                                      |
+| A public reference, and an access token derived by HMAC for the rest ([ADR 0007](docs/adr/0007-order-reference-and-hmac-access-token.md))                                     | The buyer keeps two things; a leak of `ORDER_TOKEN_KEY` would expose every token, and its rotation is not implemented                                                                    |
+| A hosted checkout, expire-first, and a PostgreSQL registry of webhooks the workers poll ([ADR 0008](docs/adr/0008-payments-provider-port-hosted-checkout-expire-first.md))    | Up to 2 s before an order shows paid, and a payment in flight keeps its stock while the provider is out of reach; a payment is never applied twice, nor lost to a Redis or worker outage |
+| SSE over a Redis stream per session, published after commit ([ADR 0009](docs/adr/0009-realtime-sse-over-a-redis-stream-per-session.md))                                       | Best effort: an event lost to a Redis failure is caught up from the next snapshot, never retried                                                                                         |
+| Access tokens of 15 minutes, rotating refresh tokens with a 30 s grace ([ADR 0010](docs/adr/0010-seller-auth-short-jwt-rotating-refresh-argon2id.md))                         | An access token lives until it expires; tabs racing on one refresh token keep the seller signed in                                                                                       |
+| One origin through nginx, rate limits in Redis, logins closed while it is down ([ADR 0011](docs/adr/0011-perimeter-and-hardening.md))                                         | A Redis outage refuses new logins; fixed windows let a burst of up to twice a limit through at their edge                                                                                |
+| The OpenAPI document and the generated client committed, checked for drift in CI ([ADR 0012](docs/adr/0012-api-contract-openapi-and-generated-typescript-client.md))          | Generated files in the repository, regenerated with `make gen-api` at every API change; no type is written twice                                                                         |
+| One folder per brand checked by `app.config.ts`, one EAS profile per brand ([ADR 0013](docs/adr/0013-white-label-brand-config-eas-profiles-design-tokens.md))                 | A broken brand never builds; every brand is an Expo project and a store listing of its own                                                                                               |
+| Metrics on an internal port only ([ADR 0014](docs/adr/0014-observability-structlog-ids-and-internal-metrics.md))                                                              | Nothing outside the container network can read them, nor anyone until a scraper runs beside the containers                                                                               |
+| Scans on every change and weekly, actions pinned by SHA ([ADR 0015](docs/adr/0015-quality-tooling-and-supply-chain.md))                                                       | A newly published advisory turns CI red without any change in the repository, by design                                                                                                  |
+| Render as the target host, designed, not executed ([ADR 0016](docs/adr/0016-target-hosting-render-designed-not-executed.md))                                                  | Nothing is deployed; executing the design needs a production notifier first, and ties the deployment to one vendor's Blueprint format                                                    |
+| The dashboard's token in memory, one refresh at a time across tabs, the stream read with `fetch` ([ADR 0017](docs/adr/0017-dashboard-auth-and-event-stream-client.md))        | Each reload and new tab costs a refresh; on plain HTTP to a LAN address there are no Web Locks, and tabs fall back on the API's 30 s grace                                               |
+
+## Performance
+
+On 2026-10-02, three runs of the k6 comment spike on one laptop (a 12th Gen Intel Core i7-1255U, whose Docker engine saw 12 CPUs and 7.6 GiB) each sent 1,000 signed comment webhooks for one product with 200 in stock, peaking at 80 calls a second. Every call got its 202, every run ended with exactly 200 units reserved and passed `no_oversell`, and the queue was empty at the first reading, 40 s after the burst. The webhook's acknowledgement latency (`webhook_duration`, the median of the three runs' values) was **2.76 ms at p50, 4.01 ms at p95 and 5.95 ms at p99**.
+
+That latency is the acknowledgement only: the signature, the rate limit and the enqueue in Redis, not the reservation the worker makes later. k6 and the stack shared the laptop, with one API process and one worker capped at 1 CPU each, and k6 posted to the API directly, not through nginx. These figures describe that laptop on that evening: they are not a capacity claim. [docs/PERFORMANCE.md](docs/PERFORMANCE.md) gives the machine, the configuration, the scenario, every run and the limits, quoted from the summaries in [`loadtest/results/`](loadtest/results/).
+
+## Status / what is verified
+
+All nine milestones of the plan are built. What has run, and what has not:
+
+- **Run on the development PC**: the compose stack of the quickstart; the mock payment flow to `paid` in the seller's SSE stream; a paid order's shipment to `delivered`; the dashboard's live view, and its stream resuming after `docker compose restart api`, in the coding agent's browser pane; the three load test runs above; for the buyer app, its tests, type checks, expo-doctor and an Android `expo export` of both brands. [CONTRIBUTING.md](CONTRIBUTING.md#milestone-log) records each milestone's end criterion, what was run and when.
+- **Not run on a device, nor with EAS**: the buyer app has never run on a phone, an emulator or Expo Go, and no EAS build exists (`eas init`, the Android development build), so the buyer links and the payment return have never run on a device. The plan's end criterion of milestone 8 is not met; it needs a phone and an Expo account.
+- **iOS is configured, not built**: bundle identifiers and an iOS simulator build in the base EAS profile, no build.
+- **Stripe's test card 4242 has not paid an order**: it needs the owner's own Stripe test keys in `.env`. The Stripe adapter is tested against `FakeStripeApi`, an in-memory stand-in of its API, and never reached Stripe; the end criterion of milestone 5 is half met (the mock's flow ran).
+- **The LLM fallback has never called Anthropic's API**, and `scripts/llm_eval.py` has not run: there is no key.
+- **The deployment is designed, not executed** ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)): no `render.yaml`, no deploy workflow, no image pushed, and the worker refuses `APP_ENV=production` until a notifier delivers on the platforms.
+- **CI is defined but has never run**: the repository has no remote yet, so `.github/workflows/ci.yml` has not run on GitHub. `make lint` and `make test` run the checks of its `python` and `node` jobs locally; `pnpm run check:openapi` and `pnpm run smoke:compose` run its drift check and its compose smoke test by hand.
+- **Trivy runs in CI only**: no `make` target or git hook runs it, so its filesystem and image scans wait for the first CI run.
+
+The test suites, counted on 2026-10-02: 3,549 pytest tests (3,132 unit tests and 417 integration tests, which need the compose PostgreSQL and Redis), 66 Vitest tests of the dashboard, 116 Jest tests of the buyer app and 44 `node:test` tests of the root scripts. `make test` runs them all.
+
+| Milestone  | What it added                                                                                           |
+| ---------- | ------------------------------------------------------------------------------------------------------- |
+| 1          | Monorepo, quality tooling, CI, Docker stack, the generated API client                                   |
+| 2          | Domain value objects, state machines and the deterministic parser with its corpus                       |
+| 3          | Schema and migrations, seller auth, sessions and products, atomic reservation, references, buyer lookup |
+| 4a, 4b, 4c | Comment ingestion, queue and worker; real-time SSE; the optional LLM fallback                           |
+| 5          | Payment provider port, mock and Stripe Checkout, webhook registry, expire-first                         |
+| 6          | Carrier port, mock carrier, shipments and tracking                                                      |
+| 7          | Seller dashboard                                                                                        |
+| 8          | White-label buyer app and design tokens                                                                 |
+| 9          | k6 load test and measured results, security policy, deployment guide, final documentation               |
 
 ## Out of scope
 
-_To be completed: real Facebook, Instagram and TikTok integrations, PayPal, Viva Wallet and real carriers, buyer accounts, refunds, iOS builds, real deployment._
+- Real Facebook, Instagram and TikTok integrations: their adapters are documented stubs that stop the API at startup when enabled.
+- PayPal and Viva Wallet payments, DPD, Chronopost and DHL shipments: documented stubs that stop the process at startup when selected.
+- Buyer accounts: a buyer holds a reference and a token per order.
+- Comments about several products, rejected as `multiple_products`; several currencies, since `DEFAULT_CURRENCY` is one per deployment.
+- Cancellation by the seller and refunds: a `paid_after_expiry` order is refunded by hand ([runbook](docs/runbooks/paid-after-expiry.md)).
+- An automatic purge of personal data ([SECURITY.md](SECURITY.md#retention-policy)).
+- Universal Links and App Links: buyer links use the brand's own scheme.
+- iOS builds, and real time in the buyer app, which reads the API when a screen opens and polls an order only on the payment return.
+- A real deployment.
 
 ## Roadmap
 
-_To be completed._
+- **Run what is built but not yet proven**: a Stripe test payment with the 4242 card, `scripts/llm_eval.py` with a key, the buyer app on an Android phone and its development build, the first CI run once the repository has a remote.
+- **Reliability and data**: an outbox for the SSE events, PgBouncer, a purge job running as the migrator, a CI job on Valkey.
+- **Security**: sliding windows for the rate limits, rotation of the JWT key and of `ORDER_TOKEN_KEY`, Universal Links and App Links, Dependabot.
+- **Payments**: a `refunded` status and a "Mark refunded" action, then refunds through Stripe's API; the Payment Sheet in the app.
+- **LLM**: budget limits per seller and per minute, reserving a call's worst case before it; a model change only after `scripts/llm_eval.py`.
+- **Observability**: a Prometheus scraper, Grafana and OpenTelemetry traces.
+- **Product**: resending the buyer's link; design tokens shared with the dashboard.
+- **Delivery**: images pushed to GHCR and a manual deploy workflow, once a production notifier exists.
+- **Tests and upgrades**: Maestro and Playwright; TypeScript 7, Node 26 LTS, Jest 30, Expo SDK 58.
 
-## Development
+## Documentation
 
-Prerequisites, `make` targets with their raw commands for PowerShell, commit conventions and port overrides: see [CONTRIBUTING.md](CONTRIBUTING.md).
+- [CONTRIBUTING.md](CONTRIBUTING.md): prerequisites, `make` targets with their raw commands for PowerShell, the simulator, payments, shipments, the buyer app, the load test, commit conventions and the milestone log.
+- [SECURITY.md](SECURITY.md): how to report a vulnerability, the OWASP API Security Top 10 review, the endpoint inventory, the retention policy and the known limits.
+- [docs/PERFORMANCE.md](docs/PERFORMANCE.md): the measured load test.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md): the deployment on Render, designed, not executed.
+- [docs/adr/](docs/adr/README.md): the 17 architecture decision records.
+- [docs/runbooks/paid-after-expiry.md](docs/runbooks/paid-after-expiry.md): refunding a payment that came after its order expired.
+- [docs/INTERVIEW_NOTES.md](docs/INTERVIEW_NOTES.md): the architecture, the path of a comment, the trade-offs and likely interview questions, in French.
 
 ## License
 

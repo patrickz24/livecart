@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-10-02. Milestone 8 implemented it in `apps/mobile` (the buyer app) and `packages/design-tokens`. Android development builds and the app on a phone are not run yet: they need Patrick's Expo account and Android phone (README, milestone 8). iOS is configured, not built.
+Accepted, 2026-10-02. Milestone 8 implemented it in `apps/mobile` (the buyer app) and `packages/design-tokens`. Android development builds and the app on a phone are not run yet: they need Patrick's Expo account and Android phone ([the milestone log](../../CONTRIBUTING.md#milestone-log)). iOS is configured, not built.
 
 ## Context
 
