@@ -6,7 +6,7 @@ import { ApiError, describeError, unwrap } from "../../api/errors";
 import { keys } from "../../api/queries";
 import { useServices } from "../../app/services";
 import { Button } from "../../ui/Button";
-import { Alert } from "../../ui/feedback";
+import { Alert, focusPageTitle } from "../../ui/feedback";
 
 type Move = "start" | "end";
 
@@ -24,6 +24,9 @@ function refusal(move: Move, error: unknown): string {
  * machine (draft, live, ended). Ending cannot be undone, so it asks first,
  * with the focus on the confirmation and Escape to cancel. A 409 means the
  * session moved meanwhile: the message says so and the session is read again.
+ * Once a move settles, the focus goes to the page's heading whenever the
+ * control pressed may be gone: the status changed or is read again (Start
+ * live and End live go with it), or the confirmation closed.
  */
 export function LifecycleControls({ session }: { session: LiveSessionResponse }) {
   const { client } = useServices();
@@ -46,8 +49,12 @@ export function LifecycleControls({ session }: { session: LiveSessionResponse })
         void queryClient.invalidateQueries({ queryKey: keys.session(session.id) });
       }
     },
-    onSettled: () => {
+    onSettled: (_updated, error, to) => {
       setConfirming(false);
+      const reread = error instanceof ApiError && error.status === 409;
+      if (error === null || reread || to === "end") {
+        focusPageTitle();
+      }
     },
   });
 

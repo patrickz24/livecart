@@ -41,6 +41,8 @@ describe("lifecycle controls", () => {
 
     expect(await screen.findByRole("button", { name: "End live" })).toBeTruthy();
     expect(screen.getByText("Live")).toBeTruthy();
+    // Start live is gone: the focus is on the heading, not lost to the page.
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
     expect(api.sent("POST", `${SESSION}/start`)).toHaveLength(1);
     // Once live, the live id is locked in the form too.
     expect(screen.getByLabelText("Live id").hasAttribute("readonly")).toBe(true);
@@ -60,7 +62,23 @@ describe("lifecycle controls", () => {
 
     expect(await screen.findByText("Ended")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /End live/ })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
     expect(api.sent("POST", `${SESSION}/end`)).toHaveLength(1);
+  });
+
+  it("keeps the focus on the page when an end fails and its confirmation closes", async () => {
+    const { api } = sessionApi("live");
+    api.on("POST", `${SESSION}/end`, new Response("Bad Gateway", { status: 502 }));
+    const { user } = renderApp(`/sessions/${SESSION_ID}/edit`, api);
+
+    await user.click(await screen.findByRole("button", { name: "End live" }));
+    await user.click(screen.getByRole("button", { name: "End live now" }));
+
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "The server is unavailable right now. Try again in a moment.",
+    );
+    expect(screen.queryByRole("button", { name: "End live now" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("heading", { level: 1 }));
   });
 
   it("cancels the end with Escape, back on the End live button", async () => {

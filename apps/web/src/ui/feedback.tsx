@@ -63,6 +63,9 @@ export function Loading({ children = "Loading…" }: { children?: ReactNode }) {
   );
 }
 
+/** Every page has one `PageTitle`, under this id. */
+const PAGE_TITLE_ID = "page-title";
+
 /**
  * The page's heading. It takes the focus when the page opens, so that a
  * screen reader announces the new page after a client-side navigation, and
@@ -75,8 +78,22 @@ export function PageTitle({ children, title }: { children: ReactNode; title: str
     heading.current?.focus();
   }, [title]);
   return (
-    <h1 ref={heading} tabIndex={-1} className="text-2xl font-semibold focus:outline-none">
+    <h1
+      ref={heading}
+      id={PAGE_TITLE_ID}
+      tabIndex={-1}
+      className="text-2xl font-semibold focus:outline-none"
+    >
       {children}
     </h1>
   );
+}
+
+/**
+ * Move the focus to the page's heading, for a control that is about to
+ * unmount while it has it: the focus would otherwise fall to the document's
+ * body, and a keyboard or screen reader user would start again from the top.
+ */
+export function focusPageTitle(): void {
+  document.getElementById(PAGE_TITLE_ID)?.focus();
 }
