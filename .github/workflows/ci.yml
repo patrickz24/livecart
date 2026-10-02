@@ -138,8 +138,14 @@ jobs:
 
       # The dependencies against Expo SDK 57's versions (asked of Expo's API,
       # so a new patch of expo itself fails it until `npx expo install --fix`),
-      # the config plugins and each brand's app config.
+      # the config plugins and each brand's app config. The weekly run skips
+      # the version check alone: it is there for new advisories, and a patch
+      # Expo published since the last change would turn main red with no change
+      # in the repository. A push or a pull request still runs it.
       - name: expo-doctor, for each brand
+        env:
+          # expo-doctor reads it as a boolean: "true" on the schedule only.
+          EXPO_DOCTOR_SKIP_DEPENDENCY_VERSION_CHECK: ${{ github.event_name == 'schedule' }}
         run: |
           for brand in demo pomelune; do
             echo "::group::APP_BRAND=${brand}"
