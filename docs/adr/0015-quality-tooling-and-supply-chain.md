@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-25. Milestone 1 put the tooling in place and milestone 8 added Jest; k6 (milestone 9) is not in the repository yet.
+Accepted, 2026-09-25, completed 2026-10-02. Milestone 1 put the tooling in place, milestone 8 added Jest and milestone 9 the k6 load test.
 
 ## Context
 
@@ -39,7 +39,12 @@ A public portfolio repository is judged on the discipline of its tooling as much
 
 ### Load test: k6
 
-- k6 runs in Docker from the `grafana/k6` image, in a compose `loadtest` profile, in milestone 9; `make load-test` is a placeholder until then.
+- k6 2.3.0 runs in Docker from the `grafana/k6:2.3.0` image, in the compose profile `loadtest`: nothing to install on the host, and the generator reaches the API and the worker's metrics on the compose network. `check:pins` checks its tag like every compose image. `K6_AUTO_EXTENSION_RESOLUTION=false` keeps k6 from downloading a custom build of itself when a script imports an extension, and the scenario needs none; `K6_NO_USAGE_REPORT` turns off its usage report.
+- The scenario, `loadtest/comment-spike.ts`, is TypeScript that k6 runs natively, without a bundler. `loadtest/types/k6.d.ts` types the k6 APIs it calls, so that ESLint and `tsc -p loadtest` (in `make lint` and CI) check it like the rest of the code; a dozen signatures do not justify an `@types/k6` dependency whose versions follow k6's own.
+- An open model, `ramping-arrival-rate`: calls arrive on schedule whatever the latency, as a live audience does. The default burst is 1,000 webhook calls of one signed comment each, from a buyer of its own, on Z99 of the seeded `loadtest` session (200 in stock), peaking at 80 calls a second, below the comment webhook's 6,000 a minute (ADR 0011), so that the run loads the queue and the workers, not the rate limiter. One call in ten replays the comment of five calls before it, which the inbox must count once.
+- `make load-test` runs `seed --reset-loadtest` first: the scenario sends the same comment ids at every run, which the inbox would take for duplicates, and its setup refuses a session that was not reset.
+- Correctness alone decides pass or fail. `teardown()` waits until the worker's `livecart_queue_backlog` reads 0 on a sample taken after the burst, then reads the session's stock and orders in one consistent read, the snapshot that opens its event stream: no other route lists a session's orders. The `no_oversell` check fails the run unless the orders hold at most the stock, exactly the units the counters say are reserved and sold. 429 (abuse) and 503 (backpressure) are counted and thresholded apart; there is no latency threshold.
+- `handleSummary` writes one JSON summary per run to `loadtest/results/`. The summaries are versioned and marked `linguist-generated`, as the only source of the measured figures; the raw outputs (`loadtest/results/raw/`) stay ignored.
 
 ## Consequences
 
@@ -50,6 +55,8 @@ A public portfolio repository is judged on the discipline of its tooling as much
 - Upgrading an action is a deliberate commit that changes the SHA and its version comment together; the pins check refuses a tag or a bare SHA.
 - gitleaks must be installed on the developer machine; the pre-commit hook says so when it is missing.
 - The Trivy filesystem scan does not cover `uv.lock`; the gap is closed by pip-audit and the image scan, and documented in the workflow.
+- The load test runs on the developer machine only, never in CI, and its generator shares that machine with the stack: its figures describe one laptop, not a deployment.
+- The snapshot read relies on k6 keeping the bytes that arrived before a request's timeout, since k6 has no streaming client; a k6 that kept none would fail `no_oversell`, never pass it. The drain wait assumes the worker's reclaim interval (30 s), which samples the backlog.
 
 ## Alternatives considered
 
@@ -59,3 +66,5 @@ A public portfolio repository is judged on the discipline of its tooling as much
 - **ESLint 9**: end of life, and ESLint 10 only reads the flat config.
 - **Tag-pinned actions** (`@v7`): a moved tag can run code the review never saw.
 - **Trivy alone** for dependencies: it cannot parse a virtual uv workspace lockfile, so pip-audit is the source of truth for Python.
+- **A closed model** (a fixed number of VUs looping): its arrivals slow down whenever the API does, which hides the queueing a comment spike is about.
+- **k6 extensions** (xk6-sql to count the orders in PostgreSQL, xk6-sse to read the stream): a custom k6 build to pin and scan, for two reads the API already serves.
