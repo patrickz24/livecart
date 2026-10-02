@@ -166,8 +166,8 @@ All nine milestones of the plan are built. What has run, and what has not:
 - **Stripe's test card 4242 has not paid an order**: it needs the owner's own Stripe test keys in `.env`. The Stripe adapter is tested against `FakeStripeApi`, an in-memory stand-in of its API, and never reached Stripe; the end criterion of milestone 5 is half met (the mock's flow ran).
 - **The LLM fallback has never called Anthropic's API**, and `scripts/llm_eval.py` has not run: there is no key.
 - **The deployment is designed, not executed** ([docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)): no `render.yaml`, no deploy workflow, no image pushed, and the worker refuses `APP_ENV=production` until a notifier delivers on the platforms.
-- **CI is defined but has never run**: the repository has no remote yet, so `.github/workflows/ci.yml` has not run on GitHub. `make lint` and `make test` run the checks of its `python` and `node` jobs locally; `pnpm run check:openapi` and `pnpm run smoke:compose` run its drift check and its compose smoke test by hand.
-- **Trivy runs in CI only**: no `make` target or git hook runs it, so its filesystem and image scans wait for the first CI run.
+- **CI results are not recorded here yet**: the repository was first pushed to GitHub on 2026-10-02, and the outcome of the first runs of `.github/workflows/ci.yml` is not reported in this README. `make lint` and `make test` run the checks of its `python` and `node` jobs locally; `pnpm run check:openapi` and `pnpm run smoke:compose` run its drift check and its compose smoke test by hand.
+- **Trivy runs in CI only**: no `make` target or git hook runs it, so its filesystem and image scans run on GitHub Actions only.
 
 The test suites, counted on 2026-10-02: 3,549 pytest tests (3,132 unit tests and 417 integration tests, which need the compose PostgreSQL and Redis), 66 Vitest tests of the dashboard, 116 Jest tests of the buyer app and 44 `node:test` tests of the root scripts. `make test` runs them all.
 
@@ -197,7 +197,7 @@ The test suites, counted on 2026-10-02: 3,549 pytest tests (3,132 unit tests and
 
 ## Roadmap
 
-- **Run what is built but not yet proven**: a Stripe test payment with the 4242 card, `scripts/llm_eval.py` with a key, the buyer app on an Android phone and its development build, the first CI run once the repository has a remote.
+- **Run what is built but not yet proven**: a Stripe test payment with the 4242 card, `scripts/llm_eval.py` with a key, the buyer app on an Android phone and its development build, a review of the first CI runs on GitHub.
 - **Reliability and data**: an outbox for the SSE events, PgBouncer, a purge job running as the migrator, a CI job on Valkey.
 - **Security**: sliding windows for the rate limits, rotation of the JWT key and of `ORDER_TOKEN_KEY`, Universal Links and App Links, Dependabot.
 - **Payments**: a `refunded` status and a "Mark refunded" action, then refunds through Stripe's API; the Payment Sheet in the app.
