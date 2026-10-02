@@ -58,8 +58,10 @@ from livecart_core.application.dto import (
     ReservationResult,
     ResolvedIntent,
     SellerRecord,
+    SessionActivity,
     SessionEvent,
     SessionEventType,
+    ShipmentRecord,
     ShipmentRef,
     ShippingAddress,
     StockLevel,
@@ -85,6 +87,7 @@ from livecart_core.domain.state_machines import (
     LiveSessionStatus,
     OrderStatus,
     PaymentStatus,
+    ShipmentStatus,
 )
 from livecart_core.testing.builders import (
     DEMO_MAX_QUANTITY,
@@ -706,6 +709,32 @@ def test_a_shipment_ref_fits_its_columns() -> None:
         replace(ref, tracking_number="N" * (MAX_TRACKING_NUMBER_LENGTH + 1))
     with pytest.raises(ValueError, match="tracking number"):
         replace(ref, tracking_number="")
+
+
+def test_a_snapshot_holds_the_shipments_of_its_listed_orders_only() -> None:
+    session = LiveSessionRecord(
+        id=ID,
+        seller_id=ID,
+        title="Friday drop",
+        platform=Platform.SIMULATOR,
+        external_live_id="live-1",
+        status=LiveSessionStatus.LIVE,
+        created_at=NOW,
+    )
+    ref = ShipmentRef(CarrierName.MOCK, "mock_shp_1", "MOCK-0000000000000001", NOW)
+    shipment = ShipmentRecord(UUID(int=2), ORDER.id, ref, ShipmentStatus.CREATED, NOW)
+
+    activity = SessionActivity(session, orders=(ORDER,), shipments={ORDER.id: shipment})
+
+    assert activity.shipments == {ORDER.id: shipment}
+    with pytest.raises(ValueError, match="listed orders only"):
+        SessionActivity(session, shipments={ORDER.id: shipment})
+    with pytest.raises(ValueError, match="listed orders only"):
+        SessionActivity(
+            session,
+            orders=(ORDER, replace(ORDER, id=UUID(int=3))),
+            shipments={UUID(int=3): shipment},
+        )
 
 
 # --- Buyer notification ----------------------------------------------------------------

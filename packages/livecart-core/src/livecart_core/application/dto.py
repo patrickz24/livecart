@@ -842,7 +842,10 @@ class SessionActivity:
 
     The catalog, with the stock of each product, in creation order; then the
     latest intents, rejections and orders, newest first, at most the limit
-    the read asked for of each.
+    the read asked for of each. ``shipments`` holds the shipment of each of
+    those orders that has one, by its order's id, as it stands: a dashboard
+    opened after the session's stream trimmed its ``shipment.updated``
+    events still shows where each parcel is.
     """
 
     session: LiveSessionRecord
@@ -850,6 +853,15 @@ class SessionActivity:
     intents: tuple[RecordedIntent, ...] = ()
     rejections: tuple[RejectedComment, ...] = ()
     orders: tuple[OrderRecord, ...] = ()
+    shipments: Mapping[UUID, "ShipmentRecord"] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        listed = {order.id for order in self.orders}
+        if any(
+            order_id not in listed or shipment.order_id != order_id
+            for order_id, shipment in self.shipments.items()
+        ):
+            raise ValueError("the shipments of the listed orders only, each by its order's id")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,6 +1,6 @@
 """``LiveSessionActivity`` on PostgreSQL: a session's snapshot, read in one consistent view.
 
-``snapshot`` runs five reads in one REPEATABLE READ, read-only transaction,
+``snapshot`` runs six reads in one REPEATABLE READ, read-only transaction,
 so that all of them see the database as it was at the first: an order and
 its product's counters agree, even while reservations commit meanwhile.
 READ COMMITTED would give each statement its own view, and a snapshot could
@@ -13,7 +13,8 @@ by creation), at most ``limit`` of each:
   JOIN orders ON orders.intent_id``, unique by ``uq_orders_intent_id``);
 - the rejected comments and their reasons (the partial index of the rejected
   comments by session);
-- the orders.
+- the orders, then the shipments of those that have one, by their order's
+  id (``uq_shipments_order_id``), so that an order and its parcel agree too.
 
 SQLAlchemy Core constructs only, as everywhere in the adapters.
 """
@@ -30,12 +31,14 @@ from livecart_core.domain.state_machines import CommentStatus
 from livecart_core.infrastructure.db.live_sessions import live_session_record
 from livecart_core.infrastructure.db.orders import intent_record, order_record
 from livecart_core.infrastructure.db.products import product_record
+from livecart_core.infrastructure.db.shipments import shipment_record
 from livecart_core.infrastructure.db.tables import (
     comments,
     live_sessions,
     orders,
     products,
     purchase_intents,
+    shipments,
 )
 from livecart_core.infrastructure.db.units import transaction
 
@@ -98,6 +101,12 @@ class SqlLiveSessionActivity:
                     .limit(limit)
                 )
             ).all()
+            order_ids = [row.id for row in order_rows]
+            shipment_rows = (
+                await connection.execute(
+                    select(shipments).where(shipments.c.order_id.in_(order_ids))
+                )
+            ).all()
         return SessionActivity(
             session=live_session_record(session),
             products=tuple(product_record(row, currency=self._currency) for row in product_rows),
@@ -107,4 +116,5 @@ class SqlLiveSessionActivity:
                 for row in rejection_rows
             ),
             orders=tuple(order_record(row) for row in order_rows),
+            shipments={row.order_id: shipment_record(row) for row in shipment_rows},
         )

@@ -1712,6 +1712,8 @@ class InMemoryLiveSessionActivity(_Repository):
             if comment.session_id == session_id and comment.rejection_reason is not None
         ]
         orders = [order for order in tables.orders.values() if order.session_id == session_id]
+        listed = tuple(_newest(orders, limit, key=lambda order: order.id))
+        listed_ids = {order.id for order in listed}
         return SessionActivity(
             session=session,
             products=tuple(
@@ -1722,7 +1724,12 @@ class InMemoryLiveSessionActivity(_Repository):
                 for intent in _newest(intents, limit, key=lambda intent: intent.id)
             ),
             rejections=tuple(_newest(rejections, limit, key=lambda item: item.comment_id)),
-            orders=tuple(_newest(orders, limit, key=lambda order: order.id)),
+            orders=listed,
+            shipments={
+                shipment.order_id: shipment
+                for shipment in tables.shipments.values()
+                if shipment.order_id in listed_ids
+            },
         )
 
 
