@@ -1,3 +1,6 @@
+// First: zod's configuration must hold before any schema module is evaluated.
+import "./zodConfig";
+
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter } from "react-router";
