@@ -8,6 +8,7 @@ import { keys, productsQuery, sessionQuery } from "../../api/queries";
 import { useServices } from "../../app/services";
 import { SESSION_STATUS } from "../../strings";
 import { Alert, Badge, Loading, PageTitle } from "../../ui/feedback";
+import { LifecycleControls } from "./LifecycleControls";
 import { SessionForm } from "./SessionForm";
 
 interface SavedNotice {
@@ -80,9 +81,12 @@ export function EditSessionPage() {
   const status = SESSION_STATUS[session.data.status];
   return (
     <section>
-      <div className="flex flex-wrap items-center gap-3">
-        <PageTitle title={`Edit ${session.data.title}`}>{session.data.title}</PageTitle>
-        <Badge tone={status.tone}>{status.label}</Badge>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <PageTitle title={`Edit ${session.data.title}`}>{session.data.title}</PageTitle>
+          <Badge tone={status.tone}>{status.label}</Badge>
+        </div>
+        <LifecycleControls session={session.data} />
       </div>
       {notice === null ? null : (
         <Alert tone="success" className="mt-4">

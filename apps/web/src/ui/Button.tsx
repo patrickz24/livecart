@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import type { ComponentPropsWithRef } from "react";
 import { Link, type LinkProps } from "react-router";
 
 type Variant = "primary" | "secondary" | "danger" | "ghost";
@@ -24,7 +24,7 @@ export function Button({
   className = "",
   type = "button",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: ComponentPropsWithRef<"button"> & { variant?: Variant }) {
   return <button type={type} className={buttonClass(variant, className)} {...props} />;
 }
 

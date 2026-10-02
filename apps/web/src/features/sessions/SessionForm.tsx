@@ -1,6 +1,6 @@
 import { zodResolver } from "@hookform/resolvers/zod";
 import type { LiveSessionResponse, ProductResponse } from "@livecart/api-client";
-import { useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { useFieldArray, useForm, useWatch } from "react-hook-form";
 import { Link } from "react-router";
 
@@ -59,6 +59,13 @@ export function SessionForm({
     session,
     products: new Map(products.map((product) => [product.id, product])),
   });
+  // The session as the API last answered it: a start or an end of the live
+  // (LifecycleControls) changes which of its fields a save may send.
+  useEffect(() => {
+    if (session !== null) {
+      saved.current.session = session;
+    }
+  }, [session]);
   // One key per (product, delta): a retry of the same restock sends the same key.
   const restockKeys = useRef(new Map<string, { delta: number; key: string }>());
 
