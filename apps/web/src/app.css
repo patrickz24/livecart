@@ -1,8 +1,49 @@
-/* Plain styles of the milestone 1 shell. The dashboard brings Tailwind CSS and
-   its theme in milestone 7. */
-main {
-  max-width: 36rem;
-  margin: 0 auto;
-  padding: 2rem;
-  font-family: system-ui, sans-serif;
+/* The dashboard's styles: Tailwind CSS 4 and its native theme, nothing else
+   (no component library, no generated file). The default palette is
+   dropped so that every colour of the UI comes from the small token set
+   below, each pair checked for WCAG AA contrast on its own background. */
+@import "tailwindcss";
+
+@theme {
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", "Segoe UI Mono", Menlo, Consolas, monospace;
+
+  --color-*: initial;
+  --color-white: #ffffff;
+  /* Page, cards, dividers, and the borders of form controls (4.1:1 on white,
+     above the 3:1 that WCAG asks of a control's boundary). */
+  --color-canvas: #f5f6f8;
+  --color-surface: #ffffff;
+  --color-line: #d4d8de;
+  --color-line-strong: #767e8b;
+  /* Text: 18:1 and 7.9:1 on white, 16.6:1 and 7.3:1 on the canvas. */
+  --color-ink: #14171c;
+  --color-ink-muted: #4a5260;
+  /* Actions and links: 7.9:1 on white, white on it as much. */
+  --color-brand: #4338ca;
+  --color-brand-strong: #3730a3;
+  --color-brand-soft: #e0e7ff;
+  /* Statuses: each text colour is read on its soft background, 5.3:1 at least. */
+  --color-success: #166534;
+  --color-success-soft: #dcfce7;
+  --color-warning: #92400e;
+  --color-warning-soft: #fef3c7;
+  --color-danger: #b91c1c;
+  --color-danger-soft: #fee2e2;
+  --color-info: #1e40af;
+  --color-info-soft: #dbeafe;
+
+  --radius-control: 0.375rem;
+}
+
+@layer base {
+  body {
+    @apply bg-canvas font-sans text-ink antialiased;
+  }
+
+  /* One visible focus ring for every focusable element, keyboard focus only. */
+  :focus-visible {
+    outline: 2px solid var(--color-brand);
+    outline-offset: 2px;
+  }
 }

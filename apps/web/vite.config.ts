@@ -1,3 +1,4 @@
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
@@ -6,7 +7,8 @@ import { defineConfig } from "vitest/config";
 const API_ORIGIN = "http://127.0.0.1:8000";
 
 export default defineConfig({
-  plugins: [react()],
+  // Tailwind CSS 4 reads its theme from src/app.css (@theme): no config file.
+  plugins: [react(), tailwindcss()],
   server: {
     // Same origin as behind nginx: the browser only talks to this server, which
     // forwards API paths to FastAPI. No CORS, and SameSite=Strict cookies work.
