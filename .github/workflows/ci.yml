@@ -105,7 +105,7 @@ jobs:
       - name: TypeScript
         run: pnpm -r typecheck
 
-      - name: Vitest
+      - name: Vitest and Jest
         run: pnpm -r test
 
       - name: Script tests (node:test)
@@ -113,6 +113,46 @@ jobs:
 
       - name: Version pins
         run: pnpm run check:pins
+
+  # The buyer app's checks beyond lint, types and Jest (the node job): no EAS
+  # build here (it needs an Expo account), but what a build would refuse first.
+  mobile:
+    name: Mobile (expo-doctor, Android bundle of each brand)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/mobile
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js and pnpm
+        uses: ./.github/actions/setup-pnpm
+        with:
+          pnpm-version: ${{ env.PNPM_VERSION }}
+
+      # The dependencies against Expo SDK 57's versions (asked of Expo's API,
+      # so a new patch of expo itself fails it until `npx expo install --fix`),
+      # the config plugins and each brand's app config.
+      - name: expo-doctor, for each brand
+        run: |
+          for brand in demo pomelune; do
+            echo "::group::APP_BRAND=${brand}"
+            APP_BRAND="${brand}" pnpm run doctor
+            echo "::endgroup::"
+          done
+
+      # Metro bundles the JavaScript of each brand as a build would, its own
+      # logo included (metro.config.js), without any native toolchain.
+      - name: Android bundle, for each brand (expo export)
+        run: |
+          for brand in demo pomelune; do
+            APP_BRAND="${brand}" pnpm exec expo export --platform android \
+              --output-dir "${RUNNER_TEMP}/export-${brand}"
+          done
 
   openapi-drift:
     name: OpenAPI schema and generated client drift
