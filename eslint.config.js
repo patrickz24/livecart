@@ -7,6 +7,8 @@ import tseslint from "typescript-eslint";
 export default defineConfig([
   // node_modules/ and .git/ are ignored by ESLint itself.
   globalIgnores([
+    // Local agent worktrees: each one is a full copy of the repo.
+    ".claude/",
     "**/.venv/",
     "**/dist/",
     "**/coverage/",

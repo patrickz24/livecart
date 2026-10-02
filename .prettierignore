@@ -7,3 +7,6 @@ pnpm-lock.yaml
 packages/api-client/openapi.json
 packages/api-client/src/generated/
 loadtest/results/
+
+# Local agent worktrees (each one is a full copy of the repo).
+.claude/
