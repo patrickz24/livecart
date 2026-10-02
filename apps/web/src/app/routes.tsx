@@ -2,6 +2,7 @@ import { Navigate, type RouteObject } from "react-router";
 
 import { RequireAuth } from "../auth/RequireAuth";
 import { LoginPage } from "../features/auth/LoginPage";
+import { EditSessionPage, NewSessionPage } from "../features/sessions/SessionFormPage";
 import { SessionListPage } from "../features/sessions/SessionListPage";
 import { Layout } from "./Layout";
 import { NotFoundPage } from "./NotFoundPage";
@@ -18,6 +19,8 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, element: <Navigate to="/sessions" replace /> },
       { path: "sessions", element: <SessionListPage /> },
+      { path: "sessions/new", element: <NewSessionPage /> },
+      { path: "sessions/:sessionId/edit", element: <EditSessionPage /> },
     ],
   },
   { path: "*", element: <NotFoundPage /> },
