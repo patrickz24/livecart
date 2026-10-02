@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-26. Milestone 4b implemented the whole path: the worker and the API publish each session's events to its Redis stream after their commit, and the API streams them to the session's seller over SSE, after a snapshot. The dashboard that reads the stream arrives in milestone 7.
+Accepted, 2026-09-26. Milestone 4b implemented the whole path: the worker and the API publish each session's events to its Redis stream after their commit, and the API streams them to the session's seller over SSE, after a snapshot. Milestone 7's dashboard reads the stream: its client is ADR 0017's.
 
 ## Context
 

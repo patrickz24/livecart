@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted, 2026-09-26. Milestone 3 implemented the login, the refresh, the logout, `GET /api/v1/auth/me`, the `CurrentSeller` dependency of every seller route and `livecart-create-seller`. The dashboard that uses them arrives in milestone 7.
+Accepted, 2026-09-26. Milestone 3 implemented the login, the refresh, the logout, `GET /api/v1/auth/me`, the `CurrentSeller` dependency of every seller route and `livecart-create-seller`. Milestone 7's dashboard uses them: how a browser holds the token and refreshes it is ADR 0017's.
 
 ## Context
 
