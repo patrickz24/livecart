@@ -213,9 +213,9 @@ It needs an Expo account (free) and the EAS CLI, run with npx rather than instal
 1. `npx eas-cli@24.8.0 login`, then `APP_BRAND=demo npx eas-cli@24.8.0 init`, and copy the project id it prints into `brands/demo/brand.json` as `"easProjectId"`.
 2. `npx eas-cli@24.8.0 build --profile demo --platform android`: an APK with the development client, `livecart` as its scheme, to install on the phone.
 3. `npx expo start --dev-client`, with `apps/mobile/.env` as above; the development build loads the bundle from Metro.
-4. A buyer link now opens the app: `adb shell am start -W -a android.intent.action.VIEW -d "livecart://link/LC-XXXXXX#t=<token>"`, or the simulator's link opened on the phone. The token goes from the link's fragment to SecureStore, and the order opens.
+4. A buyer link now opens the app: `adb shell am start -W -a android.intent.action.VIEW -d "livecart://link/LC-XXXXXX#t=<token>"`, or the simulator's link opened on the phone. The app first checks the link's token with the API, asking for the order's details, so the API must be reachable from the phone when the link opens; once the API accepts the token, it goes from the link's fragment to SecureStore, and the order opens. A token the API refuses is not stored, and while the API is out of reach the screen offers to try again.
 
-The profiles build with Node 24.21.0 and pnpm 12.6.0, Corepack off. iOS is configured (bundle identifiers, an iOS simulator build in the base profile) but not built. The identifiers `com.example.livecart.<brand>` are placeholders: replace them before any store build.
+An Android release build blocks cleartext `http://` by default, and nothing in `app.config.ts` allows it, so a device test needs the API over HTTPS, or a development-client build, which is what every profile of `eas.json` makes (`developmentClient: true`). The profiles build with Node 24.21.0 and pnpm 12.6.0, Corepack off. iOS is configured (bundle identifiers, an iOS simulator build in the base profile) but not built. The identifiers `com.example.livecart.<brand>` are placeholders: replace them before any store build.
 
 ## Metrics
 
@@ -244,7 +244,7 @@ The reset comes first every time: the scenario sends the same comment ids from o
 
 The run fails (exit 99) when a threshold does: `no_oversell`, `queue_drained`, fewer calls than planned, or any answer other than 202, with 429 (rate limit), 503 (queue backpressure) and the rest counted apart. It has no latency threshold, since the generator and the stack share the machine. k6 logs one `Request Failed ... request timeout` warning on purpose: k6 has no streaming client, so a timeout ends the read of the snapshot.
 
-Each run that reaches its check writes `loadtest/results/comment-spike-<UTC time>.json`: the parameters, the answers by status, the checks, the stock and the orders read at the end, and every k6 metric (`webhook_duration` is the webhook's own latency). Those summaries are versioned, as the only source of the measured figures (`docs/PERFORMANCE.md`, once measured runs exist), and collapsed in GitHub diffs (`linguist-generated`). The raw output stays in `loadtest/results/raw/`, which git ignores:
+Each run that reaches its check writes `loadtest/results/comment-spike-<UTC time>.json`: the parameters, the answers by status, the checks, the stock and the orders read at the end, and every k6 metric (`webhook_duration` is the webhook's own latency). Those summaries are versioned, as the only source of the measured figures of [docs/PERFORMANCE.md](docs/PERFORMANCE.md), and collapsed in GitHub diffs (`linguist-generated`). The raw output stays in `loadtest/results/raw/`, which git ignores:
 
 ```bash
 mkdir -p loadtest/results/raw
