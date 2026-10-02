@@ -25,7 +25,7 @@ Les chemins de code sont abrégés ainsi :
 
 Les tests sont cités `fichier::fonction`, avec leur paquet entre parenthèses : (core) pour `packages/livecart-core/tests/`, (api) pour `services/api/tests/`, (worker) pour `services/worker/tests/`, (web) pour les tests Vitest de `apps/web/src/`. La recherche de fichier de l'éditeur (Ctrl+P) les retrouve.
 
-Où en est le projet : le jalon 7 sur 9 est livré (dashboard vendeur). L'app mobile (jalon 8) est en cours sur une branche, et le test de charge k6 avec `docs/PERFORMANCE.md` arrive au jalon 9. En entretien, la règle d'or est celle du README : dire ce qui a été exécuté et ce qui ne l'a pas été. Le README distingue les deux pour chaque jalon.
+Où en est le projet : les neuf jalons du plan sont construits, du socle au test de charge et à la documentation finale. En entretien, la règle d'or est celle du README : dire ce qui a été exécuté et ce qui ne l'a pas été. Sa section « Status / what is verified » le résume, et le journal des jalons de `CONTRIBUTING.md` (« Milestone log ») le détaille, jalon par jalon : l'app mobile n'a tourné sur aucun téléphone, le paiement Stripe 4242 attend des clés de test, le déploiement est conçu sans être exécuté, et la CI n'a jamais tourné, faute de dépôt distant.
 
 ## L'architecture expliquée simplement
 
@@ -47,14 +47,14 @@ Un spectateur écrit « SOLD A12 M x2 » sous un live. La plateforme pousse ce c
 | `seed`       | One-shot : les données de démo, créées seulement si elles manquent.                                                                                                                                       |
 | `stripe-cli` | Profil `stripe` seulement : relaie les événements d'un compte Stripe de test vers l'API.                                                                                                                  |
 
-Hors de compose : l'app acheteur Expo (en cours), Stripe ou le mock de paiement, l'API Claude (optionnelle) et le transporteur mock, qui est une classe dans le worker.
+Hors de compose : l'app acheteur Expo, Stripe ou le mock de paiement, l'API Claude (optionnelle) et le transporteur mock, qui est une classe dans le worker.
 
 ### Le schéma
 
 ```mermaid
 flowchart LR
-  SIM["Simulateur (ou plateforme)"] -->|"webhook signé"| NGX["nginx"]
-  WEB["Dashboard React"] -->|"REST + SSE"| NGX
+  SIM["Simulateur"] -->|"webhook signé, direct"| API
+  WEB["Dashboard React"] -->|"REST + SSE"| NGX["nginx"]
   MOB["App acheteur Expo"] -->|"REST"| NGX
   STRIPE["Stripe test ou mock"] -->|"webhook signé"| NGX
   NGX --> API["API FastAPI"]
@@ -123,7 +123,7 @@ La pile backend est imposée par les exigences du poste ([ADR 0003](adr/0003-bac
 
 Les numéros suivent l'ordre réel du code. À chaque étape, le fichier et la fonction à ouvrir.
 
-1. **Le commentaire naît.** Le simulateur (`services/simulator/src/livecart_simulator/poster.py`) poste un lot au format commun (`CommentBatch` : 1 à 200 `IncomingComment`) sur `POST /api/v1/webhooks/comments/simulator`, via nginx. Les vraies plateformes (Facebook, Instagram, TikTok) sont des bouchons documentés.
+1. **Le commentaire naît.** Le simulateur (`services/simulator/src/livecart_simulator/poster.py`) poste un lot au format commun (`CommentBatch` : 1 à 200 `IncomingComment`) sur `POST /api/v1/webhooks/comments/simulator`, directement sur le conteneur de l'API (`SIMULATOR_API_URL: http://api:8000` dans `compose.yaml`), sans passer par nginx, comme le test de charge k6. Les vraies plateformes (Facebook, Instagram, TikTok) sont des bouchons documentés ; déployées, elles arriveraient par l'entrée publique, nginx (`docs/DEPLOYMENT.md`).
 
 2. **Vérification de la signature.** `api/routes/webhooks.py::receive_comment_webhook`, dans cet ordre :
    - le corps est plafonné à 1 MiB, par nginx et par le middleware de l'API (413) ;
@@ -220,14 +220,15 @@ Les numéros suivent l'ordre réel du code. À chaque étape, le fichier et la f
 
     Côté navigateur, `web/realtime/sseClient.ts::openLiveStream` lit le flux avec `fetch` et eventsource-parser (`EventSource` ne sait pas envoyer `Authorization`) : bearer, `Last-Event-ID`, backoff de 1 à 30 s, refresh sur 401, chien de garde de 45 s, bandeau après 5 s de coupure. `web/features/live/useLiveSession.ts` écrit dans le cache TanStack Query `["live", id]` par le reducer pur `web/realtime/applyEvent.ts::applyEvent` : upsert par id, statuts qui n'avancent que vers l'avant.
 
-17. **Le côté acheteur.** L'API a deux paliers ([ADR 0007](adr/0007-order-reference-and-hmac-access-token.md)) : la référence seule (`GET /api/v1/orders/{reference}`) montre le statut et le total ; le jeton, dans `Authorization: Bearer`, ouvre `/details`, `/shipping-address`, `/checkout` et `/tracking`. Un jeton absent, faux ou d'une autre commande reçoit le 404 d'une référence inconnue. L'app Expo, encore en construction sur sa branche, contient à ce jour :
+17. **Le côté acheteur.** L'API a deux paliers ([ADR 0007](adr/0007-order-reference-and-hmac-access-token.md)) : la référence seule (`GET /api/v1/orders/{reference}`) montre le statut et le total ; le jeton, dans `Authorization: Bearer`, ouvre `/details`, `/shipping-address`, `/checkout` et `/tracking`. Un jeton absent, faux ou d'une autre commande reçoit le 404 d'une référence inconnue. L'app Expo ([ADR 0013](adr/0013-white-label-brand-config-eas-profiles-design-tokens.md)) contient :
     - une configuration de marque blanche, `brands/<id>/brand.json`, validée par un schéma zod (`apps/mobile/brand.schema.ts`) dans `app.config.ts`, où un champ manquant ou une image absente fait échouer le démarrage ou le build ; deux marques, `demo` (schéma `livecart`) et `pomelune` (schéma `samplelive`) ;
     - la vitrine du vendeur de la marque (`GET /api/v1/storefronts/{seller_slug}`) ;
     - le stockage des jetons dans `expo-secure-store`, une entrée par commande et un index d'au plus 50 références (`apps/mobile/src/orders/orderAccessStore.ts`) ;
-    - la liste des commandes, l'écran « Add order » (coller référence et jeton) et le lien profond `<scheme>://link/LC-XXXXXX#t=<jeton>`, dont le fragment n'est jamais envoyé à un serveur ;
-    - le détail d'une commande et son suivi.
+    - la liste des commandes, l'écran « Add order » (coller référence et jeton) et le lien profond `<scheme>://link/LC-XXXXXX#t=<jeton>`, dont le fragment n'est jamais envoyé à un serveur. Dans les deux cas, le jeton est d'abord vérifié auprès de l'API (`GET /api/v1/orders/{reference}/details`) et n'est stocké que si elle l'accepte (`apps/mobile/src/orders/OrderLinkScreen.tsx`) : un lien forgé, qu'une autre app peut ouvrir, ne remplace donc pas le jeton d'une commande déjà enregistrée et ne pousse pas de vraies commandes hors de l'index plein ;
+    - le détail d'une commande et son suivi ;
+    - le paiement : l'adresse saisie dans l'app, puis le checkout ouvert dans une session d'authentification (`openAuthSessionAsync`, éphémère sur iOS) avec un retour vers `<scheme>://payment-return` ; l'écran de retour relit le statut de la commande après 3 s, puis à des intervalles 1,5 fois plus longs (10 s au plus), pendant 60 s au plus (`apps/mobile/src/payments/paymentReturn.ts`).
 
-    Le paiement depuis l'app et le retour de paiement ne sont pas encore commités. Expo Go n'enregistre pas le schéma de la marque : le lien profond ne s'ouvre qu'avec un build de développement, et « Add order » marche partout.
+    Expo Go n'enregistre pas le schéma de la marque : le lien profond ne s'ouvre qu'avec un build de développement, et « Add order » marche partout. Rien de l'app n'a tourné sur un téléphone : 116 tests Jest la vérifient sur le PC, sur une fausse API.
 
 ## Chaque compromis
 
@@ -277,12 +278,12 @@ Format : ce qui a été choisi, ce qui a été écarté, pourquoi, et ce que ça
 - **Pourquoi** : les migrations voyagent toujours avec le code qui les utilise ; un secret n'a jamais de valeur par défaut dans un fichier versionné.
 - **Coût** : une image un peu plus lourde par processus, et une commande de plus que « une seule commande ».
 
-**Client TypeScript généré** · [ADR 0003](adr/0003-backend-stack-fastapi-sqlalchemy-core-alembic.md)
+**Client TypeScript généré** · [ADR 0012](adr/0012-api-contract-openapi-and-generated-typescript-client.md)
 
-- **Choisi** : `openapi.json` exporté de FastAPI, puis le client généré par Hey API, tous deux commités ; la CI échoue si le code et le fichier divergent.
-- **Écarté** : des types écrits à la main.
-- **Pourquoi** : Pydantic reste la seule source de vérité des contrats, jusqu'à l'union `LiveSessionEvent` du flux SSE.
-- **Coût** : des fichiers générés versionnés, à régénérer (`make gen-api`) à chaque changement d'API. L'ADR des contrats (0012) n'est pas encore écrite.
+- **Choisi** : `openapi.json` exporté de FastAPI en mode production, puis le client généré par Hey API, partagé par le dashboard et l'app mobile, tous deux commités et marqués `linguist-generated` ; le job CI `openapi-drift` échoue si le code et les fichiers divergent.
+- **Écarté** : des types écrits à la main, openapi-typescript (son peer `typescript ^5.x` refuse TypeScript 6), orval, GraphQL ; tRPC est impossible avec un backend Python.
+- **Pourquoi** : Pydantic reste la seule source de vérité des contrats, jusqu'à l'union `LiveSessionEvent` du flux SSE ; une valeur ajoutée à une liste fermée (un `StrEnum`, une union de chaînes côté TypeScript) casse le `tsc` des deux apps tant qu'elles ne l'affichent pas.
+- **Coût** : des fichiers générés versionnés, à régénérer (`make gen-api`) à chaque changement d'API, et Python nécessaire pour les générer.
 
 ### File et worker
 
@@ -485,7 +486,8 @@ Format : ce qui a été choisi, ce qui a été écarté, pourquoi, et ce que ça
 - **Déploiement** : `docs/DEPLOYMENT.md` est un design ; il n'y a ni `render.yaml`, ni workflow de déploiement, ni image poussée, ni fichier nginx pour Render ([ADR 0016](adr/0016-target-hosting-render-designed-not-executed.md)).
 - **Le worker en production** : il refuse `APP_ENV=production`. Son seul notifieur, `SimulatedBuyerNotifier`, écrit les jetons en clair dans un stream de développement et refuse d'être construit en production (`test_main.py::test_a_production_worker_refuses_the_simulated_notifier`, worker). Il faudrait un notifieur qui livre sur les plateformes elles-mêmes, donc une vraie intégration, hors périmètre. Lancer la pile en `development` sur un hôte public n'est pas une solution : ce mode accepte les placeholders `change-me`, le mock de paiement et sert le Swagger.
 - **iOS** : pas construit. Les identifiants iOS sont dans `brand.json`, mais aucun build n'a été fait, faute d'abonnement Apple Developer (décision 4 du plan), qui le marque « configured, not built ».
-- **L'app mobile** : en cours ; le paiement depuis l'app et le retour de paiement ne sont pas encore commités.
+- **L'app mobile** : construite, mais jamais lancée sur un téléphone, un émulateur ni dans Expo Go, et aucun build EAS n'existe (ni `eas init`, ni build de développement Android) : les liens profonds et le retour de paiement n'ont jamais tourné sur un appareil, et le critère de fin du jalon 8 n'est pas rempli. Sur le PC : ses 116 tests Jest, `tsc`, expo-doctor et un `expo export` Android des deux marques. Un build Android de release bloque par défaut le `http://` en clair, celui de l'API sur le réseau local : un essai sur appareil passe par un build de développement, ce que font tous les profils d'`eas.json`, ou par HTTPS (`CONTRIBUTING.md`).
+- **La CI** : `.github/workflows/ci.yml` est défini mais n'a jamais tourné, faute de dépôt distant. `make lint` et `make test` rejouent en local les jobs `python` et `node` ; Trivy n'est branché qu'en CI, donc ses scans attendent le premier passage.
 
 ### Ce que le test de charge ne dit pas
 
@@ -506,10 +508,11 @@ Format : ce qui a été choisi, ce qui a été écarté, pourquoi, et ce que ça
 - La consultation publique par référence montre le statut et le total ; toute une audience derrière un CGNAT partage les fenêtres par adresse.
 - Le budget LLM peut être dépassé par les appels en vol.
 - Les métriques ne sont protégées que par le réseau ; le port 8080 est ouvert sur le LAN en développement.
-- Les schémas d'URL personnalisés peuvent être interceptés par une autre app (Universal Links sur la roadmap).
+- Les schémas d'URL personnalisés peuvent être interceptés par une autre app (Universal Links sur la roadmap) ; à l'inverse, un lien forgé ne remplace aucun jeton, puisque l'app vérifie chaque jeton auprès de l'API avant de le stocker.
 - Le webhook de commentaires fait confiance à sa clé : qui détient `COMMENT_WEBHOOK_SECRET_SIMULATOR` peut poster des commentaires sous n'importe quel auteur.
 - Le texte des commentaires et les adresses sont gardés sans purge ; aucune rétention des logs n'est configurée ; la rédaction des logs ne regarde que les clés de premier niveau.
 - Dependabot n'est pas configuré ; les conteneurs PostgreSQL et Redis tournent sans `read_only` ni `cap_drop`.
+- L'avis node-forge ignoré par `pnpm audit` (`ignoreGhsas` de `pnpm-workspace.yaml`) l'est pour tout le workspace, pas seulement sous la CLI d'Expo : l'exception est à revoir à chaque montée de version d'Expo.
 
 ### Les limites de conception, dans les ADR
 
@@ -596,7 +599,7 @@ Chaque réponse est à dire à voix haute, en une à deux minutes. La « relance
 
 ### Q13. « Quelle est ta stratégie de test ? »
 
-**Réponse.** Le domaine se teste en pur : le parser contre son corpus de 200 commentaires (98 matchs, 53 ambiguïtés, 49 rejets) comparés champ par champ, plus des tests de propriétés qui envoient des commentaires aléatoires (`test_parser_corpus.py`, `test_parser_properties.py`, core), et chaque machine à états sur toutes ses paires. Les cas d'usage tournent contre des fakes déterministes, un par port, sans Docker, sous un seuil de 80 % de couverture de branches sur le domaine et l'application. Pour que les fakes ne mentent pas, les tests de contrat (`tests/contract/`) jouent chaque scénario une fois sur le fake, une fois sur PostgreSQL ou Redis, avec le rôle applicatif réel. Les tests d'intégration prouvent les invariants sous vraie concurrence : 1 000 réservations derrière une barrière, deux sweeps simultanés dont chacune des 250 commandes n'est libérée qu'une fois (`test_reservation_expiry_postgres.py::test_two_concurrent_sweeps_release_each_order_exactly_once`, core), une sonde qui vérifie que le pool était saturé. Les tests d'architecture vérifient la règle des couches et l'absence de SQL écrit à la main. Les services externes ne sont jamais appelés : Stripe tourne contre `FakeStripeApi`, Claude contre un `MockTransport`. Côté web, Vitest teste le reducer, le client SSE sur un faux `fetch` et le verrou du refresh ; en CI s'ajoutent un smoke test de la pile compose et la vérification de dérive d'OpenAPI.
+**Réponse.** Le domaine se teste en pur : le parser contre son corpus de 200 commentaires (98 matchs, 53 ambiguïtés, 49 rejets) comparés champ par champ, plus des tests de propriétés qui envoient des commentaires aléatoires (`test_parser_corpus.py`, `test_parser_properties.py`, core), et chaque machine à états sur toutes ses paires. Les cas d'usage tournent contre des fakes déterministes, un par port, sans Docker, sous un seuil de 80 % de couverture de branches sur le domaine et l'application. Pour que les fakes ne mentent pas, les tests de contrat (`tests/contract/`) jouent chaque scénario une fois sur le fake, une fois sur PostgreSQL ou Redis, avec le rôle applicatif réel. Les tests d'intégration prouvent les invariants sous vraie concurrence : 1 000 réservations derrière une barrière, deux sweeps simultanés dont chacune des 250 commandes n'est libérée qu'une fois (`test_reservation_expiry_postgres.py::test_two_concurrent_sweeps_release_each_order_exactly_once`, core), une sonde qui vérifie que le pool était saturé. Les tests d'architecture vérifient la règle des couches et l'absence de SQL écrit à la main. Les services externes ne sont jamais appelés : Stripe tourne contre `FakeStripeApi`, Claude contre un `MockTransport`. En tout, pytest compte 3 549 tests, dont 417 d'intégration qui ont besoin du PostgreSQL et du Redis de compose. Côté web, 66 tests Vitest couvrent le reducer, le client SSE sur un faux `fetch` et le verrou du refresh. Côté mobile, 116 tests Jest rendent les vraies routes d'expo-router sur une fausse API et un SecureStore en mémoire : un snapshot par marque, les refus de la config de marque, « Store not found », le store à 50 commandes, le fragment `#t=`, le lien vérifié auprès de l'API avant d'être stocké, et le retour de paiement. La CI y ajoute un smoke test de la pile compose et la vérification de dérive d'OpenAPI, mais elle n'a encore jamais tourné, faute de dépôt distant ; les deux se lancent à la main (`pnpm run smoke:compose`, `pnpm run check:openapi`).
 
 **Relance.** « Tes fakes peuvent diverger de la réalité. » C'est le rôle des tests de contrat, et un test vérifie aussi qu'aucune méthode d'un fake de dépôt ne fait `await`, pour qu'elle soit atomique comme la transaction qu'elle représente (`test_atomicity.py::test_no_method_of_a_repository_fake_awaits`, core). Au-dessus des tests, le test de charge k6 rejoue l'invariant à travers toute la pile, du webhook HTTP au snapshot que lit le dashboard : trois runs de 1 000 appels, 200 unités réservées exactement à chaque fois (`docs/PERFORMANCE.md`) ; il tourne à la main, pas en CI. Ce qui manque : un test contre un vrai compte Stripe, et l'app mobile sur un vrai téléphone.
 
