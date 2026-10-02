@@ -16,11 +16,12 @@ export default defineConfig({
     proxy: {
       // The versioned API surface (every route from milestone 3 on).
       "/api/": API_ORIGIN,
-      // The liveness probe, outside /api/v1, that the shell page displays.
+      // The API's liveness probe, outside /api/v1, as nginx forwards it.
       "^/health$": API_ORIGIN,
     },
   },
   test: {
     environment: "jsdom",
+    setupFiles: ["./src/test/setup.ts"],
   },
 });

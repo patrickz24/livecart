@@ -1,37 +1,54 @@
-import { getHealth, type Client } from "@livecart/api-client";
-import { useEffect, useState } from "react";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
+import type { DataRouter } from "react-router";
+import { RouterProvider } from "react-router/dom";
 
-type ApiStatus = "checking" | "up" | "unreachable";
+import { isRetryable } from "../api/errors";
+import { ServicesProvider, useServices, type Services } from "./services";
 
-const STATUS_TEXT: Record<ApiStatus, string> = {
-  checking: "Checking the API…",
-  up: "API is up",
-  unreachable: "API is unreachable",
-};
+/** The server state's one cache: queries, and the live view's events written into it. */
+export function createQueryClient(): QueryClient {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: (failures, error) => isRetryable(error) && failures < 2,
+        staleTime: 10_000,
+      },
+    },
+  });
+}
 
-/** Milestone 1 shell: proves the page reaches the API through the generated client. */
-export function App({ client }: { client: Client }) {
-  const [status, setStatus] = useState<ApiStatus>("checking");
+/** A session that ends, by a logout or a refused refresh, leaves no data of its seller behind. */
+function ClearCacheOnSignOut() {
+  const { session } = useServices();
+  const queryClient = useQueryClient();
+  useEffect(
+    () =>
+      session.subscribe(() => {
+        if (session.status === "signed_out") {
+          queryClient.clear();
+        }
+      }),
+    [session, queryClient],
+  );
+  return null;
+}
 
-  useEffect(() => {
-    const controller = new AbortController();
-    // Without throwOnError, network and HTTP errors resolve with `error` set.
-    void getHealth({ client, signal: controller.signal }).then(({ data }) => {
-      if (!controller.signal.aborted) {
-        setStatus(data?.status === "ok" ? "up" : "unreachable");
-      }
-    });
-    return () => {
-      controller.abort();
-    };
-  }, [client]);
-
+export function App({
+  services,
+  queryClient,
+  router,
+}: {
+  services: Services;
+  queryClient: QueryClient;
+  router: DataRouter;
+}) {
   return (
-    <main className="mx-auto max-w-xl p-8">
-      <h1 className="text-2xl font-semibold">LiveCart</h1>
-      <p role="status" className="mt-2 text-ink-muted">
-        {STATUS_TEXT[status]}
-      </p>
-    </main>
+    <ServicesProvider services={services}>
+      <QueryClientProvider client={queryClient}>
+        <ClearCacheOnSignOut />
+        <RouterProvider router={router} />
+      </QueryClientProvider>
+    </ServicesProvider>
   );
 }

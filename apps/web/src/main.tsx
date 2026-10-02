@@ -1,8 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { createBrowserRouter } from "react-router";
 
-import { createApiClient } from "./api/client";
-import { App } from "./app/App";
+import { App, createQueryClient } from "./app/App";
+import { routes } from "./app/routes";
+import { createServices } from "./app/services";
 import "./app.css";
 
 const container = document.getElementById("root");
@@ -10,10 +12,12 @@ if (!container) {
   throw new Error("index.html must contain an element with id root");
 }
 
-const apiClient = createApiClient();
-
 createRoot(container).render(
   <StrictMode>
-    <App client={apiClient} />
+    <App
+      services={createServices()}
+      queryClient={createQueryClient()}
+      router={createBrowserRouter(routes)}
+    />
   </StrictMode>,
 );
