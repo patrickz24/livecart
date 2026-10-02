@@ -46,6 +46,13 @@ export const PUBLISHED_PORTS = { api: 8000, web: 8080 };
 
 const isJson = (response) => response.headers.get("content-type")?.startsWith("application/json");
 
+/**
+ * The dashboard's CSP, as infra/nginx/default.conf sets it on the SPA. base-uri
+ * and form-action are spelled out: neither falls back to default-src.
+ */
+export const SPA_CSP =
+  "default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
+
 export const HTTP_CHECKS = [
   {
     name: "API readiness on its loopback port",
@@ -105,7 +112,7 @@ export const HTTP_CHECKS = [
     accept: (response) =>
       response.status === 200 &&
       response.headers.get("content-type")?.startsWith("text/html") === true &&
-      response.headers.get("content-security-policy")?.includes("default-src 'self'") === true &&
+      response.headers.get("content-security-policy") === SPA_CSP &&
       response.headers.get("x-content-type-options") === "nosniff",
   },
 ];

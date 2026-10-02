@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -12,6 +13,7 @@ import {
   PUBLISHED_PORTS,
   publishedBaseUrl,
   serviceProblems,
+  SPA_CSP,
 } from "./smoke-compose.mjs";
 
 const running = (service, health = "healthy", name = `livecart-${service}-1`) => ({
@@ -117,6 +119,31 @@ describe("HTTP_CHECKS", () => {
       assert.equal(EXPECTED_SERVICES[check.service], "healthy", check.name);
       assert.ok(check.path.startsWith("/"), check.name);
     }
+  });
+
+  it("want the dashboard's CSP whole, base-uri and form-action included", () => {
+    const check = HTTP_CHECKS.find((candidate) => candidate.path === "/");
+    const page = (csp) =>
+      new Response("<!doctype html>", {
+        headers: {
+          "Content-Type": "text/html",
+          "Content-Security-Policy": csp,
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    assert.ok(check.accept(page(SPA_CSP)));
+    assert.ok(
+      !check.accept(page("default-src 'self'; connect-src 'self'; frame-ancestors 'none'")),
+    );
+  });
+});
+
+describe("SPA_CSP", () => {
+  it("is the CSP nginx sets on the single-page app", () => {
+    const conf = readFileSync(new URL("../infra/nginx/default.conf", import.meta.url), "utf8");
+    assert.ok(conf.includes(`add_header Content-Security-Policy "${SPA_CSP}" always;`));
+    assert.match(SPA_CSP, /(^|; )base-uri 'none'(;|$)/);
+    assert.match(SPA_CSP, /(^|; )form-action 'self'(;|$)/);
   });
 });
 

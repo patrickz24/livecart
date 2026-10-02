@@ -14,7 +14,7 @@ LiveCart is a public portfolio project that must hold up as if it were in produc
 
 - nginx (the web container, `nginxinc/nginx-unprivileged`) serves the dashboard and forwards `/api/` and `/health` to the API, so the browser and the mobile app talk to one origin: there is no CORS to configure, and the API has no CORS middleware, so no answer lets another origin read it. nginx listens on 8080, on every interface; the API is published on `127.0.0.1:8000` only, PostgreSQL and Redis on `127.0.0.1` with non-standard ports.
 - nginx caps request bodies at 1 MiB (`client_max_body_size`), and so does the API (Starlette's `RequestBodyLimitMiddleware`, 413), for anything that reaches it otherwise.
-- The configuration of nginx is a static file, `infra/nginx/default.conf`, without templating. It sets the dashboard's security headers on the SPA location only (`Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors 'none'`, `nosniff`, `no-referrer`), so that the answers it forwards carry the API's own.
+- The configuration of nginx is a static file, `infra/nginx/default.conf`, without templating. It sets the dashboard's security headers on the SPA location only (`Content-Security-Policy: default-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'`, the last two spelled out since neither falls back to `default-src`; `nosniff`, `no-referrer`), so that the answers it forwards carry the API's own.
 
 ### nginx is the only trusted hop
 
