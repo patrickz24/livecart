@@ -49,4 +49,17 @@ describe("the app's query cache", () => {
     await expect(query).rejects.toBe(error);
     expect(attempts).toHaveLength(1);
   });
+
+  it.each([
+    ["the Retry-After of a 503", 5, [5_000, 5_000]],
+    ["10 s at most, whatever Retry-After asks", 3_600, [10_000, 10_000]],
+    ["1 s then 2 s without a Retry-After", null, [1_000, 2_000]],
+  ])("before trying again, waits %s", async (_, retryAfterSeconds, waits) => {
+    const { attempts, query } = failingQuery(new ApiError(503, null, retryAfterSeconds));
+
+    await jest.runAllTimersAsync();
+
+    await expect(query).rejects.toBeInstanceOf(ApiError);
+    expect(attempts.slice(1).map((at, index) => at - (attempts[index] ?? at))).toEqual(waits);
+  });
 });
